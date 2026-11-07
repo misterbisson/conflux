@@ -42,9 +42,9 @@ import Testing
 /// model. Skipped where there's no python3.
 @Suite(.serialized) struct LlamaServerSupervisionTests {
     static let script = #"""
-    #!/usr/bin/env python3
+    #!/usr/bin/python3
     import json, sys
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     if "--version" in sys.argv:
         print("version: 0.0.0 (build 42, commit test)", file=sys.stderr)
         sys.exit(0)
@@ -68,7 +68,9 @@ import Testing
                 return self.reply(400, {"error": {"message": "bad request"}})
             text = json.dumps(request.get("messages", []))
             self.reply(200, {"choices": [{"message": {"content": "echo " + text}}], "model": "stand-in"})
-    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    print(f"stand-in listening on {port}", file=sys.stderr, flush=True)
+    server.serve_forever()
     """#
 
     func fixture() throws -> (directory: URL, executable: String, model: String)? {
@@ -113,14 +115,22 @@ import Testing
         #expect(refused.status == 400)
 
         // Kill it from outside: the host restarts it.
-        let pid = try #require(Self.pids(of: fixture.executable).first)
-        kill(pid, SIGKILL)
+        let pids = Self.pids(of: fixture.executable)
+        try #require(!pids.isEmpty)
+        for pid in pids { kill(pid, SIGKILL) }
         let restarting = await waitFor(host, .starting("restarting: llama-server exited with status 9"), seconds: 5)
         let back = await waitFor(host, .available)
         let after = await host.availability
         #expect(restarting || back)
-        let log = (try? String(contentsOf: fixture.directory.appending(path: "log.txt"), encoding: .utf8)) ?? ""
-        #expect(back, "\(after)\n\(log.suffix(2000))")
+        if !back {
+            let log = (try? String(contentsOf: fixture.directory.appending(path: "log.txt"), encoding: .utf8)) ?? ""
+            Issue.record("""
+                not back after a restart: \(after)
+                log: \(log.suffix(2000))
+                processes: \(Self.shell("/bin/ps", ["-axo", "pid,ppid,stat,command"]).split(separator: "\n")
+                    .filter { $0.contains("conflux-host") }.joined(separator: "\n"))
+                """)
+        }
 
         host.stop()
         #expect(await host.availability == .offline)
@@ -140,14 +150,18 @@ import Testing
     }
 
     static func pids(of executable: String) -> [pid_t] {
+        shell("/usr/bin/pgrep", ["-f", executable]).split(separator: "\n").compactMap { pid_t($0) }
+    }
+
+    static func shell(_ path: String, _ arguments: [String]) -> String {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        process.arguments = ["-f", executable]
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         try? process.run()
+        let output = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .split(separator: "\n").compactMap { pid_t($0) }
+        return String(decoding: output, as: UTF8.self)
     }
 }
