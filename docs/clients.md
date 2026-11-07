@@ -7,12 +7,14 @@ A plain OpenAI-compatible client works with no changes ([below](#a-client-that-d
 A client that follows the recommendations here gets more of the mesh's
 throughput, and results it can attribute exactly.
 
-> **Status: provisional.** Nothing here is built yet. Header names in
-> particular may change before the first release.
+> **Status: implemented in Phase 1, for one Mac.** `conflux serve` and the
+> app serve everything below except streaming. Header names may still change
+> before the first release.
 
 ## The API
 
-The gateway serves a subset of the OpenAI API on loopback:
+The gateway serves a subset of the OpenAI API on loopback, at
+`http://127.0.0.1:8090/v1` by default:
 
 | Endpoint | Purpose |
 |---|---|
@@ -23,6 +25,11 @@ The gateway serves a subset of the OpenAI API on loopback:
 Requests and responses follow the OpenAI schema, including `response_format`
 for structured output and image parts as `data:` URLs.
 
+**Streaming (`"stream": true`) isn't supported yet**, and is refused with
+`400` and code `stream_unsupported`. Throughput workloads don't need it, and
+retrying or moving a request to another host only works cleanly while
+nothing has been sent back yet.
+
 ## Requirements
 
 ### Send a token
@@ -31,9 +38,11 @@ for structured output and image parts as `data:` URLs.
 Authorization: Bearer <token>
 ```
 
-The gateway issues tokens. Early versions may allow tokenless loopback access
-as an opt-in setting, so clients that can't send a token yet still work.
-Clients should support a token from the start.
+The gateway issues tokens: `conflux token` prints the current one, and
+`conflux token --rotate` replaces it. It's kept in a file only the user can
+read. Tokenless loopback access is an opt-in setting (`--no-token`, or
+"Require the token" off in the app), so clients that can't send a token yet
+still work. Clients should support a token from the start.
 
 ### Own your work
 
@@ -128,7 +137,9 @@ never ranks models itself. Whatever ran is in the response.
 Each model's entry in `/v1/models` includes the largest image dimension it
 uses. Images larger than that cost transfer time and give no benefit. Image
 resolution is also the main factor in how long a vision model spends reading
-an image, so it is worth tuning per task.
+an image. Some models read small images badly, and their hosts enlarge them,
+so a smaller image saves time only with a model that handles it
+([measurements.md](measurements.md)).
 
 ## Status codes
 
