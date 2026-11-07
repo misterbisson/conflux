@@ -22,11 +22,21 @@ model that's too large for any single device.
 
 ## Status
 
-Planning. Nothing is built yet.
+Phase 0: measuring. The benchmark tool is built, and the conflux app isn't
+started yet.
 
 - [Design](docs/design.md): architecture and decisions
 - [Client requirements](docs/clients.md): what a client does, and what it gets back
 - [Plan](docs/plan.md): phases, and what finishes each one
+- [Measuring](docs/phase-0.md): how to benchmark a device with `conflux-bench`
+
+```bash
+swift build
+```
+
+```bash
+swift test
+```
 
 ## License
 
