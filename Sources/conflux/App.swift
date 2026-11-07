@@ -35,6 +35,7 @@ final class AppModel: ObservableObject {
     @Published var problem: String?
 
     let node = ConfluxNode()
+    private let access = ModelAccess()
     private var polling: Task<Void, Never>?
     private static let key = "settings"
 
@@ -71,12 +72,30 @@ final class AppModel: ObservableObject {
 
     func start() {
         problem = nil
+        var settings = settings
+        if var host = settings.host {
+            // In the sandbox, the model files open only through the bookmarks
+            // made when they were chosen.
+            do {
+                let paths = try access.open([host.model] + (host.projector.map { [$0] } ?? []))
+                host.model = paths[0]
+                if host.projector != nil { host.projector = paths[1] }
+            } catch {
+                problem = error.localizedDescription
+                return
+            }
+            // Keep a moved file's new path.
+            if host.model != settings.host?.model || host.projector != settings.host?.projector {
+                self.settings.host?.model = host.model
+                self.settings.host?.projector = host.projector
+            }
+            // The app runs models in-process: a sandboxed app can't run
+            // llama-server. `conflux serve --runtime llama-server` can.
+            host.runtime = .inProcess
+            settings.host = host
+        }
         Task {
             do {
-                // The app runs models in-process: a sandboxed app can't run
-                // llama-server. `conflux serve --runtime llama-server` can.
-                var settings = settings
-                settings.host?.runtime = .inProcess
                 port = try await node.start(settings)
                 running = true
                 intent = .serving
@@ -89,6 +108,7 @@ final class AppModel: ObservableObject {
     func stop() {
         Task {
             await node.stop()
+            access.close()
             running = false
             port = nil
         }
@@ -119,8 +139,10 @@ final class AppModel: ObservableObject {
         panel.allowedContentTypes = [UTType(filenameExtension: "gguf") ?? .data]
         panel.message = projector ? "Choose the model's multimodal projector (mmproj)" : "Choose a GGUF model"
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        access.remember(url)
         var host = settings.host ?? ModelConfig(model: "")
         if projector { host.projector = url.path } else { host.model = url.path }
         settings.host = host
+        access.keep(only: [host.model] + (host.projector.map { [$0] } ?? []))
     }
 }

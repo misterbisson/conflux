@@ -1,0 +1,13 @@
+// Signing for the Mac app, in every configuration.
+//
+// The Team ID stays out of the repository. It goes in Signing.local.xcconfig,
+// next to this file, which .gitignore keeps untracked:
+//
+//   cp App/Signing.local.xcconfig.example App/Signing.local.xcconfig
+//
+// On Xcode Cloud, ci_scripts/ci_post_clone.sh writes that file from the
+// build's CI_TEAM_ID. Without it, Xcode builds but can't sign.
+
+CODE_SIGN_STYLE = Automatic
+
+#include? "Signing.local.xcconfig"

@@ -1,0 +1,112 @@
+# The Mac app, for Xcode and Xcode Cloud. XcodeGen generates conflux.xcodeproj
+# from this file, and the generated project is not committed:
+#
+#   ci_scripts/ci_post_clone.sh
+#
+# fetches the pinned XcodeGen and generates it, on Xcode Cloud and on a desk.
+# `swift build` and `swift test` don't use this file. The app target compiles
+# Sources/conflux against the package's ConfluxCore library, so the code is the
+# same either way. docs/releasing.md says how a release reaches TestFlight.
+#
+# No Team ID here, or anywhere else in the repository. Signing settings come
+# from App/Signing.xcconfig, which includes the untracked
+# App/Signing.local.xcconfig.
+name: conflux
+
+options:
+  bundleIdPrefix: com.misterbisson
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+configFiles:
+  Debug: App/Signing.xcconfig
+  Release: App/Signing.xcconfig
+
+settings:
+  base:
+    # release-please updates this line. Xcode Cloud numbers the builds, so
+    # CURRENT_PROJECT_VERSION stays 1.
+    MARKETING_VERSION: "0.1.0" # x-release-please-version
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "6.0"
+  configs:
+    Release:
+      # Xcode Cloud builds Release, with whatever Xcode is current, after a
+      # tag. A warning here can be an error there, so it is one here too.
+      SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+
+packages:
+  ConfluxPackage:
+    path: .
+
+targets:
+  conflux:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/conflux
+      - path: App/Assets.xcassets
+    dependencies:
+      - package: ConfluxPackage
+        product: ConfluxCore
+    postBuildScripts:
+      # Xcode's asset catalog compiler writes an AppIcon.icns without the 512pt
+      # sizes, and App Store Connect refuses that (ITMS-90236). This rebuilds it
+      # from the same PNGs, before the bundle is signed. tools/ci/check-app.sh
+      # checks the result.
+      - name: Complete the app icon
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_16x16.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_16x16@2x.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_32x32.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_32x32@2x.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_128x128.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_256x256.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_256x256@2x.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_512x512.png
+          - $(SRCROOT)/App/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AppIcon.icns
+        script: |
+          set -euo pipefail
+          work="$DERIVED_FILE_DIR/AppIcon.iconset"
+          rm -rf "$work"
+          mkdir -p "$work"
+          cp "$SRCROOT"/App/Assets.xcassets/AppIcon.appiconset/icon_*.png "$work"/
+          iconutil -c icns "$work" -o "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/AppIcon.icns"
+    entitlements:
+      path: App/conflux.entitlements
+      properties:
+        # App Store Connect, TestFlight included, takes only sandboxed apps.
+        com.apple.security.app-sandbox: true
+        # The gateway listens on loopback.
+        com.apple.security.network.server: true
+        # Model files are the ones the user picks, kept across launches by
+        # security-scoped bookmarks (Sources/conflux/ModelAccess.swift).
+        com.apple.security.files.user-selected.read-only: true
+        com.apple.security.files.bookmarks.app-scope: true
+    settings:
+      base:
+        PRODUCT_NAME: conflux
+        PRODUCT_BUNDLE_IDENTIFIER: com.misterbisson.conflux
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: conflux
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        # Without this, every TestFlight build waits on an export-compliance
+        # question. conflux uses only the operating system's encryption.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: YES
+
+schemes:
+  conflux:
+    build:
+      targets:
+        conflux: all
+    run:
+      config: Debug
+    archive:
+      config: Release

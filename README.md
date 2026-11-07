@@ -30,6 +30,7 @@ in Phase 2.
 - [Client requirements](docs/clients.md): what a client does, and what it gets back
 - [Plan](docs/plan.md): phases, and what finishes each one
 - [Running](docs/running.md): serving a model and pointing a client at it
+- [Releasing](docs/releasing.md): the Mac app, Xcode Cloud and TestFlight
 - [Measuring](docs/phase-0.md): how to benchmark a device with `conflux-bench`
 - [Measurements](docs/measurements.md): results so far
 
