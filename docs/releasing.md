@@ -43,8 +43,10 @@ To sign it, add your Team ID to a file Git ignores:
 cp App/Signing.local.xcconfig.example App/Signing.local.xcconfig
 ```
 
-Then open `conflux.xcodeproj` and run the `conflux` scheme. Without a Team ID
-it still builds; to check an archive the way CI does, without one:
+Then open `conflux.xcodeproj` and run the `conflux` scheme. Debug builds are
+`com.caseybisson.conflux.dev`, so they keep their own container, settings and
+privacy grants, apart from the TestFlight app. Without a Team ID it still
+builds; to check an archive the way CI does, without one:
 
 ```bash
 tools/ci/build-app.sh
@@ -77,7 +79,7 @@ This lives in App Store Connect, not in the repository, so it's written down
 here. It's done once. No step needs a Team ID, key or token in the repository.
 
 1. **The app record.** In App Store Connect, create a macOS app with the bundle
-   ID `com.misterbisson.conflux`. Xcode registers the ID the first time it signs
+   ID `com.caseybisson.conflux`. Xcode registers the ID the first time it signs
    with automatic signing, if it isn't registered yet.
 2. **A tester group first.** In TestFlight, create an internal group and add at
    least one tester. The workflow's TestFlight step can't be saved until a

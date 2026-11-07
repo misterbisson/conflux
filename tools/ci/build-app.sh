@@ -38,7 +38,7 @@ tools/ci/check-app.sh "$archive"
 # runtime, under its own bundle ID so its container is separate from the real
 # app's, shows the app starts, loads llama.framework and runs in the sandbox.
 smoke=build/smoke
-id=com.misterbisson.conflux.smoke
+id=com.caseybisson.conflux.smoke
 rm -rf "$smoke"
 mkdir -p "$smoke"
 cp -R "$archive/Products/Applications/conflux.app" "$smoke/"

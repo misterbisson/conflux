@@ -109,8 +109,9 @@ the host serve anyway, and clients get the bad answers instead.
 
 Those are for conflux built from source. The TestFlight app keeps the same
 files inside its container, under
-`~/Library/Containers/com.misterbisson.conflux/Data/Library/`, so it has a
-token of its own. The window shows it. `conflux token` run from inside the
+`~/Library/Containers/com.caseybisson.conflux/Data/Library/`, so it has a
+token of its own. A Debug build from Xcode uses
+`com.caseybisson.conflux.dev` instead. The window shows it. `conflux token` run from inside the
 app's bundle prints the app's token too, since it runs in the same sandbox:
 
 ```bash
