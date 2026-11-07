@@ -53,6 +53,11 @@ import Testing
         #expect(result.contentLength == 13)
     }
 
+    @Test func modelPathsAreReducedToFileNames() throws {
+        let json = #"{"choices":[{"message":{"content":"x"}}],"model":"/Users/someone/models/m.gguf"}"#
+        #expect(try ChatResult.parse(Data(json.utf8)).model == "m.gguf")
+    }
+
     @Test func parsesAMinimalResponse() throws {
         let result = try ChatResult.parse(Data(#"{"choices":[{"message":{"content":"ok"}}]}"#.utf8))
         #expect(result.model == nil)

@@ -22,16 +22,22 @@ model that's too large for any single device.
 
 ## Status
 
-Phase 0: measuring. The benchmark tool is built, and the conflux app isn't
-started yet.
+Phase 1: one Mac. The gateway, scheduler and llama-server host run on a
+single Mac, with a window or headless. Other devices join in Phase 2.
 
 - [Design](docs/design.md): architecture and decisions
 - [Client requirements](docs/clients.md): what a client does, and what it gets back
 - [Plan](docs/plan.md): phases, and what finishes each one
+- [Running](docs/running.md): serving a model and pointing a client at it
 - [Measuring](docs/phase-0.md): how to benchmark a device with `conflux-bench`
+- [Measurements](docs/measurements.md): results so far
 
 ```bash
-swift build
+brew install llama.cpp
+```
+
+```bash
+swift run -c release conflux
 ```
 
 ```bash

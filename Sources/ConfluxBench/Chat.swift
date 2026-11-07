@@ -50,6 +50,7 @@ public struct ChatResult: Sendable, Equatable {
     public var predictedMs: Double?
     public var finishReason: String?
     public var contentLength = 0
+    public var content: String?
 
     public static func parse(_ data: Data) throws -> ChatResult {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -59,7 +60,11 @@ public struct ChatResult: Sendable, Equatable {
             throw BenchError("response has no choices")
         }
         var result = ChatResult()
-        result.model = object["model"] as? String
+        // Some servers report the model as a file path, which can include a
+        // username. Keep only the file name.
+        result.model = (object["model"] as? String).map { name in
+            name.contains("/") ? String(name.split(separator: "/").last ?? Substring(name)) : name
+        }
         result.fingerprint = object["system_fingerprint"] as? String
         if let usage = object["usage"] as? [String: Any] {
             result.promptTokens = (usage["prompt_tokens"] as? NSNumber)?.intValue
@@ -71,7 +76,8 @@ public struct ChatResult: Sendable, Equatable {
         }
         result.finishReason = first["finish_reason"] as? String
         let message = first["message"] as? [String: Any]
-        result.contentLength = (message?["content"] as? String)?.count ?? 0
+        result.content = message?["content"] as? String
+        result.contentLength = result.content?.count ?? 0
         return result
     }
 }

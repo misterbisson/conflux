@@ -93,6 +93,25 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(Set(keys).count == 1)
     }
 
+    @Test func retriesSendTheTimeLeft() async throws {
+        let busy = StubProtocol.Reply(status: 429, headers: ["Retry-After": "1"], body: Data())
+        StubProtocol.script(host: "deadline.test", [busy, Self.ok])
+        let records = try await runner(host: "deadline.test", concurrency: 1, requests: 1).run()
+        #expect(records.first?.ok == true)
+        let deadlines = StubProtocol.requests(host: "deadline.test")
+            .compactMap { $0.value(forHTTPHeaderField: "Conflux-Timeout").flatMap(Int.init) }
+        #expect(deadlines.count == 2)
+        #expect(deadlines.last! < deadlines.first!)
+    }
+
+    @Test func givesUpWhenTheWaitWouldPassTheTimeout() async throws {
+        let busy = StubProtocol.Reply(status: 429, headers: ["Retry-After": "20"], body: Data())
+        StubProtocol.script(host: "too-long.test", [busy, Self.ok])
+        let records = try await runner(host: "too-long.test", concurrency: 1, requests: 1).run()
+        #expect(records.first?.error == "busy for longer than the timeout")
+        #expect(StubProtocol.requests(host: "too-long.test").count == 1)
+    }
+
     @Test func recordsServerErrors() async throws {
         StubProtocol.script(host: "broken.test", [StubProtocol.Reply(status: 500, body: Data("boom".utf8))])
         let records = try await runner(host: "broken.test", concurrency: 2, requests: 2).run()

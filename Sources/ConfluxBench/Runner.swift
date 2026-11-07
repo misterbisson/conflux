@@ -20,8 +20,16 @@ public struct Record: Sendable, Codable, Equatable {
     public var completionTokens: Int?
     public var promptMs: Double?
     public var predictedMs: Double?
+    /// The model's answer. Kept in memory for `--save-answers` and never
+    /// written to the JSON report, because it can describe a private image.
+    public var answer: String?
 
     public var latency: Double { end - start }
+
+    enum CodingKeys: String, CodingKey {
+        case index, image, start, end, status, ok, error, busyRetries, model, fingerprint
+        case promptTokens, completionTokens, promptMs, predictedMs
+    }
 }
 
 /// Hands out request numbers until the count or the time runs out.
@@ -98,8 +106,7 @@ public struct Runner: Sendable {
         let body = ChatRequest.body(prompt: options.prompt, jpeg: corpus[imageIndex].jpeg,
                                     model: options.model, maxTokens: options.maxTokens)
         // One key for every attempt at this request: retries are the same work.
-        let request = ChatRequest.urlRequest(url: options.chatURL, body: body, token: options.token,
-                                             timeout: options.timeout, idempotencyKey: UUID().uuidString)
+        let key = UUID().uuidString
         let started = Date()
         var record = Record(index: index, image: imageIndex, start: started.timeIntervalSince(origin), end: 0)
 
@@ -112,6 +119,12 @@ public struct Runner: Sendable {
 
         while true {
             if Task.isCancelled { return finish("cancelled") }
+            // Each attempt gets the time this request has left, not a fresh
+            // timeout, so a retried request still ends within `timeout`.
+            let left = options.timeout - Date().timeIntervalSince(started)
+            if left < 6 { return finish("busy for longer than the timeout") }
+            let request = ChatRequest.urlRequest(url: options.chatURL, body: body, token: options.token,
+                                                 timeout: left, idempotencyKey: key)
             let data: Data
             let http: HTTPURLResponse?
             do {
@@ -133,16 +146,16 @@ public struct Runner: Sendable {
                     record.completionTokens = result.completionTokens
                     record.promptMs = result.promptMs
                     record.predictedMs = result.predictedMs
+                    record.answer = result.content
                     return finish(nil)
                 } catch {
                     return finish("\(error)")
                 }
             case 429, 503:
                 record.busyRetries += 1
-                if Date().timeIntervalSince(started) >= options.timeout {
-                    return finish("busy for longer than the timeout")
-                }
+                let left = options.timeout - Date().timeIntervalSince(started)
                 let wait = min(30, RetryAfter.seconds(http?.value(forHTTPHeaderField: "Retry-After")) ?? 1)
+                if wait >= left - 6 { return finish("busy for longer than the timeout") }
                 try? await Task.sleep(for: .seconds(wait))
             default:
                 let snippet = String(decoding: data.prefix(200), as: UTF8.self)

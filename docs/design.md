@@ -108,6 +108,8 @@ bandwidth, so one sequence leaves most of the GPU's compute unused.
 | **Busy** | Model loaded, every slot in use |
 | **Draining** | Finishing what it has, accepting nothing new |
 | **Paused** | Accepting nothing, by choice or by resource policy |
+| **Starting** | Loading its model, or checking that the model reads its input |
+| **Failed** | Can't serve until a person changes something, and says why |
 
 **Offline** is not a state a host reports. The gateway infers it when a host
 stops answering. Every host is treated as opportunistic: a MacBook's lid
@@ -132,8 +134,13 @@ A host refuses work before it hurts the device. It watches:
 
 A vision model whose image encoder or projector fails doesn't report the
 failure. It describes an image it never saw, fluently. So before a host reports
-Ready, it runs a known test image through its model and checks the answer. A
-host that fails the check stays Paused and says why.
+Ready, it renders five random characters in an image, asks the model to read
+them, and checks the answer. It does this three times with fresh text, and
+all three must pass, allowing one misread character in each. A working model
+reads them every time. A model that can't see the image, or that reads it
+badly because it's misconfigured, gets some right by luck, and one probe
+wouldn't tell the difference. A host that fails the check reports Failed and
+says why.
 
 ### iPad hosts
 
@@ -290,6 +297,19 @@ acceleration, multimodal input for vision-language models, and continuous
 batching across parallel sequences. It is also embeddable on iPadOS. One runtime
 on every device also keeps results comparable ([Model identity](#model-identity)).
 
+**On macOS, a host supervises a `llama-server` process** (decided in Phase 1).
+It starts the process on a loopback port with `--parallel` set to the host's
+slots, waits for it to load, runs the self-check, and forwards requests to it.
+It restarts the process if it exits, and gives up after four exits in five
+minutes. Reasons:
+
+- A runtime crash can't take the gateway down with it.
+- It's exactly what Phase 0 measured, continuous batching included.
+- The build and version are easy to read for the model's fingerprint.
+
+The iPad host can't start processes, so it will link llama.cpp in-process
+(Phase 3). It will sit behind the same host interface.
+
 Later candidates, each behind the same host interface:
 
 - **Apple Foundation Models**: a system-provided model, advertised as a
@@ -319,10 +339,6 @@ These are rough estimates, to be replaced by measurements:
   drop as devices heat up. Phase 0 measures this.
 - **Header names** for the deadline and the preference list. The ones in
   [clients.md](clients.md) are provisional.
-- **How to embed llama.cpp**: link it in-process on every platform, or
-  supervise a `llama-server` process on macOS. In-process is shared with the
-  iPad host. A separate process is faster to start with, and crashes stay
-  contained.
 - **Discovery without internet.** Whether apple-iroh's local-network discovery
   is enough for a LAN-only mesh when the internet is down.
 - **Meshes shared between people**: trust beyond one Apple Account.

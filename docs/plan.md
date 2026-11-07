@@ -34,9 +34,15 @@ Test images must be generated, or openly licensed with metadata stripped (see
 **Done when:** we have a throughput-against-slots curve for each device class we
 care about, and a go or no-go on the expected gain.
 
+*Progress:* M2 with 24 GB is measured ([measurements.md](measurements.md)).
+On that device, extra slots barely help. Smaller images are much faster, but
+the model measured reads them badly, so for it resolution isn't a free
+lever. The Pro and iPad device classes are still to measure.
+
 ## Phase 1: One Mac, gateway and host
 
-A macOS app that serves its own model to clients on loopback.
+A macOS app that serves its own model to clients on loopback. *Built.* How to
+run it is in [running.md](running.md).
 
 - Host: llama.cpp with one user-chosen model, slots set from Phase 0, resource
   policy, a self-check at load, and the states from the design.
@@ -44,9 +50,13 @@ A macOS app that serves its own model to clients on loopback.
   deadlines, `Retry-After`, request IDs, per-response `model` and
   `system_fingerprint`), and the status codes from [clients.md](clients.md).
 - Settles the open question of linking llama.cpp in-process versus supervising
-  `llama-server`.
+  `llama-server`. *Settled: supervise `llama-server` on macOS*
+  ([design.md](design.md#runtimes)).
 - A simple window: the model served, state, active and completed requests,
-  throughput.
+  throughput. Also `conflux serve`, the same thing without a window.
+
+Left for later phases: streaming responses, hedging (it needs a second host),
+and a signed app bundle.
 
 **Done when:** an existing OpenAI-compatible client pointed at the gateway gets
 the same answers as from `llama-server` directly, at the same or better

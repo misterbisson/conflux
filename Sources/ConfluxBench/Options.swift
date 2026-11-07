@@ -28,6 +28,8 @@ public struct RunOptions: Sendable, Equatable {
     public var token: String?
     public var timeout: TimeInterval = 120
     public var jsonPath: String?
+    /// Where to write each request's answer, one JSON object per line.
+    public var answersPath: String?
     public var label: String?
 
     public init(endpoint: URL, images: URL) {
@@ -65,7 +67,7 @@ public struct RunOptions: Sendable, Equatable {
         let known: Set<String> = [
             "--endpoint", "--images", "--concurrency", "--requests", "--duration", "--warmup",
             "--prompt", "--prompt-file", "--max-tokens", "--max-dimension", "--limit", "--model",
-            "--timeout", "--json", "--label",
+            "--timeout", "--json", "--save-answers", "--label",
         ]
         while index < args.count {
             let flag = args[index]
@@ -116,6 +118,7 @@ public struct RunOptions: Sendable, Equatable {
         }
         options.model = values["--model"]
         options.jsonPath = values["--json"]
+        options.answersPath = values["--save-answers"]
         options.label = values["--label"]
         // From the environment only, so it stays out of shell history and process lists.
         options.token = environment["CONFLUX_TOKEN"].flatMap { $0.isEmpty ? nil : $0 }

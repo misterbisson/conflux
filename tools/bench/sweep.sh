@@ -16,6 +16,7 @@
 #   --prompt-file PATH       prompt sent with every image
 #   --max-tokens N           completion limit per request
 #   --max-dimension PX       downscale images to this longer side
+#   --timeout 600            per-request timeout; queued requests wait a full request first
 #   --port 8091              port for llama-server, on loopback only
 #   --label TEXT             prefix for each run's label
 #
@@ -23,9 +24,9 @@
 
 set -eu
 
-usage() { sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'; }
 
-images="" slots="1 2 4 8" ctx=8192 per=12 port=8091 label=""
+images="" slots="1 2 4 8" ctx=8192 per=12 port=8091 label="" timeout=600
 prompt_file="" max_tokens="" max_dimension=""
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -37,6 +38,7 @@ while [ $# -gt 0 ]; do
 	--max-tokens) max_tokens=$2; shift 2 ;;
 	--max-dimension) max_dimension=$2; shift 2 ;;
 	--port) port=$2; shift 2 ;;
+	--timeout) timeout=$2; shift 2 ;;
 	--label) label="$2 "; shift 2 ;;
 	--) shift; break ;;
 	-h | --help) usage; exit 0 ;;
@@ -79,7 +81,7 @@ for n in $slots; do
 	# next request to arrive. llama-server queues the rest.
 	inflight=$((n * 2))
 	"$bench" run --endpoint "127.0.0.1:$port" --images "$images" \
-		--concurrency "$inflight" --warmup "$inflight" --requests $((inflight + per * n)) \
+		--concurrency "$inflight" --warmup "$inflight" --requests $((inflight + per * n)) --timeout "$timeout" \
 		${prompt_file:+--prompt-file "$prompt_file"} ${max_tokens:+--max-tokens "$max_tokens"} \
 		${max_dimension:+--max-dimension "$max_dimension"} \
 		--label "${label}parallel $n" --json "$results/parallel-$n.json" | tee "$results/parallel-$n.txt"
