@@ -297,18 +297,31 @@ acceleration, multimodal input for vision-language models, and continuous
 batching across parallel sequences. It is also embeddable on iPadOS. One runtime
 on every device also keeps results comparable ([Model identity](#model-identity)).
 
-**On macOS, a host supervises a `llama-server` process** (decided in Phase 1).
-It starts the process on a loopback port with `--parallel` set to the host's
-slots, waits for it to load, runs the self-check, and forwards requests to it.
-It restarts the process if it exits, and gives up after four exits in five
-minutes. Reasons:
+**Hosts link llama.cpp in-process**, on macOS and iPadOS alike. The trust
+model keeps device IDs in iCloud Keychain, which an app gets only when it's
+distributed through Apple: TestFlight or the App Store. Those apps run in the
+App Sandbox, which can't start a Homebrew `llama-server`. So conflux links
+the xcframework llama.cpp publishes with each release, pinned by version and
+checksum, and runs models inside the app.
 
-- A runtime crash can't take the gateway down with it.
-- It's exactly what Phase 0 measured, continuous batching included.
-- The build and version are easy to read for the model's fingerprint.
+- Each slot gets its own llama.cpp context. The model's weights and the
+  vision projector are shared, and the projector runs one image at a time.
+- Requests become prompts the way llama-server builds them: the model's chat
+  template, and images placed where llama.cpp would place them. Responses
+  carry llama-server's `usage` and `timings`. With the same build, model and
+  request at temperature 0, both runtimes give identical answers.
+- What it costs: a crash inside llama.cpp takes the app down with it, and a
+  context per slot doesn't batch across slots the way llama-server's
+  continuous batching does. Phase 0 found extra slots add little on a base M
+  chip; if Pro and Max chips show otherwise, the in-process host should batch
+  too.
 
-The iPad host can't start processes, so it will link llama.cpp in-process
-(Phase 3). It will sit behind the same host interface.
+**`llama-server` stays as a second runtime** for the command line:
+`conflux serve --runtime llama-server`. The host starts the process on a
+loopback port, waits for it to load, runs the self-check, forwards requests,
+and restarts it if it exits, giving up after four exits in five minutes. It's
+useful for comparing the two and where crash isolation matters more than
+distribution.
 
 Later candidates, each behind the same host interface:
 

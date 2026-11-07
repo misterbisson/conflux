@@ -2,16 +2,16 @@ import Foundation
 import Testing
 @testable import ConfluxCore
 
-@Suite struct LlamaServerConfigTests {
+@Suite struct ModelConfigTests {
     @Test func arguments() {
-        let config = LlamaServerConfig(model: "/m/Some-Model-Q4_K_M.gguf", projector: "/m/mmproj.gguf", slots: 4,
+        let config = ModelConfig(model: "/m/Some-Model-Q4_K_M.gguf", projector: "/m/mmproj.gguf", slots: 4,
                                        contextPerSlot: 4096, extraArguments: ["--threads", "4"])
         #expect(config.modelID == "Some-Model-Q4_K_M")
         #expect(config.arguments(port: 9000) == [
             "--host", "127.0.0.1", "--port", "9000", "-m", "/m/Some-Model-Q4_K_M.gguf", "--mmproj", "/m/mmproj.gguf",
             "--parallel", "4", "-c", "16384", "--threads", "4",
         ])
-        #expect(LlamaServerConfig(model: "/m/plain").modelID == "plain")
+        #expect(ModelConfig(model: "/m/plain").modelID == "plain")
     }
 
     @Test func buildNumbers() {
@@ -26,8 +26,8 @@ import Testing
         0.00.900 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
         0.01.000 I srv load_model: try adding more memory
         """
-        #expect(LlamaServerHost.advice(in: log) == "add --image-min-tokens 1024")
-        #expect(LlamaServerHost.advice(in: "0.01 I srv model loaded") == nil)
+        #expect(SelfCheck.advice(in: log) == "add --image-min-tokens 1024")
+        #expect(SelfCheck.advice(in: "0.01 I srv model loaded") == nil)
     }
 
     @Test func helpers() throws {
@@ -97,7 +97,8 @@ import Testing
     @Test func supervisesAProcess() async throws {
         guard let fixture = try fixture() else { return }
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let config = LlamaServerConfig(executable: fixture.executable, model: fixture.model, slots: 2, selfCheck: true)
+        let config = ModelConfig(runtime: .llamaServer, model: fixture.model, slots: 2, selfCheck: true,
+                                 executable: fixture.executable)
         let host = LlamaServerHost(id: "test", config: config, logURL: fixture.directory.appending(path: "log.txt"))
         await host.start()
         let ready = await waitFor(host, .available)
@@ -141,7 +142,8 @@ import Testing
     @Test func reportsAMissingModelFile() async throws {
         guard let fixture = try fixture() else { return }
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let config = LlamaServerConfig(executable: fixture.executable, model: fixture.directory.appending(path: "gone.gguf").path)
+        let config = ModelConfig(runtime: .llamaServer, model: fixture.directory.appending(path: "gone.gguf").path,
+                                 executable: fixture.executable)
         let host = LlamaServerHost(config: config, logURL: fixture.directory.appending(path: "log.txt"))
         #expect(await host.model?.fingerprint == "identifying")
         await host.start()

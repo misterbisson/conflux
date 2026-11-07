@@ -61,6 +61,49 @@ public enum SelfCheck {
         return false
     }
 
+    /// Runs `probes` checks through `complete`, each with fresh text. Nil
+    /// when all pass, otherwise what went wrong. All must pass: a working
+    /// model reads them every time, while one that reads its input badly
+    /// gets some right by luck, and a single probe wouldn't tell the two
+    /// apart.
+    public static func run(vision: Bool, probes: Int = 3,
+                           complete: (Data) async throws -> HostReply) async -> String? {
+        var misses: [String] = []
+        for _ in 0..<probes {
+            do {
+                let probe = try SelfCheck.probe(vision: vision)
+                let reply = try await complete(probe.body)
+                guard (200..<300).contains(reply.status) else {
+                    let detail = String(decoding: reply.body.prefix(200), as: UTF8.self)
+                    return "the model answered \(reply.status): \(detail)"
+                }
+                let answer = SelfCheck.answer(in: reply.body) ?? ""
+                if !SelfCheck.passes(answer: answer, expected: probe.expected) {
+                    misses.append("asked to read \(probe.expected), it answered \(answer.prefix(60).debugDescription)")
+                }
+            } catch {
+                return "\(error)"
+            }
+        }
+        guard let first = misses.first else { return nil }
+        return "\(misses.count) of \(probes) misread; \(first)"
+    }
+
+    /// llama.cpp's own suggestions for a model that may read its input
+    /// badly, from its warnings: "if you encounter problems with accuracy,
+    /// try adding --image-min-tokens 1024". Passed on to the person, since
+    /// the fix depends on the model.
+    public static func advice(in log: String) -> String? {
+        let suggestions = log.split(whereSeparator: \.isNewline).compactMap { line -> String? in
+            guard let range = line.range(of: "try adding ", options: .caseInsensitive) else { return nil }
+            let suggestion = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            return suggestion.hasPrefix("-") ? "add \(suggestion)" : nil
+        }
+        var seen: Set<String> = []
+        let unique = suggestions.filter { seen.insert($0).inserted }
+        return unique.isEmpty ? nil : unique.joined(separator: "; ")
+    }
+
     /// The text of the first choice in a chat completion response.
     public static func answer(in body: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],

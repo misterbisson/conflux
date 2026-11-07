@@ -25,6 +25,8 @@ jobs:
         run: swift --version
       - name: Build
         run: swift build
+      - name: Fetch the test model
+        run: echo "CONFLUX_TEST_MODEL=$(tools/ci/fetch-test-model.sh)" >> "$GITHUB_ENV"
       - name: Test
         run: swift test
       - name: Release build

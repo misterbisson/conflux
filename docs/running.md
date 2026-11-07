@@ -1,13 +1,12 @@
 # Running conflux
 
 Phase 1 runs on one Mac: a gateway on loopback, serving this Mac's own model
-through `llama-server`. Other Macs and iPads join in later phases
+with llama.cpp. Other Macs and iPads join in later phases
 ([plan.md](plan.md)).
 
 ## What you need
 
 - macOS 14 or later, on Apple Silicon.
-- llama.cpp: `brew install llama.cpp`.
 - A GGUF model and, for a vision model, its multimodal projector (`mmproj`).
   [phase-0.md](phase-0.md) says how to choose one and how many slots it
   should get.
@@ -21,7 +20,7 @@ swift run -c release conflux
 Choose the model and projector, set the slots, and press **Start**. The
 window shows the host's state, what's running and waiting, and throughput.
 **Drain** finishes what's running and takes nothing new. **Pause** takes
-nothing new straight away. **Stop** ends serving and quits `llama-server`.
+nothing new straight away. **Stop** ends serving and unloads the model.
 
 Settings are kept between launches. The app is built and run from source for
 now. A signed app comes later.
@@ -33,8 +32,19 @@ swift run -c release conflux serve --model ~/models/model.gguf --mmproj ~/models
 ```
 
 It prints the endpoint, then a line each time the host's state changes.
-`Ctrl-C` stops it and its `llama-server`. Everything after `--` is passed to
-`llama-server`. `conflux help` lists the options.
+`Ctrl-C` stops it. `conflux help` lists the options.
+
+### Runtimes
+
+llama.cpp is built into conflux, the same build Phase 0 measured, and
+models run inside it. That's the only runtime the app uses, since a
+sandboxed app can't start other programs.
+
+`conflux serve --runtime llama-server` runs llama.cpp's own server as a
+separate process instead, so a crash in the model can't take the gateway
+down. It needs llama.cpp installed (`brew install llama.cpp`), and
+everything after `--` is passed to `llama-server`. With the same llama.cpp
+build, both runtimes give the same answers ([design.md](design.md#runtimes)).
 
 ## Pointing a client at it
 
@@ -68,18 +78,18 @@ recover.
 
 Before serving, the host shows its model five random characters in an image
 and asks it to read them back ([design.md](design.md), *Self-check*). A host
-that fails says what the model answered, and passes on any advice
-llama-server logged about it.
+that fails says what the model answered, and passes on any advice llama.cpp
+logged about it.
 
 The usual cause is a model that needs an option to read images well. Qwen-VL
-models, for one, read small images badly unless llama-server gives each
-image at least 1,024 tokens. That model family needs:
+models, for one, read small images badly unless llama.cpp gives each image
+at least 1,024 tokens. That model family needs:
 
 ```bash
-swift run -c release conflux serve --model ... --mmproj ... -- --image-min-tokens 1024
+swift run -c release conflux serve --model ... --mmproj ... --image-min-tokens 1024
 ```
 
-In the app, put `--image-min-tokens 1024` in **More llama-server options**.
+In the app, set **Fewest tokens per image** to 1024.
 Check the model's documentation for others. Turning the self-check off makes
 the host serve anyway, and clients get the bad answers instead.
 
@@ -88,5 +98,6 @@ the host serve anyway, and clients get the bad answers instead.
 | What | Where |
 |---|---|
 | Gateway token | `~/Library/Application Support/conflux/token` |
-| `llama-server` log | `~/Library/Logs/conflux/llama-server.log` |
+| llama.cpp log | `~/Library/Logs/conflux/llama.log` |
+| `llama-server` log, with that runtime | `~/Library/Logs/conflux/llama-server.log` |
 | Model file hashes, cached | `~/Library/Caches/conflux/hashes.json` |

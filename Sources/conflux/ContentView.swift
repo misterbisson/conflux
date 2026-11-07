@@ -102,22 +102,21 @@ struct ContentView: View {
             Stepper("Largest image side: \(host.maxImageDimension) px", value: binding(\.maxImageDimension),
                     in: 256...4096, step: 128)
             Toggle("Check the model reads its input before serving", isOn: binding(\.selfCheck))
-            TextField("More llama-server options", text: Binding(
-                get: { host.extraArguments.joined(separator: " ") },
-                set: { text in
-                    var updated = host
-                    updated.extraArguments = text.split(whereSeparator: \.isWhitespace).map(String.init)
-                    model.settings.host = updated
-                }), prompt: Text("for example --image-min-tokens 1024"))
+            if model.settings.host?.projector != nil {
+                TextField("Fewest tokens per image", value: binding(\.imageMinTokens), format: .number.grouping(.never),
+                          prompt: Text("the model's own setting"))
+                Text("Some models read small images badly with fewer tokens. Qwen-VL models want 1024.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Text("Slots come from measuring this Mac with its model. See docs/phase-0.md.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(model.running)
     }
 
-    var host: LlamaServerConfig { model.settings.host ?? LlamaServerConfig(model: "") }
+    var host: ModelConfig { model.settings.host ?? ModelConfig(model: "") }
 
-    func binding<T>(_ path: WritableKeyPath<LlamaServerConfig, T>) -> Binding<T> {
+    func binding<T>(_ path: WritableKeyPath<ModelConfig, T>) -> Binding<T> {
         Binding(get: { host[keyPath: path] },
                 set: { value in
                     var updated = host
