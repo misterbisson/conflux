@@ -1,0 +1,25 @@
+# macOS and Xcode
+.DS_Store
+xcuserdata/
+DerivedData/
+*.xcuserstate
+build/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Local signing settings: team IDs and profiles stay off the public repo
+*.local.xcconfig
+
+# Model weights are fetched, never committed
+*.gguf
+*.safetensors
+*.mlpackage
+models/
+
+# Vendored binaries are fetched by checksum
+Vendor/
+
+# Benchmark output can identify devices; commit only scrubbed summaries
+tools/bench/results/

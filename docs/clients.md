@@ -1,0 +1,159 @@
+# Client requirements
+
+What a client has to do to use a conflux mesh, and what it gets back. The
+architecture behind this is in [design.md](design.md).
+
+A plain OpenAI-compatible client works with no changes ([below](#a-client-that-does-none-of-this)).
+A client that follows the recommendations here gets more of the mesh's
+throughput, and results it can attribute exactly.
+
+> **Status: provisional.** Nothing here is built yet. Header names in
+> particular may change before the first release.
+
+## The API
+
+The gateway serves a subset of the OpenAI API on loopback:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Whether the gateway is up. 200 even when no host is available. |
+| `GET /v1/models` | Every model currently served in the mesh, plus aliases |
+| `POST /v1/chat/completions` | One request, including image input |
+
+Requests and responses follow the OpenAI schema, including `response_format`
+for structured output and image parts as `data:` URLs.
+
+## Requirements
+
+### Send a token
+
+```
+Authorization: Bearer <token>
+```
+
+The gateway issues tokens. Early versions may allow tokenless loopback access
+as an opt-in setting, so clients that can't send a token yet still work.
+Clients should support a token from the start.
+
+### Own your work
+
+conflux doesn't keep a durable queue. The client keeps track of what still needs
+doing, what's done, and what to retry. A request may fail, and in rare cases it
+may run twice. The client records a result once, keyed by its own request ID.
+
+### Record which model answered, per response
+
+Read `model` and `system_fingerprint` from **every response**. Don't use a value
+remembered from `/v1/models`. A mesh serves several models at once, and with an
+alias or preference list, consecutive requests can be answered by different
+models.
+
+| Field | Contents |
+|---|---|
+| `model` | The artifact that ran, for example a model name with its quantization |
+| `system_fingerprint` | Runtime, runtime version and artifact hash |
+
+Results are not bit-for-bit reproducible, even at temperature 0. Batch size and
+hardware change the arithmetic. These two fields tell you exactly what produced
+a result, not that a re-run will match it.
+
+## Recommendations
+
+### Send a deadline
+
+```
+Conflux-Timeout: 115
+```
+
+Seconds the client is still willing to wait, usually a little less than its own
+HTTP timeout. The gateway **always answers within that time**: with a result,
+with `429`, or with `503`. It never sends a request to a host whose expected
+finish would pass the deadline.
+
+It follows that a client timeout means the gateway itself is stuck, not that
+the mesh is busy. Many clients treat repeated timeouts as a dead server and
+back off for minutes. With a deadline, that backoff only triggers when it
+should.
+
+Without the header, the gateway uses a conservative default wait (about 30
+seconds), then answers `429`.
+
+### Honor `Retry-After`
+
+`429` and `503` responses carry `Retry-After` in seconds, estimated from when
+the gateway expects a slot to free up. It is usually short. Waiting exactly that
+long, rather than a fixed pause, keeps slots from sitting idle between retries.
+
+### Send a request ID
+
+```
+Idempotency-Key: <stable id for this unit of work>
+```
+
+Stable across retries of the same work. The gateway uses it to:
+
+- return the original result when a client retries something that already
+  finished;
+- run extra copies of a slow request on other hosts and return exactly one
+  answer.
+
+### Allow generous concurrency
+
+Set the client's concurrency **at or above the mesh's peak slot count**, not
+tuned to one server. The gateway holds what hosts can't take yet, inside each
+request's deadline, and answers `429` for the rest. Hosts join and leave during
+a run. A generous fixed concurrency follows that without the client tracking
+capacity.
+
+### Choose models deliberately
+
+Set `model` to one of:
+
+| Value | Eligible hosts |
+|---|---|
+| An exact artifact ID from `/v1/models` | Only hosts serving that artifact |
+| An alias, for example `any-vision` | Any host whose model has the capability |
+
+To accept a list of models in order of preference:
+
+```
+Conflux-Models: model-a, model-b, model-c
+```
+
+The gateway takes the first model in the list that has a free slot. conflux
+never ranks models itself. Whatever ran is in the response.
+
+### Send images at the size the model needs
+
+Each model's entry in `/v1/models` includes the largest image dimension it
+uses. Images larger than that cost transfer time and give no benefit. Image
+resolution is also the main factor in how long a vision model spends reading
+an image, so it is worth tuning per task.
+
+## Status codes
+
+| Status | Meaning | Client action |
+|---|---|---|
+| `200` | Result | Record it, with `model` and `system_fingerprint` |
+| `400` | Malformed request | Fix the request. Retrying won't help. |
+| `401` | Missing or wrong token | Fix configuration |
+| `404` | No host has served a model this request accepts since the gateway started | Check the model ID, or widen the accepted models |
+| `429` | Mesh busy: no slot in time | Retry after `Retry-After` |
+| `503` | Hosts failed and the deadline ran out, or every host for an accepted model is offline | Retry after `Retry-After` |
+| `500` | The gateway itself failed | Treat as a broken server |
+
+A failing host never shows up as `500`. The gateway retries on another host, or
+answers `503`. `500` means the gateway itself is at fault.
+
+## A client that does none of this
+
+A stock OpenAI-compatible client, with no token support, no deadline header and
+no request ID:
+
+- works, if tokenless loopback access is allowed;
+- gets `429` with `Retry-After` after the default wait (the official OpenAI
+  SDKs retry those on their own);
+- gets results whose `model` is accurate per response, whether or not it
+  records them;
+- can't benefit from duplicate suppression, so a retry after a timeout may run
+  the request twice.
