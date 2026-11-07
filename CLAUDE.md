@@ -4,6 +4,21 @@ conflux is a personal inference mesh for Apple devices. Start with
 [README.md](README.md), then [docs/design.md](docs/design.md),
 [docs/clients.md](docs/clients.md) and [docs/plan.md](docs/plan.md).
 
+## Building
+
+A Swift package, macOS 14 or later, with no dependencies beyond the SDK:
+
+```bash
+swift build
+```
+
+```bash
+swift test
+```
+
+Tests use Swift Testing. CI runs both on every pull request, plus the
+public-repository checks in `tools/ci/`.
+
 ## This repository is public
 
 Everything here is public: files, commit messages, branch names, pull requests,
@@ -73,3 +88,7 @@ anyone can open a pull request that runs workflows. So:
   on our machines.
 - Keep the repository setting that requires approval before workflows run for
   first-time contributors.
+- `tools/ci/check-public.sh` enforces what it can of this file: no weights or
+  large files, no image metadata, pinned actions, no `pull_request_target`, no
+  self-hosted runners and no secrets in workflows. Run it before pushing. When
+  a rule here changes, change the check with it.

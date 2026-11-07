@@ -11,9 +11,11 @@ whether the next phase is worth doing.
 
 Find out how much one device can do, and how much more batching gets.
 
-- **A load generator** in `tools/bench`: send a corpus of test images to an
-  OpenAI-compatible endpoint at a chosen concurrency, and report completed
-  requests per hour, latency percentiles, and prompt and completion tokens.
+- **A load generator**, `conflux-bench`, with `tools/bench/sweep.sh` to run it
+  across slot counts: send a corpus of test images to an OpenAI-compatible
+  endpoint at a chosen concurrency, and report completed requests per hour,
+  latency percentiles, and prompt and completion tokens. *Built.* How to use
+  it is in [phase-0.md](phase-0.md).
 - **Batching on the largest Mac**: run `llama-server` with `--parallel` set to
   1, 2, 4 and 8, and measure throughput at each. Total context (`-c`) is split
   across slots, so it has to grow with `--parallel`, or long image prompts won't
