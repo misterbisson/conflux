@@ -22,8 +22,13 @@ window shows the host's state, what's running and waiting, and throughput.
 **Drain** finishes what's running and takes nothing new. **Pause** takes
 nothing new straight away. **Stop** ends serving and unloads the model.
 
-Settings are kept between launches. The app is built and run from source for
-now. A signed app comes later.
+Settings are kept between launches.
+
+The app also comes from TestFlight ([releasing.md](releasing.md)). That build
+runs in the App Sandbox, so it can open only the model files chosen in it, and
+it keeps that access between launches. A file that's moved or renamed is
+followed. One that's replaced, or on a disk that isn't connected, has to be
+chosen again, and the app says so when you press **Start**.
 
 ## Without a window
 
@@ -101,3 +106,14 @@ the host serve anyway, and clients get the bad answers instead.
 | llama.cpp log | `~/Library/Logs/conflux/llama.log` |
 | `llama-server` log, with that runtime | `~/Library/Logs/conflux/llama-server.log` |
 | Model file hashes, cached | `~/Library/Caches/conflux/hashes.json` |
+
+Those are for conflux built from source. The TestFlight app keeps the same
+files inside its container, under
+`~/Library/Containers/com.caseybisson.conflux/Data/Library/`, so it has a
+token of its own. A Debug build from Xcode uses
+`com.caseybisson.conflux.dev` instead. The window shows it. `conflux token` run from inside the
+app's bundle prints the app's token too, since it runs in the same sandbox:
+
+```bash
+/Applications/conflux.app/Contents/MacOS/conflux token
+```

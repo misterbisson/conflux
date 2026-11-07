@@ -55,9 +55,12 @@ run it is in [running.md](running.md).
   ([design.md](design.md#runtimes)). Both runtimes remain.
 - A simple window: the model served, state, active and completed requests,
   throughput. Also `conflux serve`, the same thing without a window.
+- A sandboxed app, signed by Xcode Cloud and distributed through TestFlight
+  ([releasing.md](releasing.md)). Phase 2's trust model needs it for iCloud
+  Keychain.
 
-Left for later phases: streaming responses, hedging (it needs a second host),
-and a signed app bundle.
+Left for later phases: streaming responses and hedging (it needs a second
+host).
 
 **Done when:** an existing OpenAI-compatible client pointed at the gateway gets
 the same answers as from `llama-server` directly, at the same or better
@@ -135,17 +138,18 @@ never have to match.
 ## CI
 
 The repository is public, so GitHub's macOS runners are free. CI runs on every
-pull request:
+pull request, with the Xcode that Xcode Cloud releases with:
 
-- build the macOS and iPadOS targets;
-- unit tests: scheduling, admission, the contract's status codes and headers,
+- build and test the package: scheduling, admission, the contract's status
+  codes and headers, the in-process runtime against a tiny model, and later
   identity and allow-list logic;
+- archive the Mac app as Xcode Cloud does, signed ad hoc, check it for what App
+  Store Connect requires, and run it in the sandbox;
+- build the iPadOS target, once there is one (Phase 3);
 - later, the Phase 0 load generator against a small model on the runner, to
   catch regressions in the gateway, not to produce benchmarks.
 
-Workflow rules, because the repository is public, are in
-[CLAUDE.md](../CLAUDE.md#ci).
-
-Code signing, notarization and TestFlight aren't in CI until they're needed.
-When they are, the signing secrets go in a protected environment that pull
-requests from forks can't reach.
+Xcode Cloud signs releases and uploads them to TestFlight, from tags only. No
+signing secret is in GitHub, protected or not: Xcode Cloud manages signing
+itself. [releasing.md](releasing.md) has the details, and workflow rules,
+because the repository is public, are in [CLAUDE.md](../CLAUDE.md#ci).

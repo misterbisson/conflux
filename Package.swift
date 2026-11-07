@@ -8,6 +8,8 @@ let package = Package(
     products: [
         .executable(name: "conflux", targets: ["conflux"]),
         .executable(name: "conflux-bench", targets: ["conflux-bench"]),
+        // For the Xcode app target in project.yml.
+        .library(name: "ConfluxCore", targets: ["ConfluxCore"]),
     ],
     targets: [
         // llama.cpp, built by its project for Apple platforms. Pinned by

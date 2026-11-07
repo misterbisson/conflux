@@ -13,14 +13,33 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Xcode Cloud builds releases with its latest Xcode. .xcode-version records
+  # which that is, and every macOS job here uses it (docs/releasing.md).
+  toolchain:
+    name: toolchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      runner: ${{ steps.xcode.outputs.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Runner for .xcode-version
+        id: xcode
+        run: tools/ci/xcode-runner.sh >> "$GITHUB_OUTPUT"
+
   test:
     name: test
-    runs-on: macos-26
+    needs: toolchain
+    runs-on: ${{ needs.toolchain.outputs.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Xcode
+        run: tools/ci/select-xcode.sh
       - name: Toolchain
         run: swift --version
       - name: Build
@@ -31,6 +50,26 @@ jobs:
         run: swift test
       - name: Release build
         run: swift build -c release
+
+  # What Xcode Cloud does after a tag, short of signing and uploading: generate
+  # the project with its post-clone hook, archive Release, and check the app
+  # for what App Store Connect requires. No secrets: the archive is signed ad
+  # hoc.
+  app:
+    name: app
+    needs: toolchain
+    runs-on: ${{ needs.toolchain.outputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Xcode
+        run: tools/ci/select-xcode.sh
+      - name: Generate the project
+        run: ci_scripts/ci_post_clone.sh
+      - name: Archive and check
+        run: tools/ci/build-app.sh
 
   checks:
     name: checks
@@ -45,4 +84,4 @@ jobs:
       - name: Lint workflows
         run: tools/ci/actionlint.sh
       - name: Lint shell scripts
-        run: shellcheck tools/bench/*.sh tools/ci/*.sh
+        run: shellcheck tools/bench/*.sh tools/ci/*.sh ci_scripts/*.sh

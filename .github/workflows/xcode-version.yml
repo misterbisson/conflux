@@ -1,0 +1,43 @@
+name: Xcode version
+
+# Xcode Cloud builds releases with Apple's latest Xcode release, and GitHub's
+# CI uses the version in .xcode-version. Once a week this compares the two and
+# opens an issue when .xcode-version is behind. It reads public pages only.
+
+on:
+  schedule:
+    - cron: "17 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare with Apple's latest release
+        id: compare
+        run: tools/ci/xcode-latest.sh | tee "$RUNNER_TEMP/report.md"
+      - name: Open an issue
+        if: steps.compare.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+        run: |
+          title="Xcode $LATEST is out: update .xcode-version"
+          open="$(gh issue list --state open --search "\"$title\" in:title" --json title --jq "map(select(.title == \"$title\")) | length")"
+          if [ "$open" = 0 ]; then
+            gh issue create --title "$title" --body-file "$RUNNER_TEMP/report.md"
+          else
+            echo "already open: $title"
+          fi

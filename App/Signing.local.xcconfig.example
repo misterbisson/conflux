@@ -1,0 +1,4 @@
+// Copy to App/Signing.local.xcconfig, which is never committed, and add your
+// Team ID from developer.apple.com/account, under Membership details.
+
+DEVELOPMENT_TEAM =
