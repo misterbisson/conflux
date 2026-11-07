@@ -119,7 +119,8 @@ import Testing
         let back = await waitFor(host, .available)
         let after = await host.availability
         #expect(restarting || back)
-        #expect(back, "\(after)")
+        let log = (try? String(contentsOf: fixture.directory.appending(path: "log.txt"), encoding: .utf8)) ?? ""
+        #expect(back, "\(after)\n\(log.suffix(2000))")
 
         host.stop()
         #expect(await host.availability == .offline)

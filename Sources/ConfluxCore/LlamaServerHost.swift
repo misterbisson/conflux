@@ -173,15 +173,24 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
         process.terminationHandler = { [weak self] finished in
             self?.exited(finished, executable: executable)
         }
-        do {
-            try process.run()
-        } catch {
-            return set(.failed("can't start llama-server: \(error.localizedDescription)"))
-        }
-        lock.withLock {
+        // Registered before it runs: a process that exits at once must
+        // still be recognized by `exited`, or nothing restarts it and the
+        // host waits on it forever.
+        let registered = lock.withLock { () -> Bool in
+            guard !stopping else { return false }
             self.process = process
             self.port = port
             state = .starting("loading the model")
+            return true
+        }
+        guard registered else { return }
+        do {
+            try process.run()
+        } catch {
+            lock.withLock {
+                if self.process === process { self.process = nil; self.port = nil }
+            }
+            return set(.failed("can't start llama-server: \(error.localizedDescription)"))
         }
 
         guard await waitUntilHealthy(port: port, process: process) else { return }
