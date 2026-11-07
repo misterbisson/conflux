@@ -77,9 +77,17 @@ parallel 8         16       …
   generation is limited by memory bandwidth and batching is paying off.
 - **hot** is the share of samples where this machine's thermal state was
   serious or critical.
+- **swap +MB** is how much swap grew during the run. More than a few hundred
+  MB means the machine was short of memory, and that run's numbers measure
+  the disk more than the model. Close other applications, use fewer slots or
+  a smaller model, and run it again.
 
 The best slot count is where **per hour** stops improving, or where latency
-gets too close to a client's deadline. Total context is split across slots,
+gets too close to a client's deadline. Don't assume more slots help: on image
+workloads, reading the image is limited by compute, and on a base M chip extra
+slots barely add anything ([measurements.md](measurements.md)). Requests queue
+behind each other at twice the slot count, so the script's per-request timeout
+defaults to 600 s (`--timeout`). Total context is split across slots,
 so the script sets `-c` to `--ctx-per-slot` × slots. If image prompts are
 long, raise `--ctx-per-slot`.
 
@@ -107,7 +115,10 @@ Repeat with `--max-dimension` at 512, 768, 1024 and 1536, and compare:
 ```
 
 Resolution trades time against accuracy, so check the answers as well as the
-speed. A faster run that misreads images is not a gain.
+speed. A faster run that misreads images is not a gain. `--save-answers PATH`
+writes each answer as a JSON line (image position, model, answer), so two runs
+over the same images can be compared. Answers can describe your images, so
+they're written only where you ask, and never into the JSON report.
 
 ## Question 4: sustained throughput
 

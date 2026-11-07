@@ -24,6 +24,7 @@ public enum CLI {
       --model ID           model to request (default: let the server choose)
       --timeout SECONDS    per-request timeout (default 120)
       --json PATH          also write the full report as JSON
+      --save-answers PATH  write each answer as a JSON line: image, model, answer
       --label TEXT         a name for this run, kept in the report
 
     images: write generated test images that contain nothing personal.
@@ -70,12 +71,14 @@ public enum CLI {
         let thermal = ThermalLog()
         let sampling = await thermal.sample()
         let startedAt = Date()
+        let swapBefore = Machine.swapUsedMB()
         let records = await runner.run()
         sampling.cancel()
 
-        let report = Report(options: options, corpus: corpus, startedAt: startedAt, machine: .current,
+        var report = Report(options: options, corpus: corpus, startedAt: startedAt, machine: .current,
                             summary: Summary.make(records, warmup: options.effectiveWarmup),
                             thermal: await thermal.samples, records: records)
+        if let swapBefore, let swapAfter = Machine.swapUsedMB() { report.swapMB = [swapBefore, swapAfter] }
         print(report.text)
         if let path = options.jsonPath {
             let url = URL(fileURLWithPath: path)
@@ -84,7 +87,25 @@ public enum CLI {
             try report.json().write(to: url)
             standardError("wrote \(path)\n")
         }
+        if let path = options.answersPath {
+            try writeAnswers(records, to: path)
+            standardError("wrote \(path)\n")
+        }
         return report.summary.ok > 0 ? 0 : 1
+    }
+
+    /// One line per answered request, in request order, so two runs over the
+    /// same images can be compared line by line.
+    static func writeAnswers(_ records: [Record], to path: String) throws {
+        let lines = try records.filter(\.ok).map { record -> String in
+            let object: [String: Any] = ["image": record.image, "model": record.model ?? "",
+                                         "answer": record.answer ?? ""]
+            return String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+                          as: UTF8.self)
+        }
+        let url = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
     }
 
     static func images(_ args: [String]) throws -> Int32 {

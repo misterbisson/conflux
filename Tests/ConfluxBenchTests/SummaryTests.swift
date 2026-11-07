@@ -67,6 +67,12 @@ import Testing
                             machine: Machine(chip: "Apple M2", memoryGB: 24, os: "test"),
                             summary: Summary(), thermal: [:], records: [])
         let json = String(decoding: try report.json(), as: UTF8.self)
+        var answered = Record(index: 0, image: 0, start: 0, end: 1)
+        answered.answer = "a private description"
+        let withRecord = Report(options: options, corpus: corpus, startedAt: Date(timeIntervalSince1970: 0),
+                                machine: Machine(chip: "Apple M2", memoryGB: 24, os: "test"),
+                                summary: Summary(), thermal: [:], records: [answered])
+        #expect(!String(decoding: try withRecord.json(), as: UTF8.self).contains("private description"))
         for leak in ["studio-mac", "someone", "Someone", "birthday", "private prompt", "secret-token"] {
             #expect(!json.contains(leak), "\(leak)")
         }
@@ -97,6 +103,8 @@ import Testing
         #expect(lines[1].hasPrefix("parallel 2"))
         #expect(lines[1].contains("812"))
         #expect(lines[1].contains("12.3"))
-        #expect(lines[1].hasSuffix("25%"))
+        #expect(lines[1].hasSuffix("–"))
+        #expect(lines[1].contains("25%"))
+        #expect(Machine.swapUsedMB() != nil)
     }
 }

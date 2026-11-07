@@ -23,6 +23,15 @@ public struct Machine: Sendable, Codable, Equatable {
         return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
+    /// Swap in use, in MB. Growth during a run means the machine was short of
+    /// memory, and its numbers measure the disk more than the model.
+    public static func swapUsedMB() -> Int? {
+        var usage = xsw_usage()
+        var size = MemoryLayout<xsw_usage>.size
+        guard sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0 else { return nil }
+        return Int(usage.xsu_used / 1_048_576)
+    }
+
     static func sysctlUInt64(_ name: String) -> UInt64? {
         var value: UInt64 = 0
         var size = MemoryLayout<UInt64>.size
@@ -85,6 +94,8 @@ public struct Report: Sendable, Codable {
     public var settings: Settings
     public var summary: Summary
     public var thermal: [String: Int]
+    /// Swap in use at the start and end of the run, in MB.
+    public var swapMB: [Int]?
     public var records: [Record]
 
     public init(options: RunOptions, corpus: [CorpusImage], startedAt: Date, machine: Machine,
@@ -94,6 +105,7 @@ public struct Report: Sendable, Codable {
         self.machine = machine
         self.summary = summary
         self.thermal = thermal
+        self.swapMB = nil
         self.records = records
         let digest = SHA256.hash(data: Data(options.prompt.utf8)).map { String(format: "%02x", $0) }.joined()
         settings = Settings(
@@ -160,6 +172,11 @@ public struct Report: Sendable, Codable {
                 thermal[state].map { "\(state) \(Int((Double($0) / Double(total) * 100).rounded()))%" }
             }.joined(separator: "   ") + "   (this machine)")
         }
+        if let swap = swapMB, swap.count == 2 {
+            let growth = swap[1] - swap[0]
+            line("swap", "\(swap[0]) MB at start, \(growth >= 0 ? "+" : "")\(growth) MB during the run"
+                + (growth > 256 ? "   ⚠ short of memory: these numbers are suspect" : ""))
+        }
         for (error, count) in s.errors.sorted(by: { $0.value > $1.value }).prefix(5) {
             line("error", "×\(count) \(error)")
         }
@@ -171,7 +188,7 @@ public struct Report: Sendable, Codable {
         func f(_ value: Double?, _ digits: Int = 0) -> String {
             value.map { String(format: "%.\(digits)f", $0) } ?? "–"
         }
-        let header = ["run", "in flight", "per hour", "p50 s", "p90 s", "gen tok/s", "failed", "hot"]
+        let header = ["run", "in flight", "per hour", "p50 s", "p90 s", "gen tok/s", "failed", "hot", "swap +MB"]
         let rows = reports.map { report -> [String] in
             let s = report.summary
             let samples = report.thermal.values.reduce(0, +)
@@ -179,7 +196,8 @@ public struct Report: Sendable, Codable {
                 : Double((report.thermal["serious"] ?? 0) + (report.thermal["critical"] ?? 0)) / Double(samples) * 100
             return [report.label ?? report.startedAt.formatted(.iso8601), String(report.settings.concurrency),
                     f(s.perHour), f(s.latency?.p50, 1), f(s.latency?.p90, 1), f(s.completionTokensPerSecond, 1),
-                    String(s.failed), hot.map { f($0) + "%" } ?? "–"]
+                    String(s.failed), hot.map { f($0) + "%" } ?? "–",
+                    report.swapMB.flatMap { $0.count == 2 ? String($0[1] - $0[0]) : nil } ?? "–"]
         }
         let all = [header] + rows
         let widths = header.indices.map { column in all.map { $0[column].count }.max() ?? 0 }
