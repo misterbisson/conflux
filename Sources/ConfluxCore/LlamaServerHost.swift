@@ -2,48 +2,12 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// How to run one model with `llama-server`.
-public struct LlamaServerConfig: Sendable, Equatable, Codable {
-    /// Path to `llama-server`. Nil looks in the usual Homebrew locations and
-    /// on `PATH`.
-    public var executable: String?
-    /// The GGUF model file.
-    public var model: String
-    /// The multimodal projector, for vision models.
-    public var projector: String?
-    /// Requests run at once. `llama-server --parallel`.
-    public var slots: Int
-    /// Context per slot. `llama-server` splits `-c` across slots, so it gets
-    /// `slots × contextPerSlot`.
-    public var contextPerSlot: Int
-    public var maxImageDimension: Int
-    public var selfCheck: Bool
-    /// More arguments for `llama-server`, added last.
-    public var extraArguments: [String]
-
-    public init(executable: String? = nil, model: String, projector: String? = nil, slots: Int = 1,
-                contextPerSlot: Int = 4096, maxImageDimension: Int = 1024, selfCheck: Bool = true,
-                extraArguments: [String] = []) {
-        self.executable = executable
-        self.model = model
-        self.projector = projector
-        self.slots = slots
-        self.contextPerSlot = contextPerSlot
-        self.maxImageDimension = maxImageDimension
-        self.selfCheck = selfCheck
-        self.extraArguments = extraArguments
-    }
-
-    /// The artifact ID: the model file's name without `.gguf`.
-    public var modelID: String {
-        let name = URL(fileURLWithPath: model).lastPathComponent
-        return name.lowercased().hasSuffix(".gguf") ? String(name.dropLast(5)) : name
-    }
-
+extension ModelConfig {
     public func arguments(port: Int) -> [String] {
         var arguments = ["--host", "127.0.0.1", "--port", String(port), "-m", model]
         if let projector { arguments += ["--mmproj", projector] }
         arguments += ["--parallel", String(slots), "-c", String(slots * contextPerSlot)]
+        if let imageMinTokens { arguments += ["--image-min-tokens", String(imageMinTokens)] }
         return arguments + extraArguments
     }
 }
@@ -56,7 +20,7 @@ public struct LlamaServerConfig: Sendable, Equatable, Codable {
 /// will have to link llama.cpp in-process instead (Phase 3).
 public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
     public let id: String
-    public let config: LlamaServerConfig
+    public let config: ModelConfig
     public let logURL: URL
     public var slots: Int { config.slots }
 
@@ -71,7 +35,7 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
     private var logStart: UInt64 = 0
     private let session: URLSession
 
-    public init(id: String = "local", config: LlamaServerConfig, logURL: URL = LlamaServerHost.defaultLogURL) {
+    public init(id: String = "local", config: ModelConfig, logURL: URL = LlamaServerHost.defaultLogURL) {
         self.id = id
         self.config = config
         self.logURL = logURL
@@ -198,7 +162,7 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
         if config.selfCheck {
             set(.starting("checking that the model reads its input"))
             if let problem = await selfCheck(port: port) {
-                let advice = LlamaServerHost.advice(in: logSinceLaunch()).map { "; llama-server suggests: \($0)" } ?? ""
+                let advice = SelfCheck.advice(in: logSinceLaunch()).map { "; llama-server suggests: \($0)" } ?? ""
                 set(.failed("self-check failed: \(problem)\(advice)"))
                 process.terminate()
                 return
@@ -216,21 +180,6 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
         try? handle.seek(toOffset: lock.withLock { logStart })
         let data = (try? handle.read(upToCount: 4 << 20)) ?? Data()
         return String(decoding: data, as: UTF8.self)
-    }
-
-    /// llama.cpp's own suggestions for a model that may read its input
-    /// badly, from its warnings: "if you encounter problems with accuracy,
-    /// try adding --image-min-tokens 1024". Passed on to the person, who
-    /// can add the option, since it depends on the model.
-    static func advice(in log: String) -> String? {
-        let suggestions = log.split(whereSeparator: \.isNewline).compactMap { line -> String? in
-            guard let range = line.range(of: "try adding ", options: .caseInsensitive) else { return nil }
-            let suggestion = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
-            return suggestion.hasPrefix("-") ? "add \(suggestion)" : nil
-        }
-        var seen: Set<String> = []
-        let unique = suggestions.filter { seen.insert($0).inserted }
-        return unique.isEmpty ? nil : unique.joined(separator: "; ")
     }
 
     private func waitUntilHealthy(port: Int, process: Process) async -> Bool {
@@ -252,27 +201,11 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
         return false
     }
 
-    /// Nil when the check passes, otherwise what went wrong. Three probes,
-    /// each with fresh text, and all must pass: a working model reads them
-    /// every time, while one that reads its input badly gets some right by
-    /// luck, and a single probe wouldn't tell the two apart.
-    func selfCheck(port: Int, probes: Int = 3) async -> String? {
-        var misses: [String] = []
-        for _ in 0..<probes {
-            do {
-                let probe = try SelfCheck.probe(vision: config.projector != nil)
-                let reply = try await post(probe.body, port: port, timeout: 120)
-                guard (200..<300).contains(reply.status) else { return "llama-server answered \(reply.status)" }
-                let answer = SelfCheck.answer(in: reply.body) ?? ""
-                if !SelfCheck.passes(answer: answer, expected: probe.expected) {
-                    misses.append("asked to read \(probe.expected), it answered \(answer.prefix(60).debugDescription)")
-                }
-            } catch {
-                return "\(error)"
-            }
+    /// Nil when the check passes, otherwise what went wrong.
+    func selfCheck(port: Int) async -> String? {
+        await SelfCheck.run(vision: config.projector != nil) { body in
+            try await post(body, port: port, timeout: 120)
         }
-        guard let first = misses.first else { return nil }
-        return "\(misses.count) of \(probes) misread; \(first)"
     }
 
     private func exited(_ process: Process, executable: String) {

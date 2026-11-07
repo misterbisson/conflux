@@ -73,6 +73,10 @@ final class AppModel: ObservableObject {
         problem = nil
         Task {
             do {
+                // The app runs models in-process: a sandboxed app can't run
+                // llama-server. `conflux serve --runtime llama-server` can.
+                var settings = settings
+                settings.host?.runtime = .inProcess
                 port = try await node.start(settings)
                 running = true
                 intent = .serving
@@ -115,7 +119,7 @@ final class AppModel: ObservableObject {
         panel.allowedContentTypes = [UTType(filenameExtension: "gguf") ?? .data]
         panel.message = projector ? "Choose the model's multimodal projector (mmproj)" : "Choose a GGUF model"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        var host = settings.host ?? LlamaServerConfig(model: "")
+        var host = settings.host ?? ModelConfig(model: "")
         if projector { host.projector = url.path } else { host.model = url.path }
         settings.host = host
     }

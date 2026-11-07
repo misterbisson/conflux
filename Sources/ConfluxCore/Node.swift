@@ -3,14 +3,14 @@ import Foundation
 /// Everything one Mac runs in Phase 1, as saved between launches.
 public struct NodeSettings: Sendable, Equatable, Codable {
     /// The model this Mac serves, or nil to serve none.
-    public var host: LlamaServerConfig?
+    public var host: ModelConfig?
     /// The gateway's port on 127.0.0.1.
     public var port: UInt16
     /// Whether clients must send the bearer token. Turning it off lets any
     /// process on this Mac use the gateway.
     public var requireToken: Bool
 
-    public init(host: LlamaServerConfig? = nil, port: UInt16 = 8090, requireToken: Bool = true) {
+    public init(host: ModelConfig? = nil, port: UInt16 = 8090, requireToken: Bool = true) {
         self.host = host
         self.port = port
         self.requireToken = requireToken
@@ -22,7 +22,7 @@ public final class ConfluxNode: @unchecked Sendable {
     public let scheduler: Scheduler
     private let lock = NSLock()
     private var server: HTTPServer?
-    private var host: LlamaServerHost?
+    private var host: (any ManagedHost)?
     private var monitor: ResourceMonitor?
     private var boundPort: UInt16?
 
@@ -48,7 +48,10 @@ public final class ConfluxNode: @unchecked Sendable {
         await scheduler.startRefreshing()
 
         if let config = settings.host {
-            let host = LlamaServerHost(config: config)
+            let host: any ManagedHost = switch config.runtime {
+            case .inProcess: LlamaHost(config: config)
+            case .llamaServer: LlamaServerHost(config: config)
+            }
             let monitor = ResourceMonitor()
             lock.withLock {
                 self.host = host
@@ -66,7 +69,7 @@ public final class ConfluxNode: @unchecked Sendable {
     }
 
     public func stop() async {
-        let (server, host, monitor) = lock.withLock { () -> (HTTPServer?, LlamaServerHost?, ResourceMonitor?) in
+        let (server, host, monitor) = lock.withLock { () -> (HTTPServer?, (any ManagedHost)?, ResourceMonitor?) in
             defer { self.server = nil; self.host = nil; self.monitor = nil; boundPort = nil }
             return (self.server, self.host, self.monitor)
         }
