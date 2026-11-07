@@ -1,0 +1,328 @@
+# Design
+
+conflux turns the Apple Silicon devices one person already owns into a
+**personal inference mesh**. Each Mac or iPad runs one local model and serves it
+over [iroh](https://github.com/n0-computer/iroh). Clients spread independent
+requests across every device that is currently willing to take them.
+
+This document records the architecture and the decisions behind it. What a
+client has to do is in [clients.md](clients.md). The order of work is in
+[plan.md](plan.md).
+
+## What it is for
+
+Workloads made of many independent, small inference requests, where the job is
+large because of the **number** of requests, not the size of any one. The
+motivating case is bulk image analysis with small vision-language models:
+hundreds of thousands of images, each a few seconds to a minute of inference.
+On one machine, a job like that can run for months.
+
+**The goal is gross throughput**: completed requests per hour across the whole
+mesh. The latency of any single request matters only in that it must finish
+inside the client's deadline.
+
+## What it is not
+
+- **Not distributed execution of one model.** No device ever holds part of
+  another device's model. Every request runs entirely on one device.
+- **Not a durable job queue.** Clients own their work: what still needs doing,
+  what has been done, what to retry. conflux executes requests and returns
+  results. A request lost with a host is retried, and nothing more is promised.
+- **Not a cloud service.** There is no central server and no coordinator. A
+  mesh is the devices that are running conflux at the moment.
+- **Not tied to any one client.** Any application that can speak the client
+  contract can use a mesh.
+
+## Shape
+
+```
+client ──HTTP, loopback──▶ gateway (Mac) ──iroh──▶ host ──▶ runtime ──▶ model
+                             │                     host ──▶ runtime ──▶ model
+                             └── local host         host ──▶ runtime ──▶ model
+```
+
+There are three roles:
+
+| Role | Runs on | Responsibility |
+|---|---|---|
+| **Host** | Mac, iPad | Runs one user-chosen model, admits or refuses work, executes it, reports its state |
+| **Gateway** | Mac | Presents the client API on loopback, finds hosts, schedules requests across them, retries and hedges |
+| **Client** | Anywhere the gateway is reachable | Owns the durable work, submits requests, records results |
+
+The Mac app is both a gateway and a host. Its own model is just one more host,
+reached without iroh. The iPad app is a host only.
+
+The gateway is the "client-side scheduler" of a decentralized design. It runs
+next to the client, not in the middle of the network. Two Macs can each run a
+gateway for their own clients against the same hosts. They don't coordinate
+with each other, because hosts decide admission (see
+[Scheduling](#scheduling)).
+
+### Why a loopback gateway, not a client library
+
+Clients talk to the gateway over an **OpenAI-compatible HTTP API** on
+`127.0.0.1`. That means:
+
+- **Existing clients work.** Anything that can point at an OpenAI-compatible
+  endpoint can use a mesh without linking anything.
+- **iroh stays in one process.** The gateway owns the iroh endpoint, the
+  keychain items, and the allow list. Clients need none of them.
+- **The protocol inside the mesh can change** without changing clients.
+
+A native client library may come later. It would be a convenience over the
+same contract, not a separate protocol.
+
+## Hosts
+
+### One model at a time
+
+A host serves exactly one model, chosen by the person running it. Changing
+models is an explicit action on that device. The scheduler never loads,
+unloads, or swaps models.
+
+That choice removes model placement, load-cost estimation and cross-device
+memory planning from the problem. A host's memory use is predictable. What it
+offers stays stable until someone changes it.
+
+**Different devices will serve different models.** Device memory limits what
+each can run: an 8 GB iPad can't hold the same model as a 48 GB Mac. So a mixed
+set of models is the normal case, not an exception, and every part of the
+design assumes it.
+
+### Slots
+
+A host offers a number of **slots**: requests it will run at once. A slot may
+be a serial execution or one sequence in a continuously batched set. The
+scheduler doesn't need to know which, only how many slots are free.
+
+Each host's slot count comes from measuring that device with its model
+([plan.md](plan.md), Phase 0). Batching several sequences is often the biggest
+single throughput gain on one device. Generating tokens is limited by memory
+bandwidth, so one sequence leaves most of the GPU's compute unused.
+
+### States
+
+| State | Meaning |
+|---|---|
+| **Ready** | Model loaded, has free slots |
+| **Busy** | Model loaded, every slot in use |
+| **Draining** | Finishing what it has, accepting nothing new |
+| **Paused** | Accepting nothing, by choice or by resource policy |
+
+**Offline** is not a state a host reports. The gateway infers it when a host
+stops answering. Every host is treated as opportunistic: a MacBook's lid
+closes, an iPad's app leaves the foreground, a desktop's owner starts something
+heavy. The design assumes any host can disappear at any moment, mid-request.
+
+### Resource policy
+
+A host refuses work before it hurts the device. It watches:
+
+- **Memory pressure**, not just free memory. Unified memory is shared by the
+  CPU, the GPU and the rest of the system. Sources: `DispatchSource` memory
+  pressure events, `os_proc_available_memory()` on iPadOS, Metal's
+  `recommendedMaxWorkingSetSize`.
+- **Thermal state** (`ProcessInfo.thermalState`). Fanless devices, meaning
+  every iPad and MacBook Air, throttle under sustained load. A host lowers its
+  slot count as it heats up, and pauses at `.critical`.
+- **Power**: on battery or not, battery level, Low Power Mode.
+- **Its owner**: a person can pause or drain a host at any time.
+
+### Self-check
+
+A vision model whose image encoder or projector fails doesn't report the
+failure. It describes an image it never saw, fluently. So before a host reports
+Ready, it runs a known test image through its model and checks the answer. A
+host that fails the check stays Paused and says why.
+
+### iPad hosts
+
+An iPad takes part while the app is in the foreground. The intended setup is an
+iPad plugged in, on a stand, running overnight. The app:
+
+- keeps the screen awake (`isIdleTimerDisabled`) while serving;
+- requests the `com.apple.developer.kernel.increased-memory-limit` entitlement;
+- withdraws from the mesh when it leaves the foreground, and finishes or gives
+  up its in-flight work.
+
+## Model identity
+
+A model name like "a 4B vision model" isn't specific enough for clients that
+keep results. Two hosts serving "the same model" can differ in:
+
+- **the artifact**: weights, version, quantization, identified by a content
+  hash;
+- **the runtime**: engine and version;
+- **preprocessing**: image resizing, token budgets, chat template.
+
+Hosts advertise all three. Every response says which model produced it, in the
+OpenAI `model` field, with runtime and artifact hash in `system_fingerprint`.
+Clients record that per result ([clients.md](clients.md)).
+
+**Results are not bit-for-bit reproducible**, even at temperature 0. Batch size
+and hardware change the floating-point arithmetic. What is reproducible is
+knowing exactly which configuration produced a result.
+
+To keep results comparable, a given artifact runs on the **same runtime on
+every host**. conflux won't serve one artifact through llama.cpp on one device
+and through MLX on another under the same name.
+
+## Scheduling
+
+### Matching
+
+A request names what it can accept:
+
+- **An exact model**: only hosts serving that artifact.
+- **A preference list**: the first available of several acceptable models, in
+  the client's order.
+- **Any model with a capability**, for example vision input: any host that
+  qualifies.
+
+conflux never decides that one model is "better" than another. Substitution
+happens only as far as the client allows, and the response always names what
+actually ran.
+
+### Hosts pull, the gateway holds a short queue
+
+A host with a free slot **asks** a gateway for work. Gateways don't push and
+hope. A gateway keeps a control stream open to each host and tells it how much
+compatible work it holds. When a slot frees, the host asks one of its gateways
+for the next request, taking gateways in turn.
+
+This gives the properties the design needs, without coordination between
+gateways:
+
+- **Work-conserving.** No slot sits idle while compatible work is waiting.
+- **Proportional to speed, automatically.** A faster host frees slots more
+  often, so it asks more often and takes more work. There are no performance
+  weights to tune.
+- **Admission belongs to the host.** It asks only when it can run the work.
+  Gateways never race each other for a slot.
+- **Fair between gateways.** The host takes them in turn.
+
+A host asks for **one request more than it has free slots**. The next input is
+then already transferred when a slot frees, so a network round trip never idles
+the GPU. A slow host gets no extra request: a request waiting behind a long one
+on a slow device can blow a client's deadline.
+
+### Deadlines
+
+The gateway queues requests only briefly, and it **always answers inside the
+client's deadline**: with a result, with 429 and `Retry-After` when no slot will
+free up in time, or with 503 when hosts failed and time ran out. It doesn't send
+a request to a host whose expected finish would pass the deadline. With this
+guarantee, a client timeout means one thing: the gateway is stuck. A busy mesh
+never looks like a dead one. See [clients.md](clients.md).
+
+### Failures and stragglers
+
+- **A host disappears mid-request**: the gateway sends the request to another
+  host if the deadline allows, and otherwise answers 503.
+- **The tail of a batch**: when the gateway's queue is empty and fast hosts are
+  idle, it sends copies of requests still running on slow hosts to the idle
+  ones, takes the first answer and cancels the rest. The client sees one
+  answer. Request IDs make this safe ([clients.md](clients.md)).
+- **Idle-with-work is a bug.** The gateway counts time a compatible host spends
+  idle while compatible work is waiting. That number should be close to zero,
+  and it is the first one to look at when throughput disappoints.
+
+## Transport and trust
+
+### iroh, through apple-iroh
+
+Hosts and gateways connect over iroh: QUIC with TLS 1.3, where each device's
+identity is an Ed25519 public key. iroh hole-punches a direct path when it can
+and falls back to a relay when it can't. That works whatever network each
+device is on.
+
+conflux uses [apple-iroh](https://github.com/misterbisson/apple-iroh), which
+packages iroh as a static XCFramework behind a small C ABI. Its model fits
+conflux as-is:
+
+- A host runs an HTTP server on loopback and **exposes** that port over iroh.
+- A gateway **forwards** a local port to each host's endpoint ID.
+- Everything between them, including control streams, requests, results and
+  cancellation, is HTTP over that forwarded connection.
+
+Bandwidth is not a concern. An image sized for a vision model is a few hundred
+KB, so even a fast mesh moves well under 1 MB/s, and a relayed path is fine.
+Connection setup takes seconds, but it happens once per host per session.
+
+The apple-iroh changes conflux needs are listed in [plan.md](plan.md). All of
+them are additive, keep today's defaults, and stay compatible with apple-iroh's
+other users.
+
+### Trust
+
+- **Each device keeps its own secret key.** It is stored in the keychain as
+  `ThisDeviceOnly`, never synced, so a device's endpoint ID is stable across
+  launches and no two devices can answer as one.
+- **Each device publishes its public endpoint ID** to iCloud Keychain as a
+  synced item, one item per device, keyed by the ID. The set of those items is
+  the **allow list**. It contains only devices signed in to the same Apple
+  Account and running conflux.
+- **Both sides accept only IDs on the list**, and an empty list accepts
+  nobody. A device that can't read the list refuses everyone, rather than
+  accepting everyone.
+- **Devices refresh their published item regularly.** Items that stop being
+  refreshed are eventually treated as gone.
+
+conflux uses its own keychain service names and access group. It shares no
+keychain items with any other app.
+
+### Client authorization
+
+The gateway listens only on loopback, but any process on the Mac can reach
+loopback. So the gateway issues **API tokens**, which clients send as
+`Authorization: Bearer`. Early versions may allow tokenless loopback access as
+an opt-in setting, so that clients that can't send a token yet still work. The
+setting is labelled for what it is.
+
+Being a trusted peer (a device on the allow list) and being an authorized
+client are separate questions, and the design keeps them separate. A mesh shared
+between people later would need both.
+
+## Runtimes
+
+**llama.cpp first.** It has broad model support, GGUF quantization, Metal
+acceleration, multimodal input for vision-language models, and continuous
+batching across parallel sequences. It is also embeddable on iPadOS. One runtime
+on every device also keeps results comparable ([Model identity](#model-identity)).
+
+Later candidates, each behind the same host interface:
+
+- **Apple Foundation Models**: a system-provided model, advertised as a
+  capability rather than an artifact. The weights aren't chosen by conflux,
+  can't be pinned, and change with OS updates. Its identity is the OS build.
+- **MLX**: a strong option on Apple Silicon, for artifacts that run only there.
+
+The runtime interface reports what each engine actually supports. It doesn't
+pretend every engine accepts the same requests.
+
+## Expectations
+
+These are rough estimates, to be replaced by measurements:
+
+- **Batching on one device** can multiply that device's throughput, because
+  generating tokens is limited by memory bandwidth. Reading the image is limited
+  by compute and benefits less. There, the image's token count is the main
+  lever.
+- **More devices** add roughly in proportion to their memory bandwidth for
+  generation, and their GPU compute for image reading. Throttling on fanless
+  devices reduces that.
+- The two multiply: each host batches, and there are more hosts.
+
+## Open questions
+
+- **Slot counts** for each device class and model, and how quickly slots should
+  drop as devices heat up. Phase 0 measures this.
+- **Header names** for the deadline and the preference list. The ones in
+  [clients.md](clients.md) are provisional.
+- **How to embed llama.cpp**: link it in-process on every platform, or
+  supervise a `llama-server` process on macOS. In-process is shared with the
+  iPad host. A separate process is faster to start with, and crashes stay
+  contained.
+- **Discovery without internet.** Whether apple-iroh's local-network discovery
+  is enough for a LAN-only mesh when the internet is down.
+- **Meshes shared between people**: trust beyond one Apple Account.
