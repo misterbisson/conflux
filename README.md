@@ -22,8 +22,9 @@ model that's too large for any single device.
 
 ## Status
 
-Phase 1: one Mac. The gateway, scheduler and llama-server host run on a
-single Mac, with a window or headless. Other devices join in Phase 2.
+Phase 1: one Mac. The gateway, scheduler and a host running llama.cpp
+in-process run on a single Mac, with a window or headless. Other devices join
+in Phase 2.
 
 - [Design](docs/design.md): architecture and decisions
 - [Client requirements](docs/clients.md): what a client does, and what it gets back
@@ -31,10 +32,6 @@ single Mac, with a window or headless. Other devices join in Phase 2.
 - [Running](docs/running.md): serving a model and pointing a client at it
 - [Measuring](docs/phase-0.md): how to benchmark a device with `conflux-bench`
 - [Measurements](docs/measurements.md): results so far
-
-```bash
-brew install llama.cpp
-```
 
 ```bash
 swift run -c release conflux
@@ -47,3 +44,7 @@ swift test
 ## License
 
 [MIT](LICENSE)
+
+conflux links [llama.cpp](https://github.com/ggml-org/llama.cpp), which is
+also MIT licensed, using the prebuilt framework from its releases. Models
+aren't included: each has its own license, and conflux points at them.

@@ -88,6 +88,21 @@ images at 1024 px, measured with `conflux-bench` against the gateway on
   deadline.
 - `Ctrl-C` stopped the gateway and its `llama-server`.
 
+### In-process against llama-server
+
+The same llama.cpp build (12110), model and images, one slot, run back to
+back on 2026-11-07, while the Mac was short of memory, so both are slower
+than the runs above.
+
+| Runtime | Per hour | p50 latency | Reading the prompt | Generating |
+|---|---|---|---|---|
+| In-process | 176 | 20.6 s | 11.6 s | 14.6 tok/s |
+| `llama-server` | 163 | 21.3 s | 12.2 s | 13.4 tok/s |
+
+The two run at the same speed. At temperature 0 they gave identical answers,
+word for word, for text and for images, once the in-process runtime joined
+a message's text and image parts the way llama.cpp does.
+
 ### What this means for the plan
 
 - On a base M chip, image workloads are **limited by compute while reading the

@@ -50,8 +50,9 @@ run it is in [running.md](running.md).
   deadlines, `Retry-After`, request IDs, per-response `model` and
   `system_fingerprint`), and the status codes from [clients.md](clients.md).
 - Settles the open question of linking llama.cpp in-process versus supervising
-  `llama-server`. *Settled: supervise `llama-server` on macOS*
-  ([design.md](design.md#runtimes)).
+  `llama-server`. *Settled first for `llama-server`, then for in-process,*
+  because the sandboxed app Phase 2 needs can't run `llama-server`
+  ([design.md](design.md#runtimes)). Both runtimes remain.
 - A simple window: the model served, state, active and completed requests,
   throughput. Also `conflux serve`, the same thing without a window.
 
@@ -64,6 +65,9 @@ throughput, and never hits a client timeout while the mesh is busy.
 
 ## Phase 2: Several Macs over iroh
 
+- Distribution: a sandboxed app built by Xcode Cloud and distributed with
+  TestFlight, which iCloud Keychain needs. Models run in-process, which a
+  sandboxed app can do. *The in-process runtime is built.*
 - apple-iroh: expose on hosts, forward from gateways (see
   [apple-iroh changes](#apple-iroh-changes)).
 - Trust: per-device keys, published endpoint IDs in iCloud Keychain, the allow
@@ -83,7 +87,7 @@ throughput, and never hits a client timeout while the mesh is busy.
 
 ## Phase 3: iPad hosts
 
-- An iPadOS app sharing the host code: foreground serving with the screen kept
+- An iPadOS app sharing the host code, in-process runtime included: foreground serving with the screen kept
   awake, the increased-memory-limit entitlement, and withdrawing cleanly from
   the mesh when the app leaves the foreground.
 - A host screen meant to be read from across a room.
