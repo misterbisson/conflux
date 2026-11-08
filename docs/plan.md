@@ -37,7 +37,10 @@ care about, and a go or no-go on the expected gain.
 *Progress:* M2 with 24 GB is measured ([measurements.md](measurements.md)).
 On that device, extra slots barely help. Smaller images are much faster, but
 the model measured reads them badly, so for it resolution isn't a free
-lever. The Pro and iPad device classes are still to measure.
+lever. Still to measure: the M1 and M4 Pro MacBook Pros (16 and 48 GB), as
+part of Phase 2's mesh measurements, and the M1 iPad Pro (8 GB) and M4 iPad
+Air (likely 12 GB), whose memory ceilings the iPad build's memory probe
+measures (Phase 3, step 1).
 
 ## Phase 1: One Mac, gateway and host
 
@@ -104,18 +107,56 @@ throughput, and never hits a client timeout while the mesh is busy.
 - closing a host's lid mid-run costs at most retries, with no lost or
   double-recorded results on a client that follows the contract.
 
-*Left:* measuring those on several real Macs, and syncing trust through
-iCloud Keychain in a TestFlight build. Everything so far is measured on one
-Mac, with peers as separate processes. The [apple-iroh
-changes](#apple-iroh-changes) would improve the mesh but none blocks these
-measurements.
+*Left*, in order. Everything so far is measured on one Mac, with peers as
+separate processes.
+
+1. A mesh benchmark in `tools/bench/`: the mesh's throughput against the sum
+   of each host's own, idle-with-work time, and a run that loses a host
+   partway, checking every request got exactly one result.
+2. Running it on three Macs of different classes: M1 (16 GB), M2 (24 GB) and
+   M4 Pro (48 GB), then closing a lid mid-run.
+3. Trust syncing through iCloud Keychain, in the TestFlight build of 0.2.0.
+
+None of the [apple-iroh changes](#apple-iroh-changes) blocks these.
 
 ## Phase 3: iPad hosts
 
-- An iPadOS app sharing the host code, in-process runtime included: foreground serving with the screen kept
-  awake, the increased-memory-limit entitlement, and withdrawing cleanly from
-  the mesh when the app leaves the foreground.
-- A host screen meant to be read from across a room.
+One app, built for the Mac and for iPadOS: one bundle ID, one keychain access
+group, one TestFlight record. An iPad is a host only. It serves its model to
+the Macs' gateways, and runs no gateway and no clients, so it needs no token.
+
+What Phase 2 showed about the iPad:
+
+- The shared code builds for iPadOS 18, apple-iroh's floor, with two Mac-only
+  parts set aside: the `llama-server` runtime, because iPadOS can't start
+  processes, and the check that a loopback connection came from this
+  process, because iPadOS has no libproc.
+- Without that check, another app on the iPad could reach the host service
+  and get around the gateway's token. So on iPadOS the host service refuses
+  every connection until [apple-iroh change 4](#apple-iroh-changes) lands,
+  and that change blocks iPad hosts.
+- The pinned llama.cpp framework has no iOS Simulator slice. CI builds the
+  iPad app for devices, and models are tested on a real iPad.
+
+In order:
+
+1. **A memory probe**, the iPad app's first version. It loads a model chosen
+   on the iPad, runs the self-check, and records the memory the model took
+   and what's left. A model too big for the per-app limit shows up as a probe
+   killed while loading. Run with the increased-memory-limit entitlement on
+   the M1 iPad Pro (8 GB) and the M4 iPad Air (likely 12 GB), it answers
+   Phase 0's last question, and whether the rest of this phase is worth
+   doing.
+2. **apple-iroh change 4**, released with changes 1–3 and 5, and adopted by
+   conflux on both platforms.
+3. **The iPad host**: serving in the foreground with the screen kept awake,
+   by default only while charging. When the app leaves the foreground it
+   stops taking work and finishes what's running, and gateways send work
+   elsewhere. It also needs the device directory on iPadOS, and models copied
+   in from a Mac with Finder or the Files app.
+4. **A host screen** meant to be read from across a room: state, model,
+   throughput, temperature and charging.
+5. **An overnight run** in a mesh with the Macs.
 
 **Done when:** a plugged-in iPad runs a full night in a mesh, and its
 contribution is measured against the effort of keeping it there.
@@ -137,7 +178,9 @@ contribution is measured against the effort of keeping it there.
 ## apple-iroh changes
 
 conflux needs four changes in
-[apple-iroh](https://github.com/misterbisson/apple-iroh), needed by Phase 2.
+[apple-iroh](https://github.com/misterbisson/apple-iroh). Change 4 blocks
+Phase 3's iPad hosts. The others make the mesh better, and nothing waits on
+them, so they can go in the same release.
 apple-iroh has other users, so each change is additive, keeps today's behavior
 as the default, and has to be useful beyond conflux.
 
@@ -183,7 +226,8 @@ pull request, with the Xcode that Xcode Cloud releases with:
   between processes;
 - archive the Mac app as Xcode Cloud does, signed ad hoc, check it for what App
   Store Connect requires, and run it in the sandbox;
-- build the iPadOS target, once there is one (Phase 3);
+- build the iPad app for devices (Phase 3), since the pinned llama.cpp
+  framework has no iOS Simulator slice;
 - later, the Phase 0 load generator against a small model on the runner, to
   catch regressions in the gateway, not to produce benchmarks.
 
