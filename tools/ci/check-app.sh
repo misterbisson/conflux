@@ -158,6 +158,25 @@ else
 	done
 fi
 
+# --- third-party notices ------------------------------------------------------
+# llama.cpp and what it vendors (and apple-iroh's crates, once it's linked)
+# ask for their licences to travel with the app. Credits.html carries them, and
+# the About window shows it. It's written for the versions Package.swift pins,
+# so a moved pin needs it written again (tools/notices/make-notices.py).
+credits="$app/Contents/Resources/Credits.html"
+if [ ! -f "$credits" ]; then
+	fail "no Credits.html in the app's Resources, so it ships without its third-party notices"
+else
+	ok "third-party notices"
+	llama_pin="$(sed -nE 's#.*llama\.cpp/releases/download/(b[0-9]+)/.*#\1#p' Package.swift | head -1)"
+	iroh_pin="$(sed -nE 's#.*apple-iroh/releases/download/(v[0-9.]+)/.*#\1#p' Package.swift | head -1)"
+	versions="$(sed -nE 's#.*<p id="versions">(.*)</p>.*#\1#p' "$credits")"
+	expected="llama.cpp $llama_pin${iroh_pin:+ · apple-iroh $iroh_pin}"
+	check "notices match Package.swift" \
+		"Credits.html is for '$versions' and Package.swift pins '$expected'; run tools/notices/make-notices.py" \
+		same "$versions" "$expected"
+fi
+
 # --- export compliance --------------------------------------------------------
 # ITSAppUsesNonExemptEncryption is false because every use of cryptography in
 # the app is the operating system's and encrypts nothing, file by file, as the
@@ -176,7 +195,10 @@ check "export-compliance note names every source file that uses cryptography" \
 
 bundled=""
 for binary in "${binaries[@]}"; do
-	if strings -a "$binary" | grep -qiE 'ring_core_0_|ring-0\.1[0-9]|rustls|quinn-proto|OpenSSL [0-9]|BoringSSL|mbed ?TLS|libsodium'; then
+	# Not `strings | grep -q`: grep -q stops at the first match, strings dies
+	# of SIGPIPE, and pipefail turns the match into a miss.
+	if grep -qiE 'ring_core_0_|ring-0\.1[0-9]|rustls|quinn-proto|OpenSSL [0-9]|BoringSSL|mbed ?TLS|libsodium' \
+		< <(strings -a "$binary"); then
 		bundled+=" $(basename "$binary")"
 	fi
 done

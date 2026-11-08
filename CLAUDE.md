@@ -117,6 +117,11 @@ Pin binary dependencies by version **and** checksum, the way
 [apple-iroh](https://github.com/misterbisson/apple-iroh) releases are consumed.
 A tag can be moved, a checksum can't.
 
+The app ships what those binaries compile in, so their licences ship with it,
+in `App/Credits.html`. Moving a pin means writing it again with
+`tools/notices/make-notices.py`, and `tools/ci/check-app.sh` fails until it's
+done.
+
 apple-iroh is maintained alongside conflux, and other apps depend on it.
 Changes to it must be additive, keep existing defaults, and be useful beyond
 conflux.

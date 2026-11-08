@@ -26,6 +26,7 @@ needs to be: Xcode Cloud manages the certificates and profiles itself.
 | [`tools/ci/build-app.sh`](../tools/ci/build-app.sh) | Archives the app signed ad hoc, checks it, and runs it in the sandbox. |
 | [`tools/ci/check-app.sh`](../tools/ci/check-app.sh) | The checks: version, bundle ID, export compliance and its basis, category, a 512pt @2x icon, a privacy manifest that covers what the binaries import, the hardened runtime, the entitlements, and the embedded frameworks' versions. |
 | [`tools/icon/make-icon.swift`](../tools/icon/make-icon.swift) | Draws the icon. It's a placeholder. |
+| [`App/Credits.html`](../App/Credits.html) | The licences of the code the app includes, shown in its About window. [`tools/notices/make-notices.py`](../tools/notices/make-notices.py) writes it; `check-app.sh` fails when it names other versions than `Package.swift` pins. |
 | [`release-please-config.json`](../release-please-config.json) | How release-please versions conflux: tags `vX.Y.Z`, and `MARKETING_VERSION` in `project.yml` follows. `.release-please-manifest.json` holds the last version released. |
 | [`tools/ci/check-commit-message.sh`](../tools/ci/check-commit-message.sh) | Checks a pull request's title and description, which become its commit message. |
 
