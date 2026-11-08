@@ -109,9 +109,9 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: conflux
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         # Without this, every TestFlight build waits on an export-compliance
-        # question. NO is a claim about the app, and this is its basis: every
-        # use of cryptography in what the app compiles and links. All of it is
-        # the operating system's, and none of it encrypts anything.
+        # question. NO means the app uses no NON-EXEMPT encryption. It does use
+        # encryption, and this is every use of cryptography in what the app
+        # compiles and links:
         #
         # - Sources/ConfluxCore/LlamaServerHost.swift: FileHash takes the
         #   SHA-256 of the model files, through CryptoKit, so a host can say
@@ -123,17 +123,27 @@ targets:
         #   key in the keychain, and derives its public half, the endpoint ID,
         #   through CryptoKit's Ed25519. A signing key's public half: nothing
         #   is encrypted here.
+        # - apple-iroh v0.9.0: iroh's connections between the user's own
+        #   devices, and to its relays, are QUIC with TLS 1.3, and each device's
+        #   identity is an Ed25519 key. The cryptography is compiled into the
+        #   app, not the operating system's: rustls with ring, which implement
+        #   those IETF standards, not proprietary cryptography. It authenticates
+        #   peers and protects the requests and answers between them.
         # - The gateway serves plain HTTP on loopback (HTTPServer.swift), and
         #   LlamaServerHost talks plain HTTP to llama-server on loopback. No TLS.
         # - llama.framework holds no cryptography.
         #
-        # **Answer this again before a release that links apple-iroh** (Phase 2
-        # in docs/plan.md). iroh brings its own QUIC and TLS, compiled into the
-        # app rather than provided by the operating system, and whether the
-        # app is still exempt then is a compliance question, not a code one.
-        # tools/ci/check-app.sh fails when a source file not named above uses
-        # Apple's cryptography or TLS, or when the archive holds a bundled
-        # cryptography library, so neither change goes unnoticed.
+        # The answer, the maintainer's (2026-11-07), for App Store Connect: the
+        # app uses encryption, and qualifies for an exemption under the U.S.
+        # EAR, Category 5 Part 2, as a mass-market product using standard
+        # cryptography for authentication and data protection. The reasoning
+        # is in docs/releasing.md, "Export compliance: the reasoning".
+        #
+        # **Answer it again when this list changes.** tools/ci/check-app.sh
+        # fails when a source file not named above uses Apple's cryptography or
+        # TLS, when the archive holds a bundled cryptography library other than
+        # apple-iroh's, and when Package.swift pins an apple-iroh other than the
+        # one named above.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES

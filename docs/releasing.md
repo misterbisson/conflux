@@ -242,14 +242,14 @@ prints the environment, and on a workflow that signs.
 App Store Connect asks two questions of every upload that a build log never
 shows, and refuses or holds the build by email when they go unanswered.
 
-- **Export compliance.** `ITSAppUsesNonExemptEncryption` is `NO`, and the note
-  beside it in [`project.yml`](../project.yml) lists every use of cryptography
-  in the app, file by file: all of it the operating system's, none of it
-  encryption. `check-app.sh` fails when a source file not on that list uses
-  Apple's cryptography or TLS, or when the archive holds a bundled cryptography
-  library. Linking apple-iroh, in Phase 2, is that second case: its QUIC and
-  TLS come with it, not from the operating system, so the answer has to be
-  made again before that release.
+- **Export compliance.** `ITSAppUsesNonExemptEncryption` is `NO`: the app
+  uses encryption, and none of it is non-exempt. The note beside it in
+  [`project.yml`](../project.yml) lists every use of cryptography in the app,
+  file by file, and [the reasoning](#export-compliance-the-reasoning) is
+  below. `check-app.sh` fails when a source file not on that list uses Apple's
+  cryptography or TLS, when the archive holds a bundled cryptography library
+  other than apple-iroh's, and when `Package.swift` pins an apple-iroh version
+  the note doesn't name. Any of those means answering again.
 - **The privacy manifest.** [`App/PrivacyInfo.xcprivacy`](../App/PrivacyInfo.xcprivacy)
   says conflux collects nothing and tracks nothing, and gives the reason for
   each required-reason API it uses: file timestamps, for the model files the
@@ -258,6 +258,50 @@ shows, and refuses or holds the build by email when they go unanswered.
   nothing and stays true. `check-app.sh` scans the archived binaries,
   `llama.framework` included, and fails on a category that no manifest
   declares.
+
+### Export compliance: the reasoning
+
+The maintainer's determination, made on 2026-11-07 when conflux first linked
+apple-iroh, and the reasoning behind it.
+
+**What the app contains.** iroh compiles its cryptography into the app: rustls
+with ring, not the operating system's libraries. It uses standard, publicly
+accepted cryptographic protocols, IETF standards, rather than proprietary
+cryptography:
+
+- QUIC for transport;
+- TLS 1.3 for the handshake and encryption;
+- Ed25519 elliptic-curve keys for each device's identity and authentication.
+
+It uses them to authenticate the user's own devices to each other and to
+protect the requests and answers between them.
+
+**Under the U.S. Export Administration Regulations (EAR):**
+
+- *Publicly available, open-source software* is generally exempt from strict
+  export controls, provided specific notification requirements are met. For
+  open-source code containing strong encryption, like iroh's TLS 1.3 and
+  Ed25519, to be exempt under License Exception TSU, the authors or exporters
+  usually must send a one-time email notification with the source code's URL
+  to BIS and the NSA, before or when it's made public.
+- *Standard industry protocols.* Because QUIC, TLS 1.3 and Ed25519 are
+  standard, mass-market-adjacent dual-use cryptographic mechanisms, commercial
+  products incorporating them often fall under ECCN 5D002. These products can
+  typically be exported globally under License Exception ENC (§ 740.17),
+  provided the company files an annual Self-Classification Report with BIS.
+
+**App Store Connect's questions:**
+
+1. *Does your app use, access, contain, implement, or incorporate encryption?*
+   Yes.
+2. *Does your app qualify for an exemption?* Yes. Under the EAR, Category 5
+   Part 2, the app qualifies for an exemption if it's considered a "mass
+   market" product or uses cryptography only for standard authentication and
+   data protection.
+
+So `ITSAppUsesNonExemptEncryption` is `NO`. This is the maintainer's
+compliance call, recorded here so a change to what the app contains is checked
+against it. It isn't legal advice for anyone else's use of conflux.
 
 ## Not done yet
 
