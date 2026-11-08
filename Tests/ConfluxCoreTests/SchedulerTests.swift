@@ -119,14 +119,16 @@ import Testing
     @Test func requestsWithoutADeadlineWaitTheDefault() async {
         var config = SchedulerConfig()
         config.defaultQueueWait = 0.3
-        let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 1))
+        let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 1.5))
         let scheduler = await Scheduler.with([host], config: config)
         let first = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
-        try? await Task.sleep(for: .milliseconds(50))
+        // Busy CI runners can start the first late: wait until it holds the slot.
+        while await scheduler.snapshot().hosts.first?.active == 0 { try? await Task.sleep(for: .milliseconds(10)) }
         let start = Date()
         let outcome = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
         #expect(outcome == .busy(retryAfter: 2))
-        #expect(Date().timeIntervalSince(start) < 0.8)
+        // The default wait, not the slot's 1.5 s.
+        #expect(Date().timeIntervalSince(start) < 1.2)
         _ = await first.value
     }
 
