@@ -1,6 +1,7 @@
 import AppKit
 import ConfluxCore
 import SwiftUI
+import SystemConfiguration
 import UniformTypeIdentifiers
 
 struct ConfluxApp: App {
@@ -38,10 +39,23 @@ final class AppModel: ObservableObject {
     @Published private(set) var refused = 0
     /// This Mac's endpoint ID, for other devices' peer lists.
     let endpointID: String?
+    /// iCloud Keychain's device directory. Only a signed app has one: built
+    /// from source, peers are added by hand.
+    let directory = KeychainDeviceDirectory.forThisApp()
+    /// The other devices listed in the directory.
+    @Published private(set) var listed: [ListedDevice] = []
+    @Published private(set) var directoryProblem: String?
+    /// Something about the directory the owner should know, such as this Mac
+    /// having been forgotten.
+    @Published private(set) var directoryNotice: String?
 
     let node = ConfluxNode()
     private let access = ModelAccess()
     private var polling: Task<Void, Never>?
+    private var watchingDirectory: Task<Void, Never>?
+    /// How often the window reads the directory and refreshes this Mac's
+    /// listing. The keychain sends no notice of changes.
+    private static let directoryInterval: Duration = .seconds(10)
     private static let key = "settings"
 
     init() {
@@ -65,6 +79,14 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+        if directory != nil {
+            watchingDirectory = Task { [weak self] in
+                while !Task.isCancelled {
+                    await self?.syncDirectory()
+                    try? await Task.sleep(for: Self.directoryInterval)
+                }
+            }
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
                                                queue: .main) { [node] _ in
             // Don't leave llama-server running after the app quits.
@@ -86,7 +108,93 @@ final class AppModel: ObservableObject {
 
     func peerHost(_ peer: PeerStatus) -> HostSnapshot? { snapshot?.hosts.first { $0.id == peer.hostID } }
 
-    var canStart: Bool { !(settings.host?.model.isEmpty ?? true) || !settings.peers.isEmpty }
+    var canStart: Bool { !(settings.host?.model.isEmpty ?? true) || !trusted.isEmpty }
+
+    /// Every device this Mac trusts: added by hand, listed in iCloud
+    /// Keychain, or both.
+    var trusted: [TrustedPeer] {
+        TrustedPeer.merge(manual: settings.peers, listed: settings.iCloudKeychain ? listed : [], this: endpointID)
+    }
+
+    /// The name this Mac lists itself under: its computer name, from Sharing
+    /// settings.
+    private var deviceName: String {
+        SCDynamicStoreCopyComputerName(nil, nil) as String? ?? "Mac"
+    }
+
+    /// Keeps this Mac listed, and reads the other devices. A Mac whose
+    /// listing another device removed stays out, and stops trusting the
+    /// directory, until its owner turns it on again.
+    func syncDirectory() async {
+        guard let directory, let endpointID, settings.iCloudKeychain else {
+            listed = []
+            return
+        }
+        let (name, before) = (deviceName, settings.listedID)
+        let result = await Task.detached { () -> Result<(Membership, [ListedDevice]), any Error> in
+            Result {
+                (try directory.keepListed(endpointID, name: name, listedBefore: before),
+                 try directory.others(than: endpointID))
+            }
+        }.value
+        // Turned off meanwhile: make sure the listing just refreshed is gone.
+        guard settings.iCloudKeychain else {
+            Task.detached { try? directory.remove(endpointID) }
+            return
+        }
+        switch result {
+        case .success((.listed, let devices)):
+            if settings.listedID != endpointID { settings.listedID = endpointID }
+            listed = devices
+            directoryProblem = nil
+        case .success((.forgotten, _)):
+            settings.iCloudKeychain = false
+            settings.listedID = nil
+            listed = []
+            directoryProblem = nil
+            directoryNotice = "Another Mac forgot this one, so it left iCloud Keychain's device list. "
+                + "Turn on iCloud Keychain to join again."
+            if running { start() }
+        case .failure(let error):
+            directoryProblem = "\(error)"
+        }
+    }
+
+    /// Joins or leaves the directory. Leaving removes this Mac's listing from
+    /// every device. Takes effect at the next start.
+    func setICloudKeychain(_ on: Bool) {
+        guard on != settings.iCloudKeychain else { return }
+        settings.iCloudKeychain = on
+        directoryNotice = nil
+        directoryProblem = nil
+        if on {
+            Task { await syncDirectory() }
+        } else {
+            settings.listedID = nil
+            listed = []
+            if let directory, let endpointID { Task.detached { try? directory.remove(endpointID) } }
+        }
+    }
+
+    /// Removes another device's listing, from every device. Nobody trusts it
+    /// until it joins again; if conflux is running there, it notices and
+    /// stays out.
+    func forget(_ id: String) {
+        guard let directory else { return }
+        listed.removeAll { $0.endpointID == id }
+        Task {
+            let failure = await Task.detached { () -> String? in
+                do {
+                    try directory.remove(id)
+                    return nil
+                } catch {
+                    return "\(error)"
+                }
+            }.value
+            if let failure { directoryProblem = failure }
+            node.refreshSoon()
+        }
+    }
 
     /// Adds another device's endpoint ID. Returns why not, if it can't.
     func addPeer(_ text: String) -> String? {
@@ -128,7 +236,7 @@ final class AppModel: ObservableObject {
         }
         Task {
             do {
-                port = try await node.start(settings)
+                port = try await node.start(settings, directory: directory)
                 running = true
                 intent = .serving
             } catch {

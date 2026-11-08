@@ -12,5 +12,10 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+		<string>$(AppIdentifierPrefix)com.caseybisson.conflux.devices</string>
+	</array>
 </dict>
 </plist>

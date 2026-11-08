@@ -124,9 +124,12 @@ here. It's done once. No step needs a Team ID, key or token in the repository.
 
 1. **The bundle ID.** On developer.apple.com, under **Certificates,
    Identifiers & Profiles > Identifiers**, register an explicit App ID for
-   `com.caseybisson.conflux`, with no capabilities. Building in Xcode won't do
-   it: Xcode registers an ID only when it needs a provisioning profile, and
-   these entitlements don't.
+   `com.caseybisson.conflux`, with no capabilities. The keychain access groups
+   in the entitlements, for the [device directory](design.md#trust), aren't a
+   capability there: the team's provisioning profiles allow any group with
+   the team's prefix. They do need a profile, so a build signed by the team
+   gets one (Xcode Cloud's, or Xcode's automatic signing on a desk), and an ad
+   hoc build leaves them out (`tools/ci/build-app.sh`).
 2. **The app record.** In App Store Connect, create a macOS app with that
    bundle ID. Its name there is "Conflux Inference Mesh"; plain "Conflux" is
    taken. The name under the icon stays "conflux", from `project.yml`.

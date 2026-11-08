@@ -86,6 +86,92 @@ struct Peer {
         #expect(node.meshProblem == nil)
         #expect(node.peers.isEmpty)
     }
+
+    /// Listed devices are peers. One listed while running joins the running
+    /// mesh; one forgotten leaves it; an unreadable directory keeps what it
+    /// had.
+    @Test func directoryPeersJoinAndLeave() async throws {
+        let me = DeviceIdentity.ephemeral()
+        let (a, b) = (DeviceIdentity.ephemeral().endpointID, DeviceIdentity.ephemeral().endpointID)
+        let directory = MemoryDeviceDirectory([ListedDevice(endpointID: me.endpointID, name: "me"),
+                                               ListedDevice(endpointID: a, name: "A")])
+        let node = ConfluxNode()
+        try await node.start(NodeSettings(port: 0, requireToken: false), identity: me, directory: directory)
+        #expect(node.meshProblem == nil)
+        #expect(Iroh.endpointID == me.endpointID)
+        #expect(node.peers.map(\.endpointID) == [a])
+        #expect(node.trustedPeers == [TrustedPeer(endpointID: a, name: "A")])
+
+        try directory.publish(ListedDevice(endpointID: b, name: "B"))
+        await node.refreshPeers()
+        #expect(Set(node.peers.map(\.endpointID)) == [a, b])
+        #expect(node.meshProblem == nil)
+
+        try directory.remove(a)
+        await node.refreshPeers()
+        #expect(node.peers.map(\.endpointID) == [b])
+        #expect(node.meshProblem == nil)
+
+        directory.failure = MeshFailure(description: "locked")
+        await node.refreshPeers()
+        #expect(node.peers.map(\.endpointID) == [b])
+        #expect(node.directoryProblem == "locked")
+
+        directory.failure = nil
+        try directory.remove(b)
+        await node.refreshPeers()
+        #expect(node.peers.isEmpty)
+        #expect(Iroh.endpointID == nil)
+
+        await node.stop()
+        #expect(node.trustedPeers.isEmpty)
+    }
+
+    /// Hand-added and listed together, each once.
+    @Test func handAddedPeersAndTheDirectory() async throws {
+        let me = DeviceIdentity.ephemeral()
+        let (a, b) = (DeviceIdentity.ephemeral().endpointID, DeviceIdentity.ephemeral().endpointID)
+        let directory = MemoryDeviceDirectory([ListedDevice(endpointID: a, name: "A")])
+        let node = ConfluxNode()
+        try await node.start(NodeSettings(port: 0, requireToken: false, peers: [a, b]), identity: me,
+                             directory: directory)
+        #expect(Set(node.peers.map(\.endpointID)) == [a, b])
+        #expect(node.trustedPeers.first { $0.endpointID == a } == TrustedPeer(endpointID: a, name: "A", addedByHand: true))
+
+        // Forgotten, but still added by hand: still a peer.
+        try directory.remove(a)
+        await node.refreshPeers()
+        #expect(Set(node.peers.map(\.endpointID)) == [a, b])
+        await node.stop()
+    }
+
+    /// Turned off, the directory isn't read, and with no hand-added peers
+    /// nothing starts: not even the key is needed.
+    @Test func directoryOff() async throws {
+        let directory = MemoryDeviceDirectory([ListedDevice(endpointID: DeviceIdentity.ephemeral().endpointID, name: "A")])
+        directory.failure = MeshFailure(description: "not asked")
+        let node = ConfluxNode()
+        try await node.start(NodeSettings(port: 0, requireToken: false, iCloudKeychain: false),
+                             identity: try { () throws -> DeviceIdentity in throw MeshFailure(description: "not asked") }(),
+                             directory: directory)
+        #expect(node.meshProblem == nil)
+        #expect(node.directoryProblem == nil)
+        #expect(node.peers.isEmpty)
+        #expect(Iroh.endpointID == nil)
+        await node.stop()
+    }
+
+    /// A directory listing only this device starts no endpoint.
+    @Test func aDirectoryOfOneStartsNothing() async throws {
+        let me = DeviceIdentity.ephemeral()
+        let node = ConfluxNode()
+        try await node.start(NodeSettings(port: 0, requireToken: false), identity: me,
+                             directory: MemoryDeviceDirectory([ListedDevice(endpointID: me.endpointID, name: "me")]))
+        #expect(node.meshProblem == nil)
+        #expect(node.peers.isEmpty)
+        #expect(Iroh.endpointID == nil)
+        await node.stop()
+    }
 }
 
 @Suite struct RemoteHostTests {

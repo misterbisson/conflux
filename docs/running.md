@@ -71,8 +71,25 @@ Macs that name each other as peers use each other's models over
 peer's model in `/v1/models`, and its requests go to whichever host is free
 and serves a model it accepts. Each response says which model ran.
 
-Each Mac has an endpoint ID, the public half of a key that never leaves it.
-Give each Mac the others' IDs:
+**The TestFlight app finds the others itself.** On each Mac, sign in to the
+same Apple Account with iCloud Keychain on (in System Settings, under the
+Apple Account's iCloud settings), open conflux, and leave **Find my
+Macs through iCloud Keychain** on in **Mesh**. Each Mac lists its endpoint ID
+in iCloud Keychain and trusts the others listed there. They appear under
+**Mesh**, by name, marked **From iCloud Keychain**, once iCloud Keychain has
+synced, which can take a minute. A running Mac picks up new ones within
+seconds of the sync, without a restart.
+
+**Forget…** beside one removes it from every Mac, and no Mac trusts it. If
+conflux is running there, it notices, turns the setting off and says so, and
+stays out until it's turned on there again. Turning the setting off on a Mac
+takes that Mac out the same way. A Mac that hasn't opened conflux for 30 days
+is left out until it does.
+
+**Peers can also be added by hand**, and built from source that's the only
+way: iCloud Keychain needs the app signed by its team. Each Mac has an
+endpoint ID, the public half of a key that never leaves it. Give each Mac the
+others' IDs:
 
 - **In the app:** **Mesh** shows this Mac's ID, with **Copy ID**. Paste
   another Mac's ID in **Peer** and click **Add**, then **Start**.
@@ -91,9 +108,9 @@ Give each Mac the others' IDs:
   A Mac that serves no model can still use its peers': `conflux serve --peer
   3f2a...` with no `--model`.
 
-Both Macs have to list each other. Until then, each refuses the other, and the
-window counts the refused connections. A Mac with no peers starts no iroh
-endpoint and contacts nothing.
+Both Macs have to add each other. Until then, each refuses the other, and the
+window counts the refused connections. A Mac with no peers, from iCloud
+Keychain or by hand, starts no iroh endpoint and contacts nothing.
 
 The window shows each peer's state, its model, and whether the connection is
 direct or relayed, with its round trip. **Monitoring** shows throughput,
@@ -160,6 +177,7 @@ the host serve anyway, and clients get the bad answers instead.
 |---|---|
 | Gateway token | `~/Library/Application Support/conflux/token` |
 | Device key, built from source | `~/Library/Application Support/conflux/identity/` (the app keeps it in the keychain) |
+| Device directory, the TestFlight app | iCloud Keychain, as `conflux.device` items: each Mac's endpoint ID and name, nothing secret |
 | llama.cpp log | `~/Library/Logs/conflux/llama.log` |
 | `llama-server` log, with that runtime | `~/Library/Logs/conflux/llama-server.log` |
 | Model file hashes, cached | `~/Library/Caches/conflux/hashes.json` |

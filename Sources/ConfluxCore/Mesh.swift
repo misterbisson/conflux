@@ -5,12 +5,17 @@ import Foundation
 /// and a link to each peer's host.
 ///
 /// Trust is symmetric and explicit. A peer is an endpoint ID this device was
-/// given: it may connect in, and this device dials it to use its host. Nobody
-/// else may connect (docs/design.md, *Trust*).
+/// given, by hand or from the device directory: it may connect in, and this
+/// device dials it to use its host. Nobody else may connect (docs/design.md,
+/// *Trust*).
+///
+/// Peers can be added while it runs. apple-iroh can't take one ID off its
+/// allow list, or close one peer's connection, so removing a peer means a new
+/// mesh.
 final class Mesh: @unchecked Sendable {
     let identity: DeviceIdentity
-    let peers: [String]
-    private let links: [String: IrohLink]
+    private let lock = NSLock()
+    private var links: [String: IrohLink]
     private static let running = NSLock()
     nonisolated(unsafe) private static var started = false
 
@@ -33,11 +38,23 @@ final class Mesh: @unchecked Sendable {
             Self.started = true
         }
         self.identity = identity
-        self.peers = peers
-        links = Dictionary(uniqueKeysWithValues: peers.map { ($0, IrohLink(endpointID: $0)) })
+        links = Dictionary(peers.map { ($0, IrohLink(endpointID: $0)) }, uniquingKeysWith: { first, _ in first })
     }
 
-    func link(to peer: String) -> (any PeerLink)? { links[peer] }
+    var peers: [String] { lock.withLock { links.keys.sorted() } }
+
+    func link(to peer: String) -> (any PeerLink)? { lock.withLock { links[peer] } }
+
+    /// Lets more peers in while running: apple-iroh checks its allow list as
+    /// each connection arrives.
+    func allow(_ added: [String]) throws {
+        try lock.withLock {
+            for peer in added where links[peer] == nil {
+                try Iroh.allow(peer)
+                links[peer] = IrohLink(endpointID: peer)
+            }
+        }
+    }
 
     /// Incoming connections refused since the endpoint started: devices that
     /// aren't peers.
