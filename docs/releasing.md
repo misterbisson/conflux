@@ -96,6 +96,12 @@ the build log**, because the log shows success.
 To release a version release-please wouldn't choose, end a pull request's
 description with a line of its own, `Release-As: x.y.z`.
 
+To change what a release says, edit the release pull request by hand: its
+`CHANGELOG.md`, and the same section of its description, which becomes the
+GitHub release's notes. release-please rewrites both after every merge to
+`main`, so merge the release pull request before anything else, or make the
+edit again.
+
 release-please opens its pull request with the workflow's own token, which
 needs one repository setting: **Settings > Actions > General > Workflow
 permissions**, with **Read repository contents and packages permissions**
