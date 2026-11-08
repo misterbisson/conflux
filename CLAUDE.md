@@ -86,8 +86,9 @@ Don't copy code from private repositories. Reimplement the pattern.
 - No keys, tokens, passwords, certificates or provisioning profiles.
 - No Apple Developer Team ID in tracked files. It goes in
   `App/Signing.local.xcconfig`, which is ignored, and on Xcode Cloud
-  `ci_scripts/ci_post_clone.sh` writes that file from `CI_TEAM_ID`. Write
-  examples as `<team ID>`.
+  `ci_scripts/ci_post_clone.sh` writes that file from `CI_TEAM_ID` when it
+  holds one. Never print it, even in a build log. Write examples as
+  `<team ID>`.
 - No App Store Connect API keys, export options or committed Xcode projects.
   Xcode writes the team into a project, so `conflux.xcodeproj` stays
   generated.
