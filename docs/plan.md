@@ -79,8 +79,13 @@ throughput, and never hits a client timeout while the mesh is busy.
 - Scheduling: host pull, one request of prefetch on fast hosts, matching by
   model, preference list and capability, deadlines, retry on host loss, hedging
   at the tail. *So far:* matching, deadlines and retry on host loss work across
-  peers, and hosts admit work, refusing what they have no slot for. Pull,
-  prefetch and hedging are next.
+  peers, and hosts admit work. Host pull and prefetch are built within the
+  fixed connection direction: hosts answer a held status request when a
+  slot frees, fast hosts take one request ahead, and a request that loses a
+  slot to another gateway waits for the next one
+  ([design.md](design.md#hosts-pull-the-gateway-holds-a-short-queue)). With
+  fake hosts behind 40 ms of latency, a fast host's idle-with-work fell from
+  about 2 s to 0.1 s over 30 requests. Hedging is next.
 - Monitoring: throughput per host and for the mesh, failures, idle time while
   compatible work waits. *Built*: in the window's Monitoring section and in
   `/health` for clients with the token. Peers count their own free time, so

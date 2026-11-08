@@ -85,6 +85,7 @@ public final class Gateway: Sendable {
                 "capacity": host.capacity, "active": host.active, "completed": host.completed,
                 "per_hour": host.perHour, "failures": failures(host.failures),
                 "idle_with_work_seconds": seconds(host.idleWithWorkSeconds),
+                "held": host.held, "prefetched": host.prefetched,
             ]
             if let model = host.model { entry["model"] = model.id }
             if let detail = host.state.detail { entry["detail"] = detail }

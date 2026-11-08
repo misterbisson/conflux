@@ -18,9 +18,10 @@ struct Peer {
     let scheduler: Scheduler
     let server: HTTPServer
     let remote: RemoteHost
+    let base: URL
 
     /// `latency` is added each way to every exchange, like a network.
-    init(slots: Int = 1, latency: Duration = .zero,
+    init(slots: Int = 1, latency: Duration = .zero, endpoint: String = String(repeating: "ab", count: 32),
          behavior: @escaping @Sendable (Int) async throws -> HostReply = FakeHost.reply(after: 0)) async throws {
         host = FakeHost(id: "local", slots: slots, behavior: behavior)
         scheduler = await Scheduler.with([host])
@@ -32,9 +33,16 @@ struct Peer {
             return response
         }
         let port = try await server.start(port: 0)
-        remote = RemoteHost(endpointID: String(repeating: "ab", count: 32),
-                            link: FixedLink(base: URL(string: "http://127.0.0.1:\(port)")!))
+        base = URL(string: "http://127.0.0.1:\(port)")!
+        remote = RemoteHost(endpointID: endpoint, link: FixedLink(base: base))
         await remote.refresh()
+    }
+
+    /// Another gateway's view of the same host.
+    func anotherRemote() async -> RemoteHost {
+        let remote = RemoteHost(endpointID: String(repeating: "ef", count: 32), link: FixedLink(base: base))
+        await remote.refresh()
+        return remote
     }
 }
 
@@ -145,19 +153,24 @@ struct Peer {
         defer { peer.server.stop() }
         try await Task.sleep(for: .milliseconds(200))
         await peer.remote.refresh()
-        let free = try #require(await peer.remote.freeTime)
-        #expect(free.seconds >= 0.15)
-        #expect(abs(free.at.timeIntervalSinceNow) < 1)
+        let report = try #require(await peer.remote.report)
+        #expect(try #require(report.freeSeconds) >= 0.15)
+        #expect(abs(report.at.timeIntervalSinceNow) < 1)
+        #expect(report.free == 1)
+        #expect(report.pulls)
     }
 
     /// The yardstick for host pull: a gateway that sends work only once a
     /// request comes back leaves a peer's slot free for a round trip each
     /// time. The peer counts that free time, and the gateway counts it as
-    /// idle with work while more work waited.
+    /// idle with work while more work waited. (Sending a request ahead
+    /// closes the gap: `HostPullTests`.)
     @Test func measuresAPeersIdleTimeWhileWorkWaits() async throws {
         let peer = try await Peer(latency: .milliseconds(40), behavior: FakeHost.reply(after: 0.1))
         defer { peer.server.stop() }
-        let gateway = Scheduler()
+        var config = SchedulerConfig()
+        config.prefetch = false
+        let gateway = Scheduler(config: config)
         await gateway.add(peer.remote)
         peer.remote.start(every: .milliseconds(100))
         await gateway.startRefreshing(every: .milliseconds(100))

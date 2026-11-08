@@ -12,7 +12,8 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
     private var running = 0
     private(set) var peak = 0
     private(set) var calls = 0
-    private var free: (seconds: Double, at: Date)?
+    private var reported: HostReport?
+    private var aheadCount = 0
     var behavior: @Sendable (Int) async throws -> HostReply
 
     init(id: String, model: String = "model-a", capabilities: Set<ModelInfo.Capability> = [.text, .vision],
@@ -29,10 +30,18 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
     var availability: HostAvailability { get async { lock.withLock { state } } }
 
     func set(_ availability: HostAvailability) { lock.withLock { state = availability } }
-    /// Makes this host report its own free time, like a host on another
-    /// device.
-    func report(freeSeconds: Double, at: Date = Date()) { lock.withLock { free = (freeSeconds, at) } }
-    var freeTime: (seconds: Double, at: Date)? { get async { lock.withLock { free } } }
+    /// Makes this host report on its slots, like a host on another device.
+    func report(free: Int = 0, freeSeconds: Double? = nil, pulls: Bool = false, at: Date = Date()) {
+        lock.withLock { reported = HostReport(free: free, freeSeconds: freeSeconds, pulls: pulls, at: at) }
+    }
+    var report: HostReport? { get async { lock.withLock { reported } } }
+    /// Requests sent to it ahead, to wait for a slot.
+    var prefetchCount: Int { lock.withLock { aheadCount } }
+
+    func complete(_ body: Data, timeout: TimeInterval, options: RequestOptions) async throws -> HostReply {
+        if options.prefetch { lock.withLock { aheadCount += 1 } }
+        return try await complete(body, timeout: timeout)
+    }
     var callCount: Int { lock.withLock { calls } }
     var peakConcurrency: Int { lock.withLock { peak } }
 

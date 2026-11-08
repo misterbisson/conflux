@@ -213,6 +213,29 @@ then already transferred when a slot frees, so a network round trip never idles
 the GPU. A slow host gets no extra request: a request waiting behind a long one
 on a slow device can blow a client's deadline.
 
+**How it's built today.** The gateway dials each host and the host never
+dials back, so the host can't ask for work on a connection of its own.
+Instead the gateway keeps a status request open to each host, and the host
+answers it the moment its slots change ([The host protocol](#the-host-protocol)).
+A freed slot reaches the gateway in half a round trip, and its next request
+follows at once. Two things close the remaining gap:
+
+- **One request ahead, on fast hosts.** When no host has a free slot, the
+  gateway sends a request ahead to a fast host, where it waits for that
+  host's next slot, ahead of anything else. A host holds one such request at
+  most, whichever gateway sent it, and only if it would still finish inside
+  its deadline after waiting behind a whole request. Fast means a typical
+  time within 1.5 times the quickest host the request could use, and at most
+  20 seconds. A slow host is never sent work to wait, and neither is this
+  Mac's own host, which has no round trip to hide.
+- **A lost slot isn't a lost request.** When two gateways send to the same
+  free slot, the host takes one. A request to a fast host may wait there,
+  if nothing else is waiting, so the other usually waits on the host
+  instead. Otherwise the host says busy, and the gateway puts the request
+  back in its queue for the next slot, on that host or another, rather than
+  answering 429. Gateways still race for a freed slot. Taking them in turn
+  is for later ([plan.md](plan.md), Phase 5).
+
 ### Deadlines
 
 The gateway queues requests only briefly, and it **always answers inside the
@@ -285,22 +308,34 @@ forwarded connection. It's versioned in its paths, `/conflux/0/…`, until
 apple-iroh lets conflux name its own ALPN.
 
 - `GET /conflux/0/host`: the host's model, availability, the slots it takes
-  work in now, how many are busy, its typical request time, and how many
-  seconds it has had a free slot since it started (`free_seconds`). The
-  gateway asks every second, and that's the heartbeat: a connection iroh
-  reports closed counts as lost at once, and three unanswered asks in a row
-  count as lost too.
+  work in now, how many are busy, how many requests are held waiting for a
+  slot (`held`), its typical request time, how many seconds it has had a free
+  slot since it started (`free_seconds`), and `generation`, which counts its
+  status changes. With `Conflux-After: <generation>` and `Conflux-Wait:
+  <seconds>` (5 at most), the host holds the request until its status has
+  changed since that generation, or the wait is over. The gateway always
+  has one of these open, waiting a second, so it hears of a freed slot at
+  once. That's also the heartbeat: a connection iroh reports closed counts as
+  lost at once, and three unanswered asks in a row count as lost too.
 - `POST /conflux/0/complete`: one chat completion, with the time left in
-  `Conflux-Timeout`. `Conflux-Outcome` says what became of it: `completed`,
+  `Conflux-Timeout`. `Conflux-Prefetch: 1` says the request may wait on the
+  host for a slot. `Conflux-Outcome` says what became of it: `completed`,
   `rejected` (the runtime refused it, a 4xx the gateway passes on), `busy` or
   `unavailable`. A completion names the model that ran, as the host saw it.
+  `Conflux-Slots: <generation> <capacity> <active> <held>` says how the
+  host's slots stand once the request has left its slot, so the gateway can
+  send the next request without waiting for the status that says the same.
 
 **Admission belongs to the host.** A request from a peer's gateway runs only
-if one of the host's slots is free now, whichever gateway sent it, and it
-never queues there: a busy host says `busy`, and the gateway, which holds the
-queue, tries another host. This is the first step towards the pull model in
-[Scheduling](#scheduling). Gateways still send, and a host refuses what it
-can't run, but no slot is promised twice.
+if one of the host's slots is free now, whichever gateway sent it. It
+queues there only if it was sent with `Conflux-Prefetch`, no other request is
+held, and it would still finish in time after waiting behind a whole
+request. Otherwise a host with no free slot says `busy`, and the gateway,
+which holds the queue, waits for the next slot. No slot is promised twice.
+
+A host from before host pull sends no `generation`, answers a status request
+at once, and ignores `Conflux-Prefetch`. A gateway asks it every second and
+sends it nothing ahead, as before.
 
 A host that serves no model still answers, so its peers see "serves no model"
 rather than silence.
