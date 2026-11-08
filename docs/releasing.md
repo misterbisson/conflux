@@ -26,6 +26,8 @@ needs to be: Xcode Cloud manages the certificates and profiles itself.
 | [`tools/ci/build-app.sh`](../tools/ci/build-app.sh) | Archives the app signed ad hoc, checks it, and runs it in the sandbox. |
 | [`tools/ci/check-app.sh`](../tools/ci/check-app.sh) | The checks: version, bundle ID, export compliance, category, a 512pt @2x icon, the hardened runtime, the entitlements, and the embedded frameworks' versions. |
 | [`tools/icon/make-icon.swift`](../tools/icon/make-icon.swift) | Draws the icon. It's a placeholder. |
+| [`release-please-config.json`](../release-please-config.json) | How release-please versions conflux: tags `vX.Y.Z`, and `MARKETING_VERSION` in `project.yml` follows. `.release-please-manifest.json` holds the last version released. |
+| [`tools/ci/check-commit-message.sh`](../tools/ci/check-commit-message.sh) | Checks a pull request's title and description, which become its commit message. |
 
 `conflux.xcodeproj` is generated and never committed. Xcode writes the signing
 team into a project when you change signing in its editor, so a committed
@@ -57,21 +59,42 @@ file under `Sources/conflux`, or after changing `project.yml`.
 
 ## Making a release
 
-Tag the commit on `main` and push the tag:
+Releases come from [release-please](https://github.com/googleapis/release-please),
+from the commit messages on `main`:
 
-```bash
-git tag v0.1.0
-```
+1. Each pull request's title is a [Conventional
+   Commit](https://www.conventionalcommits.org/), because pull requests are
+   squash merged and the title becomes the commit's subject. `feat:` makes the
+   next release a minor version while conflux is below 1.0, `fix:` and `perf:`
+   a patch version, and `docs:`, `test:`, `ci:` and the rest don't release by
+   themselves. The [commit message](../.github/workflows/commit-message.yml)
+   check holds a pull request until its title and description read the way
+   they're meant to.
+2. After each merge, the
+   [release-please](../.github/workflows/release-please.yml) workflow opens or
+   updates one release pull request. It sets `MARKETING_VERSION` in
+   `project.yml`, adds the changes to `CHANGELOG.md`, and is titled
+   `chore(main): release x.y.z`.
+3. The release pull request gets the same CI as any other: the tests, the
+   Release archive, the App Store Connect checks and the sandbox smoke test, on
+   macOS. A pull request opened by a workflow can't start other workflows, so
+   the release workflow starts them itself. With many merges in a day, each
+   update replaces the build in progress, and only the latest one counts.
+4. Merging the release pull request, whenever you choose, tags `vX.Y.Z` on
+   `main` and makes a GitHub release. Xcode Cloud builds the tag and uploads it
+   to TestFlight. So TestFlight gets one build per release, and only builds
+   whose code passed CI.
 
-```bash
-git push origin v0.1.0
-```
+`ci_post_clone.sh` fails an Xcode Cloud build whose tag isn't
+`v` + `MARKETING_VERSION`, so a tag made by hand can't ship a mismatched build.
+Xcode Cloud numbers the builds, so `CURRENT_PROJECT_VERSION` stays 1.
 
-The tag should match `MARKETING_VERSION` in `project.yml`. Xcode Cloud numbers
-the builds, so `CURRENT_PROJECT_VERSION` stays 1. A build that uploads but never
-appears in TestFlight was usually refused by App Store Connect after the upload:
-**read the email from App Store Connect before the build log**, because the
-log shows success.
+A build that uploads but never appears in TestFlight was usually refused by App
+Store Connect after the upload: **read the email from App Store Connect before
+the build log**, because the log shows success.
+
+To release a version release-please wouldn't choose, end a pull request's
+description with a line of its own, `Release-As: x.y.z`.
 
 ## Setting up Xcode Cloud
 
@@ -175,7 +198,4 @@ prints the environment, and on a workflow that signs.
 
 ## Not done yet
 
-- **Versions by hand.** Tags and `MARKETING_VERSION` are set by hand.
-  release-please could do both from commit messages, as it does in similar
-  repositories.
 - **The icon** is a generated placeholder.

@@ -45,6 +45,25 @@ pull request is where it gets reviewed, and the merge is the decision. Commit
 on a branch, never on `main`, and say in the description what was tested and
 what wasn't. Work nobody asked for still needs asking about first.
 
+**The title is the commit message.** Pull requests are squash merged: the
+title becomes the commit's subject and the description its body, and
+release-please reads both to choose the next version and write the changelog.
+So the title is a [Conventional Commit](https://www.conventionalcommits.org/),
+`type(scope): description`, and the `commit message` check enforces it:
+
+- `feat` for something new a user can do: a minor release while below 1.0.
+- `fix` for something that was wrong, `perf` for something faster: a patch
+  release.
+- `docs`, `test`, `ci`, `build`, `refactor`, `style`, `chore`, `revert`: no
+  release by themselves.
+- `type!` for a breaking change, with a `BREAKING CHANGE:` line in the
+  description saying what breaks.
+
+The title is a changelog entry, so write it for someone reading release notes:
+what changed, in plain words, without a trailing period. In the description,
+don't start a line with something shaped like a title, such as `fix: …`:
+release-please reads it as another change.
+
 ## This repository is public
 
 Everything here is public: files, commit messages, branch names, pull requests,

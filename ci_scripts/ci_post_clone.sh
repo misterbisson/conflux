@@ -49,6 +49,17 @@ if on_xcode_cloud; then
 		fail "this workflow started from a pull request; conflux builds only tags on Xcode Cloud (docs/releasing.md)"
 fi
 
+# --- the tag is the version ---------------------------------------------------
+# release-please tags vX.Y.Z and sets MARKETING_VERSION in the same release. A
+# tag that disagrees was made some other way, and would ship a build numbered
+# differently from its tag.
+if on_xcode_cloud && [ -n "${CI_TAG:-}" ]; then
+	version="$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"?([0-9][0-9.]*)"?.*/\1/p' project.yml | sed -n 1p)"
+	[ "$CI_TAG" = "v$version" ] ||
+		fail "the tag is $CI_TAG and project.yml's MARKETING_VERSION is $version; release with release-please (docs/releasing.md)"
+	say "releasing $CI_TAG"
+fi
+
 # --- which Xcode --------------------------------------------------------------
 # Xcode Cloud uses its latest release, and GitHub's CI uses the version in
 # .xcode-version. When they differ, GitHub isn't testing what ships: this says
