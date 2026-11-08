@@ -170,12 +170,16 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
     }
 }
 
-/// A host whose owner starts and stops it, as a node does.
-public protocol ManagedHost: InferenceHost {
-    var config: ModelConfig { get }
-    var logURL: URL { get }
+/// A host on this device, which its node starts and stops.
+public protocol LocalHost: InferenceHost {
     func start() async
     func stop()
+}
+
+/// A local host running a model file the person chose, with llama.cpp.
+public protocol ManagedHost: LocalHost {
+    var config: ModelConfig { get }
+    var logURL: URL { get }
 }
 
 /// A loaded model and its slots. llama.cpp's objects are freed when the last

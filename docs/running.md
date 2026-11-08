@@ -69,6 +69,27 @@ down. It needs llama.cpp installed (`brew install llama.cpp`), and
 everything after `--` is passed to `llama-server`. With the same llama.cpp
 build, both runtimes give the same answers ([design.md](design.md#runtimes)).
 
+### Apple's on-device model
+
+The model Apple Intelligence uses can be served alongside the model file, as
+`apple-on-device`. Turn on **Serve Apple's on-device model too** in the
+window, or add `--apple-model` to `conflux serve`. It needs Apple
+Intelligence turned on in System Settings; until it is, or while Apple's
+model downloads, the host says so and waits.
+
+It reads text and images and passes the self-check, in about a second per
+image on an M2 MacBook Air. It runs two requests at once by default
+(`--apple-slots`): more add waiting, not throughput. Its guardrails decline
+some content, and it takes only short requests. Those go to the model file's
+host, or a peer's, when the client accepts that model: with
+`Conflux-Models: apple-on-device, <model ID>`, for example. A request that
+only Apple's model may run gets the refusal, a `400` with code
+`content_filter` or `context_length_exceeded`. Requests with
+`response_format` or tools go elsewhere the same way, for now.
+
+Peers see one host per device so far: the model file's, or Apple's model
+when there's no model file.
+
 ## Pointing a client at it
 
 - **Endpoint:** `http://127.0.0.1:8090/v1`. Change the port with `--port`.

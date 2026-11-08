@@ -97,11 +97,18 @@ public struct HostReply: Sendable, Equatable {
     /// What ran, when the host says. A host on another device does, since its
     /// model can change between the gateway's last look and the answer.
     public var model: ModelInfo?
+    /// A refusal from this host that another host might not give: the model
+    /// declined the content, the request was too long for it, or it asked
+    /// for something this runtime doesn't do. The gateway tries another
+    /// host that serves an accepted model, and passes this on only when
+    /// there's none.
+    public var retryElsewhere: Bool
 
-    public init(status: Int, body: Data, model: ModelInfo? = nil) {
+    public init(status: Int, body: Data, model: ModelInfo? = nil, retryElsewhere: Bool = false) {
         self.status = status
         self.body = body
         self.model = model
+        self.retryElsewhere = retryElsewhere
     }
 }
 

@@ -206,6 +206,13 @@ import Testing
         #expect(SelfCheck.passes(answer: "It reads VCMW4.", expected: "VCMV4"))
         #expect(!SelfCheck.passes(answer: "VCM", expected: "VCMV4"))
         #expect(!SelfCheck.passes(answer: "VCOM4", expected: "VCMV4", mistakes: 0))
+        // A letter added or dropped, as small vision models do.
+        #expect(SelfCheck.passes(answer: "TFEATL", expected: "TFETL"))
+        #expect(SelfCheck.passes(answer: "It says LEERMP", expected: "LERMP"))
+        #expect(SelfCheck.passes(answer: "3PW7", expected: "3PWW7"))
+        #expect(!SelfCheck.passes(answer: "TFEAATL", expected: "TFETL"))
+        #expect(!SelfCheck.passes(answer: "3P7", expected: "3PWW7"))
+        #expect(SelfCheck.distance(Array("KITTEN"), Array("SITTING")) == 3)
     }
 
     @Test func probes() throws {

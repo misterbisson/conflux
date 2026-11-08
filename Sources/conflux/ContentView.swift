@@ -8,6 +8,7 @@ struct ContentView: View {
         Form {
             status
             modelSection
+            appleSection
             meshSection
             monitoringSection
             gatewaySection
@@ -68,11 +69,11 @@ struct ContentView: View {
 
     var stateLabel: String {
         guard model.running else { return "Stopped" }
-        return model.host?.state.label ?? "Gateway only"
+        return (model.host ?? model.appleHost)?.state.label ?? "Gateway only"
     }
 
     var color: Color {
-        guard model.running, let state = model.host?.state else { return .gray }
+        guard model.running, let state = (model.host ?? model.appleHost)?.state else { return .gray }
         return color(for: state)
     }
 
@@ -118,6 +119,40 @@ struct ContentView: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(model.running)
+    }
+
+    // MARK: Apple's model
+
+    @ViewBuilder var appleSection: some View {
+        Section("Apple's model") {
+            Toggle("Serve Apple's on-device model too", isOn: $model.settings.appleModel.enabled)
+                .disabled(model.running)
+            if model.settings.appleModel.enabled {
+                if let apple = model.appleHost, model.running {
+                    LabeledContent("State") {
+                        HStack {
+                            Circle().fill(color(for: apple.state)).frame(width: 8, height: 8)
+                            Text(apple.state.label)
+                        }
+                    }
+                    if let detail = apple.state.detail {
+                        Text(detail).font(.caption).foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Slots", value: "\(apple.active) busy of \(apple.capacity)")
+                    if let typical = apple.typicalSeconds {
+                        LabeledContent("Typical request", value: String(format: "%.1f s", typical))
+                    }
+                }
+                Stepper("Slots: \(model.settings.appleModel.slots)", value: $model.settings.appleModel.slots, in: 1...8)
+                    .disabled(model.running)
+            }
+            Text("""
+                The model Apple Intelligence uses, served as \(AppleModelHost.modelID): text and images, in a system \
+                process, so it takes none of conflux's memory. It needs Apple Intelligence turned on. It declines \
+                some content and takes only short requests; those go to another host when there is one.
+                """)
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     var host: ModelConfig { model.settings.host ?? ModelConfig(model: "") }

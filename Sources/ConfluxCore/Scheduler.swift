@@ -518,6 +518,14 @@ public actor Scheduler {
                     recent.append(Date())
                     return .completed(reply, model: reply.model ?? answer.model)
                 }
+                if reply.retryElsewhere {
+                    // Declined here, or too long for this model: another
+                    // host serving an accepted model may take it.
+                    tried.insert(hostID)
+                    let others = entries.values.contains { $0.model.map { choice.rank($0) != nil } ?? false
+                        && !tried.contains($0.host.id) && ($0.capacity > 0 || !$0.active.isEmpty) }
+                    if others && !(remaining().map { $0 <= 0 } ?? false) { continue }
+                }
                 rejectedCount += 1
                 return .rejected(reply)
             case .failure(let error):
