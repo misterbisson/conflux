@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/misterbisson/conflux/compare/v0.1.1...v0.1.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **app:** keep access to chosen model files across launches ([#13](https://github.com/misterbisson/conflux/issues/13)) ([17375bc](https://github.com/misterbisson/conflux/commit/17375bcdbb077f40a65722609e194416b9bc8a18))
+
 ## [0.1.1](https://github.com/misterbisson/conflux/compare/v0.1.0...v0.1.1) (2026-11-08)
 
 
