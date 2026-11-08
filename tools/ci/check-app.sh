@@ -241,6 +241,20 @@ check "may connect (the mesh)" "com.apple.security.network.client is missing, so
 	same "$(entitlement com.apple.security.network.client)" true
 check "no get-task-allow" "the Release build claims get-task-allow, which App Store Connect refuses" \
 	absent "$(entitlement com.apple.security.get-task-allow)"
+# The keychain access groups need the team's provisioning profile, so an ad hoc
+# archive has none, and they're checked where the team's signing reads them.
+# The app's own group comes first, to stay the default for the device key; the
+# device directory's, which every build shares, second. Both take the team's
+# prefix from Xcode, never written out.
+groups="$(value App/conflux.entitlements keychain-access-groups | sed -nE 's/^[[:space:]]+//p' | tr '\n' ' ')"
+# Xcode's build settings, literally: the dollars are escaped, not expanded.
+prefix="\$(AppIdentifierPrefix)"
+wanted="${prefix}\$(PRODUCT_BUNDLE_IDENTIFIER) ${prefix}com.caseybisson.conflux.devices "
+check "keychain groups: the app's own, then the device directory's" \
+	"App/conflux.entitlements should give keychain-access-groups as: ${wanted}; it gives: $groups" \
+	same "$groups" "$wanted"
+check "no keychain groups in the ad hoc archive" "the ad hoc archive claims keychain-access-groups, which need the team's profile" \
+	absent "$(entitlement keychain-access-groups)"
 
 # --- embedded frameworks --------------------------------------------------------
 for framework in "$app"/Contents/Frameworks/*.framework; do

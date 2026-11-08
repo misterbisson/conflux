@@ -101,6 +101,16 @@ targets:
         # security-scoped bookmarks (Sources/conflux/ModelAccess.swift).
         com.apple.security.files.user-selected.read-only: true
         com.apple.security.files.bookmarks.app-scope: true
+        # The keychain. The first group is the app's own, where the device's
+        # secret key stays, ThisDeviceOnly: listing it first keeps it the
+        # default, as it was before there was a second. The second is the
+        # device directory, shared by every build of the app: each device
+        # lists its public endpoint ID there, synced by iCloud Keychain
+        # (Sources/ConfluxCore/DeviceDirectory.swift). The prefix is the
+        # team's, filled in when Xcode signs; never write it out here.
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)
+          - $(AppIdentifierPrefix)com.caseybisson.conflux.devices
     settings:
       base:
         PRODUCT_NAME: conflux
@@ -123,6 +133,10 @@ targets:
         #   key in the keychain, and derives its public half, the endpoint ID,
         #   through CryptoKit's Ed25519. A signing key's public half: nothing
         #   is encrypted here.
+        # - Sources/ConfluxCore/DeviceDirectory.swift: keeps each device's
+        #   endpoint ID, a public key, with a name and a date, as a keychain
+        #   item iCloud Keychain syncs between the user's devices. Storage
+        #   through the operating system's keychain: nothing is encrypted here.
         # - apple-iroh v0.9.0: iroh's connections between the user's own
         #   devices, and to its relays, are QUIC with TLS 1.3, and each device's
         #   identity is an Ed25519 key. The cryptography is compiled into the
