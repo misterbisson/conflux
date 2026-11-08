@@ -19,11 +19,12 @@ needs to be: Xcode Cloud manages the certificates and profiles itself.
 
 | File | What it does |
 |---|---|
-| [`project.yml`](../project.yml) | The app target, for [XcodeGen](https://github.com/yonaskolb/XcodeGen). It compiles `Sources/conflux` against the package's `ConfluxCore` library. |
+| [`project.yml`](../project.yml) | The app's two targets, for [XcodeGen](https://github.com/yonaskolb/XcodeGen): `conflux`, the Mac app, compiles `Sources/conflux`, and `conflux-ipad`, the same app for iPadOS with the same bundle ID, compiles `Sources/conflux-ipad`. Both use the package's `ConfluxCore` library. |
 | [`App/`](../App) | The entitlements, the icon, the privacy manifest, and the signing settings, without a Team ID. |
 | [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post_clone.sh) | Generates `conflux.xcodeproj`. Xcode Cloud runs it by name after cloning; GitHub's CI runs it too. |
 | [`.xcode-version`](../.xcode-version) | The Xcode that Xcode Cloud builds releases with, so GitHub can use the same one. |
 | [`tools/ci/build-app.sh`](../tools/ci/build-app.sh) | Archives the app signed ad hoc, checks it, and runs it in the sandbox. |
+| [`tools/ci/build-ipad.sh`](../tools/ci/build-ipad.sh) | Builds the iPad app for devices, unsigned, and checks its bundle ID, version and what it ships. The pinned llama.cpp framework has no iOS Simulator slice, so nothing runs. |
 | [`tools/ci/check-app.sh`](../tools/ci/check-app.sh) | The checks: version, bundle ID, export compliance and its basis, category, a 512pt @2x icon, a privacy manifest that covers what the binaries import, the hardened runtime, the entitlements, and the embedded frameworks' versions. |
 | [`tools/icon/make-icon.swift`](../tools/icon/make-icon.swift) | Draws the icon. It's a placeholder. |
 | [`App/Credits.html`](../App/Credits.html) | The licences of the code the app includes, shown in its About window. [`tools/notices/make-notices.py`](../tools/notices/make-notices.py) writes it; `check-app.sh` fails when it names other versions than `Package.swift` pins. |
@@ -55,8 +56,16 @@ builds; to check an archive the way CI does, without one:
 tools/ci/build-app.sh
 ```
 
+The `conflux-ipad` scheme runs the iPad app on an iPad, signed the same way
+([running.md](running.md#on-an-ipad)). To check it compiles the way CI does:
+
+```bash
+tools/ci/build-ipad.sh
+```
+
 Run `ci_scripts/ci_post_clone.sh` again after adding, renaming or removing a
-file under `Sources/conflux`, or after changing `project.yml`.
+file under `Sources/conflux` or `Sources/conflux-ipad`, or after changing
+`project.yml`.
 
 ## Making a release
 
@@ -307,5 +316,11 @@ compliance call, recorded here so a change to what the app contains is checked
 against it. It isn't legal advice for anyone else's use of conflux.
 
 ## Not done yet
+
+- **The iPad app on TestFlight.** It shares the Mac app's bundle ID, so App
+  Store Connect counts it as the same app once iOS is added as a platform to
+  that app's record, and Xcode Cloud's workflow needs an archive action for
+  the `conflux-ipad` scheme, for iOS. Neither is set up. Until they are, the
+  iPad app runs from Xcode, and releases are Mac only.
 
 - **The icon** is a generated placeholder.

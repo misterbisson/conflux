@@ -133,8 +133,11 @@ public struct KeychainDeviceDirectory: DeviceDirectory {
 
     /// The directory, when this process may use it: a signed app with the
     /// shared access group. Nil built from source or signed ad hoc, where
-    /// peers are added by hand.
+    /// peers are added by hand. Nil on iPadOS for now: it has no SecTask to
+    /// read entitlements with, and the iPad host that will need the
+    /// directory isn't built yet.
     public static func forThisApp() -> KeychainDeviceDirectory? {
+        #if os(macOS)
         guard let task = SecTaskCreateFromSelf(nil),
               let groups = SecTaskCopyValueForEntitlement(task, "keychain-access-groups" as CFString, nil)
                 as? [String],
@@ -143,6 +146,9 @@ public struct KeychainDeviceDirectory: DeviceDirectory {
               let group = groups.first(where: { $0.hasSuffix("." + Self.group) })
         else { return nil }
         return KeychainDeviceDirectory(accessGroup: group)
+        #else
+        return nil
+        #endif
     }
 
     init(accessGroup: String) { self.accessGroup = accessGroup }

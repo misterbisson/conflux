@@ -1,4 +1,4 @@
-# The Mac app, for Xcode and Xcode Cloud. XcodeGen generates conflux.xcodeproj
+# The app, for the Mac and iPad, for Xcode and Xcode Cloud. XcodeGen generates conflux.xcodeproj
 # from this file, and the generated project is not committed:
 #
 #   ci_scripts/ci_post_clone.sh
@@ -17,6 +17,7 @@ options:
   bundleIdPrefix: com.caseybisson
   deploymentTarget:
     macOS: "15.0"
+    iOS: "18.0"
   createIntermediateGroups: true
 
 configFiles:
@@ -167,11 +168,78 @@ targets:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: com.caseybisson.conflux.dev
 
+  # The same app on iPadOS: one bundle ID, so one App Store Connect record
+  # and one TestFlight track for both platforms, and one keychain access
+  # group. An iPad is a host only (docs/plan.md, Phase 3). Its first version
+  # is a memory probe: it loads a model copied into its Documents folder,
+  # runs the self-check, and records the memory that took
+  # (Sources/conflux-ipad).
+  conflux-ipad:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/conflux-ipad
+      - path: App/Assets.xcassets
+      - path: App/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: App/Credits.html
+        buildPhase: resources
+    dependencies:
+      - package: ConfluxPackage
+        product: ConfluxCore
+    # Xcode generates the rest of the Info.plist from INFOPLIST_KEY_ settings,
+    # which don't cover these.
+    info:
+      path: App/conflux-ipad-Info.plist
+      properties:
+        # Models are copied in from a Mac: in Finder, the iPad's Files tab
+        # shows conflux's Documents folder, and the Files app does too.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        # XcodeGen writes 1.0 otherwise: the versions release-please and
+        # Xcode Cloud set, as the Mac app's are.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    entitlements:
+      path: App/conflux-ipad.entitlements
+      properties:
+        # A larger per-app memory limit, on devices that allow one, so a
+        # bigger model fits. The probe measures what it buys.
+        com.apple.developer.kernel.increased-memory-limit: true
+        # A larger address space, so llama.cpp can map a model file of
+        # several gigabytes.
+        com.apple.developer.kernel.extended-virtual-addressing: true
+    settings:
+      base:
+        PRODUCT_NAME: conflux
+        PRODUCT_BUNDLE_IDENTIFIER: com.caseybisson.conflux
+        TARGETED_DEVICE_FAMILY: "2"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: conflux
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        # The same answer as the Mac target's, for the same code: see the
+        # export-compliance note there.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.caseybisson.conflux.dev
+
 schemes:
   conflux:
     build:
       targets:
         conflux: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  conflux-ipad:
+    build:
+      targets:
+        conflux-ipad: all
     run:
       config: Debug
     archive:

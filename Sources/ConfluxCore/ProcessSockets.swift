@@ -7,9 +7,15 @@ import Darwin
 /// Any other process on the Mac can reach loopback too, and the host service
 /// has no token, so it accepts a connection only when this process holds the
 /// socket at the other end.
+///
+/// iPadOS has no libproc, so there this answers no to every connection: the
+/// host service refuses them all, and an iPad can't serve peers until
+/// apple-iroh can hand this process its streams without a port other apps
+/// can reach (docs/plan.md, *apple-iroh changes*, 4).
 enum ProcessSockets {
     /// True if this process has a TCP socket bound to `port` on its side.
     static func ownsLocalPort(_ port: UInt16) -> Bool {
+        #if os(macOS)
         let pid = getpid()
         let bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
         guard bytes > 0 else { return false }
@@ -29,5 +35,8 @@ enum ProcessSockets {
             if UInt16(bigEndian: local) == port { return true }
         }
         return false
+        #else
+        return false
+        #endif
     }
 }

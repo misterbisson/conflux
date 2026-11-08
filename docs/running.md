@@ -2,7 +2,8 @@
 
 conflux runs a gateway on loopback, serving this Mac's own model with
 llama.cpp and, when it has [peers](#peers-other-macs-models), other Macs'
-models over iroh. iPads join in Phase 3 ([plan.md](plan.md)).
+models over iroh. The [iPad app](#on-an-ipad) is so far a memory probe; iPads
+join the mesh as hosts later in Phase 3 ([plan.md](plan.md)).
 
 ## What you need
 
@@ -170,6 +171,42 @@ swift run -c release conflux serve --model ... --mmproj ... --image-min-tokens 1
 In the app, set **Fewest tokens per image** to 1024.
 Check the model's documentation for others. Turning the self-check off makes
 the host serve anyway, and clients get the bad answers instead.
+
+## On an iPad
+
+The iPad app is the same app as the Mac's, built for iPadOS 18 or later. Its
+first version isn't a host yet. It's a memory probe: it checks whether a
+model fits on the iPad, and records the memory that took, to decide which
+models iPads can serve ([plan.md](plan.md), Phase 3).
+
+**Installing it.** From Xcode for now: it isn't on TestFlight yet
+([releasing.md](releasing.md#not-done-yet)). With your Team ID in
+`App/Signing.local.xcconfig` ([releasing.md](releasing.md#building-the-app-on-a-mac)),
+generate the project, open it, choose the `conflux-ipad` scheme and your iPad,
+and run. Xcode's automatic signing adds the app's two memory capabilities,
+the increased memory limit and extended virtual addressing, to its app ID the
+first time.
+
+**Copying models in.** Connect the iPad to the Mac, select it in Finder, open
+the **Files** tab, and drag the GGUF files onto conflux. The Files app shows
+the same folder, under **On My iPad**. A vision model's projector goes
+alongside it, with `mmproj` in its file name, as llama.cpp names them.
+
+**Checking a model.** Choose the model, its projector, the slots and the
+context, and press **Check this model**. conflux loads it, runs the
+self-check, and times one request, keeping the screen awake meanwhile. Keep
+it in the foreground. A model too big for the iPad makes iPadOS end the app,
+and the next launch records it as *killed*.
+
+The peak footprint it records is the highest since the app launched. So for
+a clean number, check one model per launch: quit conflux from the app
+switcher between checks.
+
+**Sharing results.** **Share results** gives a Markdown table for
+[measurements.md](measurements.md). It names the kind of iPad, such as
+`iPad13,4`, its memory, and the model files: nothing that identifies the
+iPad or its owner. The same results are in `probe-results.json`, in the
+folder the models are in.
 
 ## Files
 

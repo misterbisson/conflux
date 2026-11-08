@@ -75,6 +75,8 @@ jobs:
         run: ci_scripts/ci_post_clone.sh
       - name: Archive and check
         run: tools/ci/build-app.sh
+      - name: Build the iPad app
+        run: tools/ci/build-ipad.sh
 
   checks:
     name: checks
