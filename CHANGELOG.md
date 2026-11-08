@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/misterbisson/conflux/compare/v0.1.2...v0.2.0) (2026-11-08)
+
+
+### Features
+
+* **gateway:** count throughput, failures and idle-with-work per host and for the mesh ([#19](https://github.com/misterbisson/conflux/issues/19)) ([83259c2](https://github.com/misterbisson/conflux/commit/83259c2f4b57f263c9cd83954a658590a35a5500))
+* **mesh:** find the user's other Macs through iCloud Keychain ([#20](https://github.com/misterbisson/conflux/issues/20)) ([1c3d997](https://github.com/misterbisson/conflux/commit/1c3d9979e2c7c836bd488223bf05f8d263d84b0e))
+* **scheduler:** hedge stragglers at the tail onto idle hosts, and cancel the copy that loses ([#22](https://github.com/misterbisson/conflux/issues/22)) ([4c51e1e](https://github.com/misterbisson/conflux/commit/4c51e1e1703640a5f86f5b34a28a7b5bc9b337b9))
+* **scheduler:** hosts say when a slot frees, and fast hosts take one request ahead ([#21](https://github.com/misterbisson/conflux/issues/21)) ([5d24c34](https://github.com/misterbisson/conflux/commit/5d24c3494f1042e8f7d95541475a8af7b5908f30))
+* serve hosts to peers over iroh ([#16](https://github.com/misterbisson/conflux/issues/16)) ([b35e95c](https://github.com/misterbisson/conflux/commit/b35e95c8110959b6a09b08dcab0eaf1e7e8faca8))
+
+
+### Bug Fixes
+
+* **app:** ship llama.cpp's licences in the About window ([#17](https://github.com/misterbisson/conflux/issues/17)) ([7fd937a](https://github.com/misterbisson/conflux/commit/7fd937af34bc311bcf868559f6d0131c6aef4ee3))
+
 ## [0.1.2](https://github.com/misterbisson/conflux/compare/v0.1.1...v0.1.2) (2026-11-08)
 
 
