@@ -220,4 +220,13 @@ import Testing
         #expect(SelfCheck.answer(in: Data(#"{"choices":[{"message":{"content":"X"}}]}"#.utf8)) == "X")
         #expect(SelfCheck.answer(in: Data("{}".utf8)) == nil)
     }
+
+    @Test func probeTextNeverDoublesACharacter() {
+        for _ in 0..<2000 {
+            let text = SelfCheck.randomText()
+            #expect(text.count == 5)
+            #expect(zip(text, text.dropFirst()).allSatisfy { $0 != $1 }, "\(String(text))")
+            #expect(text.allSatisfy(SelfCheck.alphabet.contains))
+        }
+    }
 }

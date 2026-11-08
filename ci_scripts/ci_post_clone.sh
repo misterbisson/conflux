@@ -102,6 +102,14 @@ if on_xcode_cloud; then
 	fi
 fi
 
+# --- the starter model --------------------------------------------------------
+# The app ships one small model, so a first request works before anyone has
+# chosen one. It's fetched, pinned by revision and checksum, never committed,
+# and the project copies App/StarterModel into both apps.
+say "fetching the starter model"
+tools/ci/fetch-starter-model.sh ||
+	fail "couldn't fetch the starter model (tools/ci/fetch-starter-model.sh)"
+
 # --- XcodeGen -----------------------------------------------------------------
 tools="$(mktemp -d)"
 trap 'rm -rf "$tools"' EXIT

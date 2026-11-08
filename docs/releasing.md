@@ -21,13 +21,14 @@ needs to be: Xcode Cloud manages the certificates and profiles itself.
 |---|---|
 | [`project.yml`](../project.yml) | The app's two targets, for [XcodeGen](https://github.com/yonaskolb/XcodeGen): `conflux`, the Mac app, compiles `Sources/conflux`, and `conflux-ipad`, the same app for iPadOS with the same bundle ID, compiles `Sources/conflux-ipad`. Both use the package's `ConfluxCore` library. |
 | [`App/`](../App) | The entitlements, the icon, the privacy manifest, and the signing settings, without a Team ID. |
-| [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post_clone.sh) | Generates `conflux.xcodeproj`. Xcode Cloud runs it by name after cloning; GitHub's CI runs it too. |
+| [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post_clone.sh) | Fetches the starter model and generates `conflux.xcodeproj`. Xcode Cloud runs it by name after cloning; GitHub's CI runs it too. |
+| [`tools/ci/fetch-starter-model.sh`](../tools/ci/fetch-starter-model.sh) | Fetches the starter model both apps ship, SmolVLM-256M-Instruct, pinned by revision and checksum, into the ignored `App/StarterModel`. `check-app.sh` and `build-ipad.sh` check each app holds exactly those files. |
 | [`.xcode-version`](../.xcode-version) | The Xcode that Xcode Cloud builds releases with, so GitHub can use the same one. |
 | [`tools/ci/build-app.sh`](../tools/ci/build-app.sh) | Archives the app signed ad hoc, checks it, and runs it in the sandbox. |
 | [`tools/ci/build-ipad.sh`](../tools/ci/build-ipad.sh) | Builds the iPad app for devices, unsigned, and checks its bundle ID, version and what it ships. The pinned llama.cpp framework has no iOS Simulator slice, so nothing runs. |
 | [`tools/ci/check-app.sh`](../tools/ci/check-app.sh) | The checks: version, bundle ID, export compliance and its basis, category, a 512pt @2x icon, a privacy manifest that covers what the binaries import, the hardened runtime, the entitlements, and the embedded frameworks' versions. |
 | [`tools/icon/make-icon.swift`](../tools/icon/make-icon.swift) | Draws the icon. It's a placeholder. |
-| [`App/Credits.html`](../App/Credits.html) | The licences of the code the app includes, shown in its About window. [`tools/notices/make-notices.py`](../tools/notices/make-notices.py) writes it; `check-app.sh` fails when it names other versions than `Package.swift` pins. |
+| [`App/Credits.html`](../App/Credits.html) | The licences of the code and the starter model the app includes, shown in its About window. [`tools/notices/make-notices.py`](../tools/notices/make-notices.py) writes it; `check-app.sh` fails when it names other versions than `Package.swift` and `fetch-starter-model.sh` pin. |
 | [`release-please-config.json`](../release-please-config.json) | How release-please versions conflux: tags `vX.Y.Z`, and `MARKETING_VERSION` in `project.yml` follows. `.release-please-manifest.json` holds the last version released. |
 | [`tools/ci/check-commit-message.sh`](../tools/ci/check-commit-message.sh) | Checks a pull request's title and description, which become its commit message. |
 

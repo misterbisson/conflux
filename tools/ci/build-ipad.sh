@@ -52,4 +52,14 @@ for file in Credits.html PrivacyInfo.xcprivacy; do
 		fail=1
 	fi
 done
+# The starter model, as fetch-starter-model.sh pins it.
+while read -r name sha256; do
+	got="$(shasum -a 256 "$app/StarterModel/$name" 2>/dev/null | awk '{ print $1 }')"
+	if [ "$got" = "$sha256" ]; then
+		echo "ok: ships the starter model's $name"
+	else
+		echo "FAIL: no $name with the pinned checksum in the app's StarterModel folder" >&2
+		fail=1
+	fi
+done < <(sed -nE 's/^[[:space:]]*"([^ ]+\.gguf) ([0-9a-f]{64})"$/\1 \2/p' tools/ci/fetch-starter-model.sh)
 exit "$fail"

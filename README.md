@@ -58,5 +58,8 @@ conflux links [llama.cpp](https://github.com/ggml-org/llama.cpp), which is
 also MIT licensed, using the prebuilt framework from its releases, and
 [apple-iroh](https://github.com/misterbisson/apple-iroh), MIT licensed, which
 packages [iroh](https://github.com/n0-computer/iroh) (MIT or Apache 2.0) and
-the crates it depends on. Models
-aren't included: each has its own license, and conflux points at them.
+the crates it depends on. The app includes one small model, so a first
+request works before you've chosen one:
+[SmolVLM-256M-Instruct](https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct),
+by Hugging Face, Apache 2.0. Other models aren't included: each has its own
+license, and conflux points at them.

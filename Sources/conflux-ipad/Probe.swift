@@ -92,8 +92,23 @@ final class Probe {
         let ggufs = files.filter { $0.pathExtension.lowercased() == "gguf" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         // llama.cpp's vision projectors are named mmproj by convention.
-        projectors = ggufs.filter { $0.lastPathComponent.lowercased().contains("mmproj") }
-        models = ggufs.filter { !projectors.contains($0) }
+        let copied = ggufs.filter { $0.lastPathComponent.lowercased().contains("mmproj") }
+        // The starter model the app ships comes first, so there's something
+        // to check before any model is copied in.
+        let starter = StarterModel.files().map { (URL(fileURLWithPath: $0.model), URL(fileURLWithPath: $0.projector)) }
+        projectors = (starter.map { [$0.1] } ?? []) + copied
+        models = (starter.map { [$0.0] } ?? []) + ggufs.filter { !copied.contains($0) }
+    }
+
+    /// Whether a file is the starter model's, inside the app.
+    static func included(_ url: URL) -> Bool {
+        url.deletingLastPathComponent().lastPathComponent == StarterModel.folder
+            && url.path.hasPrefix(Bundle.main.bundlePath)
+    }
+
+    /// A file's name and size, for choosing it.
+    static func label(_ url: URL) -> String {
+        "\(url.lastPathComponent) · \(Memory.gigabytes(size(url)))" + (included(url) ? " · included" : "")
     }
 
     static func size(_ url: URL) -> UInt64 {
