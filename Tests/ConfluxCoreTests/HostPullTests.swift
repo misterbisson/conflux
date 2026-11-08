@@ -9,7 +9,10 @@ import Testing
     let any = ModelChoice(model: "any", preference: nil)
 
     @Test func statusAnswersWhenASlotFrees() async throws {
-        let peer = try await Peer(behavior: FakeHost.reply(after: 0.4))
+        // The request runs until the test lets it finish: a slow runner can't
+        // free the slot before the test has seen it taken.
+        let gate = Gate()
+        let peer = try await Peer(behavior: gate.reply())
         defer { peer.server.stop() }
         let running = Task { await peer.scheduler.run(Data("{}".utf8), onHost: "local", deadline: nil) }
         #expect(await eventually { await peer.scheduler.snapshot().hosts.first?.active == 1 })
@@ -17,7 +20,10 @@ import Testing
         #expect(await peer.remote.report?.free == 0)
         // Held until the slot frees, well before the 5 s wait is up.
         let start = Date()
-        #expect(await peer.remote.refresh(waitingUpTo: 5))
+        let held = Task { await peer.remote.refresh(waitingUpTo: 5) }
+        try await Task.sleep(for: .milliseconds(200))
+        await gate.release()
+        #expect(await held.value)
         let waited = Date().timeIntervalSince(start)
         #expect(waited < 4.5, "answered after \(waited) s")
         #expect(await peer.remote.report?.free == 1)
@@ -79,7 +85,9 @@ import Testing
     }
 
     @Test func aHostHoldsOneRequestSentAhead() async throws {
-        let host = FakeHost(id: "local", behavior: FakeHost.reply(after: 0.5))
+        // The first request runs until the test has seen the others refused.
+        let gate = Gate()
+        let host = FakeHost(id: "local", behavior: gate.reply())
         let scheduler = await Scheduler.with([host])
         await scheduler.setTypical(0.5, for: "local")
         let deadline = Date().addingTimeInterval(30)
@@ -92,6 +100,7 @@ import Testing
         if case .busy = second {} else { Issue.record("\(second)") }
         let plain = await scheduler.run(Data(), onHost: "local", deadline: deadline)
         if case .busy = plain {} else { Issue.record("\(plain)") }
+        await gate.release()
         let (first, held) = await (running, ahead)
         if case .completed = first {} else { Issue.record("\(first)") }
         if case .completed = held {} else { Issue.record("\(held)") }
@@ -103,7 +112,8 @@ import Testing
 
     /// A request sent ahead waits only if it would still finish in time.
     @Test func aHostDoesntHoldWhatWouldMissItsDeadline() async throws {
-        let host = FakeHost(id: "local", behavior: FakeHost.reply(after: 1))
+        let gate = Gate()
+        let host = FakeHost(id: "local", behavior: gate.reply())
         let scheduler = await Scheduler.with([host])
         await scheduler.setTypical(5, for: "local")
         async let running = scheduler.run(Data(), onHost: "local", deadline: nil)
@@ -112,6 +122,7 @@ import Testing
         let outcome = await scheduler.run(Data(), onHost: "local", deadline: Date().addingTimeInterval(8),
                                           prefetch: true)
         if case .busy = outcome {} else { Issue.record("\(outcome)") }
+        await gate.release()
         _ = await running
     }
 
