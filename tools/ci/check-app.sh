@@ -247,9 +247,12 @@ check "no get-task-allow" "the Release build claims get-task-allow, which App St
 # device directory's, which every build shares, second. Both take the team's
 # prefix from Xcode, never written out.
 groups="$(value App/conflux.entitlements keychain-access-groups | sed -nE 's/^[[:space:]]+//p' | tr '\n' ' ')"
+# Xcode's build settings, literally: the dollars are escaped, not expanded.
+prefix="\$(AppIdentifierPrefix)"
+wanted="${prefix}\$(PRODUCT_BUNDLE_IDENTIFIER) ${prefix}com.caseybisson.conflux.devices "
 check "keychain groups: the app's own, then the device directory's" \
-	"App/conflux.entitlements should give keychain-access-groups as \$(AppIdentifierPrefix)\$(PRODUCT_BUNDLE_IDENTIFIER) then \$(AppIdentifierPrefix)com.caseybisson.conflux.devices; it gives: $groups" \
-	same "$groups" '$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER) $(AppIdentifierPrefix)com.caseybisson.conflux.devices '
+	"App/conflux.entitlements should give keychain-access-groups as: ${wanted}; it gives: $groups" \
+	same "$groups" "$wanted"
 check "no keychain groups in the ad hoc archive" "the ad hoc archive claims keychain-access-groups, which need the team's profile" \
 	absent "$(entitlement keychain-access-groups)"
 
