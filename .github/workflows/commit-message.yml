@@ -1,0 +1,52 @@
+name: commit message
+
+# Pull requests are squash merged, and the squash commit's subject is the pull
+# request's title and its body is the description. release-please reads that
+# commit to choose the next version and write the changelog, so this checks
+# both (tools/ci/check-commit-message.sh).
+
+on:
+  pull_request:
+    # `edited`, because retitling a pull request changes the commit message.
+    types: [opened, edited, synchronize, reopened]
+  # release-please starts this on its release pull request.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-message-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  commit-message:
+    name: commit message
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the title and description
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            case "$PR_NUMBER" in '' | *[!0-9]*) echo "::error::'$PR_NUMBER' isn't a pull request number"; exit 1 ;; esac
+            PR_TITLE="$(gh pr view "$PR_NUMBER" --json title --jq .title)"
+            PR_BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)"
+            export PR_TITLE PR_BODY
+          fi
+          tools/ci/check-commit-message.sh

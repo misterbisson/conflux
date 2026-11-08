@@ -1,0 +1,57 @@
+name: release-please
+
+# Versions, the changelog and release tags. After each merge to main,
+# release-please opens or updates a release pull request from the conventional
+# commit messages since the last release. Merging that pull request tags
+# vX.Y.Z, and Xcode Cloud builds the tag for TestFlight (docs/releasing.md).
+#
+# A pull request opened with the workflow's own token doesn't start other
+# workflows, so the release pull request would get no CI and the tag would be
+# Xcode Cloud's first build of that code. GitHub does let that token start a
+# workflow_dispatch run, so this job starts CI and the commit message check on
+# the release pull request's branch. Their results land on its commit, and the
+# required checks gate it like any other pull request.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Every run rewrites the release pull request's branch, and a run cancelled
+# halfway through a release would leave the tag or the GitHub release undone.
+# So runs queue, and none is cancelled.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # The release pull request's branch, the tag and the GitHub release.
+      contents: write
+      pull-requests: write
+      # Starting CI on the release pull request.
+      actions: write
+    steps:
+      - name: Release pull request, or release
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Build the release pull request
+        if: steps.release.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+        run: |
+          echo "starting CI on #$NUMBER ($BRANCH)"
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh workflow run commit-message.yml --ref "$BRANCH" -f pr="$NUMBER"
