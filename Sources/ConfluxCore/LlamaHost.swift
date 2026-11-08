@@ -139,11 +139,20 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
         }
         guard let slot = engine.acquire() else { throw HostError.unavailable("every slot is busy") }
         defer { engine.release(slot) }
+        // Cancelling the task stops generation at the next token: a hedged
+        // copy that lost frees its slot at once.
+        let stop = StopFlag()
         do {
-            let result = try await withCheckedThrowingContinuation { continuation in
-                slot.queue.async {
-                    continuation.resume(with: Result { try engine.generate(request, in: slot, deadline: deadline) })
+            let result = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    slot.queue.async {
+                        continuation.resume(with: Result {
+                            try engine.generate(request, in: slot, deadline: deadline, stop: stop)
+                        })
+                    }
                 }
+            } onCancel: {
+                stop.set()
             }
             return HostReply(status: 200, body: result.body(model: config.modelID))
         } catch let failure as LlamaEngine.Failure {
@@ -152,6 +161,8 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
                 return HostReply(status: 400, body: ChatCompletionResult.error(message))
             case .outOfTime:
                 throw HostError.unavailable("the deadline passed while the model was running")
+            case .cancelled:
+                throw HostError.cancelled
             case .failed(let message):
                 throw HostError.failed(status: 500, message: message)
             }
@@ -176,12 +187,14 @@ final class LlamaEngine: @unchecked Sendable {
         /// The request can't run: 400.
         case invalid(String)
         case outOfTime
+        case cancelled
         case failed(String)
 
         var description: String {
             switch self {
             case .invalid(let message), .failed(let message): message
             case .outOfTime: "out of time"
+            case .cancelled: "cancelled"
             }
         }
     }
@@ -300,7 +313,8 @@ final class LlamaEngine: @unchecked Sendable {
 
     /// Runs one request to completion on `slot`. Blocks: call it on the
     /// slot's queue.
-    func generate(_ request: ChatCompletionRequest, in slot: Slot, deadline: Date) throws(Failure) -> ChatCompletionResult {
+    func generate(_ request: ChatCompletionRequest, in slot: Slot, deadline: Date,
+                  stop: StopFlag = StopFlag()) throws(Failure) -> ChatCompletionResult {
         let context = slot.context
         llama_memory_clear(llama_get_memory(context), true)
         let prompt = try format(request.messages)
@@ -335,6 +349,7 @@ final class LlamaEngine: @unchecked Sendable {
         let limit = min(request.maxTokens ?? Int.max, contextSize - Int(position))
         while generated < limit {
             guard Date() < deadline else { throw .outOfTime }
+            guard !stop.isSet else { throw .cancelled }
             let token = llama_sampler_sample(sampler, context, -1)
             if llama_vocab_is_eog(vocab, token) {
                 finish = "stop"
@@ -463,4 +478,12 @@ final class LlamaEngine: @unchecked Sendable {
         }
         return chain
     }
+}
+
+/// Set from any thread to stop a generation at its next token.
+final class StopFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+    func set() { lock.withLock { stopped = true } }
+    var isSet: Bool { lock.withLock { stopped } }
 }

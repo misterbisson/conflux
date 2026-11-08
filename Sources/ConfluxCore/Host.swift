@@ -22,6 +22,10 @@ public protocol InferenceHost: AnyObject, Sendable {
     /// Calls `changed` whenever the host's model, availability or report may
     /// have changed, so the scheduler needn't wait for its next look.
     func observe(_ changed: @escaping @Sendable () -> Void)
+    /// Stops the request sent with this ID, if it's still running or
+    /// waiting: a hedged copy that lost. For a host the scheduler runs
+    /// itself, cancelling the request's task does this instead.
+    func cancel(_ id: UUID) async
 }
 
 extension InferenceHost {
@@ -30,15 +34,19 @@ extension InferenceHost {
     }
     public var report: HostReport? { get async { nil } }
     public func observe(_ changed: @escaping @Sendable () -> Void) {}
+    public func cancel(_ id: UUID) async {}
 }
 
 /// What the scheduler says about one request when it sends it to a host.
 public struct RequestOptions: Sendable, Equatable {
+    /// Names this copy of the request, so it can be cancelled.
+    public var id: UUID
     /// The request may wait on the host for its next free slot: it was sent
     /// ahead, so that a slot freeing up doesn't wait for a round trip.
     public var prefetch: Bool
 
-    public init(prefetch: Bool = false) {
+    public init(id: UUID = UUID(), prefetch: Bool = false) {
+        self.id = id
         self.prefetch = prefetch
     }
 }
@@ -108,4 +116,6 @@ public enum HostError: Error, Equatable {
     /// The request goes to another host, and this one isn't counted as
     /// failing.
     case busy(String)
+    /// The scheduler cancelled it: a hedged copy that lost. Not a failure.
+    case cancelled
 }

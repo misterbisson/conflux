@@ -181,6 +181,7 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(String(format: "%.1f", timeout), forHTTPHeaderField: ContractHeader.timeout)
         if options.prefetch { request.setValue("1", forHTTPHeaderField: HostProtocol.prefetchHeader) }
+        request.setValue(options.id.uuidString, forHTTPHeaderField: HostProtocol.requestIDHeader)
         let data: Data, response: HTTPURLResponse
         do {
             let (bytes, answer) = try await session.data(for: request)
@@ -200,12 +201,24 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             return HostReply(status: response.statusCode, body: data)
         case "busy":
             throw HostError.busy("the peer has no free slot")
+        case "cancelled":
+            throw HostError.cancelled
         case "unavailable":
             throw HostError.unavailable(message)
         default:
             if response.statusCode >= 500 { throw HostError.failed(status: response.statusCode, message: message) }
             return HostReply(status: response.statusCode, body: data)
         }
+    }
+
+    /// Tells the peer to stop a request this gateway sent it. Its answer to
+    /// the request itself then says `cancelled`.
+    public func cancel(_ id: UUID) async {
+        guard let base = try? await link.url() else { return }
+        var request = URLRequest(url: base.appending(path: HostProtocol.cancelPath), timeoutInterval: 5)
+        request.httpMethod = "POST"
+        request.setValue(id.uuidString, forHTTPHeaderField: HostProtocol.requestIDHeader)
+        _ = try? await session.data(for: request)
     }
 
     /// How the peer's slots stand, from a completion's answer: newer than
