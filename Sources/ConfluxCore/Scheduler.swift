@@ -349,6 +349,14 @@ public actor Scheduler {
         dispatch()
     }
 
+    /// Sets a host's typical time as if it had been measured, so tests of
+    /// decisions that depend on it don't depend on how fast the machine
+    /// running them is. Requests that complete still update it.
+    func setTypical(_ seconds: Double?, for hostID: String) {
+        entries[hostID]?.typical = seconds
+        dispatch()
+    }
+
     /// Reads each host's model and availability. Runs every second once
     /// `startRefreshing` is called. Tests call it directly.
     public func refresh() async {

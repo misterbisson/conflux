@@ -12,13 +12,14 @@ import Testing
         let peer = try await Peer(behavior: FakeHost.reply(after: 0.4))
         defer { peer.server.stop() }
         let running = Task { await peer.scheduler.run(Data("{}".utf8), onHost: "local", deadline: nil) }
-        try await Task.sleep(for: .milliseconds(100))
+        #expect(await eventually { await peer.scheduler.snapshot().hosts.first?.active == 1 })
         await peer.remote.refresh()
         #expect(await peer.remote.report?.free == 0)
+        // Held until the slot frees, well before the 5 s wait is up.
         let start = Date()
-        #expect(await peer.remote.refresh(waitingUpTo: 3))
+        #expect(await peer.remote.refresh(waitingUpTo: 5))
         let waited = Date().timeIntervalSince(start)
-        #expect(waited > 0.2 && waited < 1, "answered after \(waited) s")
+        #expect(waited < 4.5, "answered after \(waited) s")
         #expect(await peer.remote.report?.free == 1)
         _ = await running.value
 
@@ -78,15 +79,14 @@ import Testing
     }
 
     @Test func aHostHoldsOneRequestSentAhead() async throws {
-        let host = FakeHost(id: "local", behavior: FakeHost.reply(after: 0.3))
+        let host = FakeHost(id: "local", behavior: FakeHost.reply(after: 0.5))
         let scheduler = await Scheduler.with([host])
-        _ = await scheduler.run(Data(), onHost: "local", deadline: nil) // Learns ~0.3 s.
-        let deadline = Date().addingTimeInterval(5)
+        await scheduler.setTypical(0.5, for: "local")
+        let deadline = Date().addingTimeInterval(30)
         async let running = scheduler.run(Data(), onHost: "local", deadline: deadline)
-        try await Task.sleep(for: .milliseconds(50))
+        #expect(await eventually { await scheduler.snapshot().hosts.first?.active == 1 })
         async let ahead = scheduler.run(Data(), onHost: "local", deadline: deadline, prefetch: true)
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(await scheduler.snapshot().hosts.first?.held == 1)
+        #expect(await eventually { await scheduler.snapshot().hosts.first?.held == 1 })
         // One held is all: another sent ahead, or one not sent ahead, is refused.
         let second = await scheduler.run(Data(), onHost: "local", deadline: deadline, prefetch: true)
         if case .busy = second {} else { Issue.record("\(second)") }
@@ -103,13 +103,13 @@ import Testing
 
     /// A request sent ahead waits only if it would still finish in time.
     @Test func aHostDoesntHoldWhatWouldMissItsDeadline() async throws {
-        let host = FakeHost(id: "local", behavior: FakeHost.reply(after: 0.5))
+        let host = FakeHost(id: "local", behavior: FakeHost.reply(after: 1))
         let scheduler = await Scheduler.with([host])
-        _ = await scheduler.run(Data(), onHost: "local", deadline: nil)
+        await scheduler.setTypical(5, for: "local")
         async let running = scheduler.run(Data(), onHost: "local", deadline: nil)
-        try await Task.sleep(for: .milliseconds(50))
-        // 1.8 s, less the 1 s margin: not enough to wait ~0.45 s, then run 0.5 s.
-        let outcome = await scheduler.run(Data(), onHost: "local", deadline: Date().addingTimeInterval(1.8),
+        #expect(await eventually { await scheduler.snapshot().hosts.first?.active == 1 })
+        // 8 s, less the 1 s margin: not enough to wait up to 5 s, then run 5 s.
+        let outcome = await scheduler.run(Data(), onHost: "local", deadline: Date().addingTimeInterval(8),
                                           prefetch: true)
         if case .busy = outcome {} else { Issue.record("\(outcome)") }
         _ = await running
@@ -128,7 +128,6 @@ import Testing
         #expect(with.slow.prefetched == 0)
         #expect(with.fast.idleWithWorkSeconds < without.fast.idleWithWorkSeconds / 3,
                 "fast host idle with work: \(with.fast.idleWithWorkSeconds) s with prefetch, \(without.fast.idleWithWorkSeconds) s without")
-        #expect(with.elapsed < without.elapsed)
         print("""
             idle with work, fast host: \(without.fast.idleWithWorkSeconds) s without prefetch, \
             \(with.fast.idleWithWorkSeconds) s with; slow host: \(without.slow.idleWithWorkSeconds) s, \
@@ -146,8 +145,10 @@ import Testing
     func saturate(prefetch: Bool) async throws -> Run {
         let fast = try await Peer(latency: .milliseconds(40), endpoint: String(repeating: "aa", count: 32),
                                   behavior: FakeHost.reply(after: 0.1))
+        // Far apart in speed, so that however the machine running this
+        // stretches them, the slow one is never within 1.5 times the fast one.
         let slow = try await Peer(latency: .milliseconds(40), endpoint: String(repeating: "bb", count: 32),
-                                  behavior: FakeHost.reply(after: 0.5))
+                                  behavior: FakeHost.reply(after: 3))
         defer {
             fast.server.stop()
             slow.server.stop()

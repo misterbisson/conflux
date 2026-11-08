@@ -74,3 +74,15 @@ extension Scheduler {
         return scheduler
     }
 }
+
+/// Waits until `condition` holds, checking every 10 ms, for up to `seconds`.
+/// Returns whether it came to hold. Tests wait on state this way, not for a
+/// fixed time, so a slow machine only makes them slower.
+func eventually(within seconds: Double = 10, _ condition: () async -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return await condition()
+}
