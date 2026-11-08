@@ -96,23 +96,6 @@ the build log**, because the log shows success.
 To release a version release-please wouldn't choose, end a pull request's
 description with a line of its own, `Release-As: x.y.z`.
 
-To change a merged pull request's changelog entry, edit its description, not
-the release pull request: release-please rewrites that on every run. Add the
-commit message it should have had between two lines of their own, and the next
-run uses it in place of the title. More than one line makes more than one
-entry:
-
-```text
-BEGIN_COMMIT_OVERRIDE
-feat(bench): add the Phase 0 benchmark
-ci: build and test every pull request
-END_COMMIT_OVERRIDE
-```
-
-The changelog shows `feat`, `fix`, `perf`, `revert`, `docs` and `ci` changes.
-`build`, `test`, `refactor`, `style` and `chore` stay out of it
-([`release-please-config.json`](../release-please-config.json)).
-
 release-please opens its pull request with the workflow's own token, which
 needs one repository setting: **Settings > Actions > General > Workflow
 permissions**, with **Read repository contents and packages permissions**

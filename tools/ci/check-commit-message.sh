@@ -52,24 +52,12 @@ fi
 
 # --- the description ------------------------------------------------------------
 footer=no
-override=no
 n=0
 while IFS= read -r line || [ -n "$line" ]; do
 	n=$((n + 1))
 	line="${line%$'\r'}"
-	# Between these markers, release-please takes the lines as the commit
-	# message itself, in place of the title: the way to fix a merged pull
-	# request's changelog entry. Titles there are the point.
-	case "$line" in
-	BEGIN_COMMIT_OVERRIDE) override=yes && continue ;;
-	END_COMMIT_OVERRIDE) override=no && continue ;;
-	esac
 	if printf '%s\n' "$line" | grep -Eq "$header"; then
-		if [ "$override" = yes ]; then
-			note "description line $n replaces the commit message for release-please: '$line'"
-		else
-			fail "description line $n reads as another commit to release-please: '$line'. Reword it, or indent it"
-		fi
+		fail "description line $n reads as another commit to release-please: '$line'. Reword it, or indent it"
 	fi
 	case "$line" in
 	"BREAKING CHANGE:"* | "BREAKING-CHANGE:"*) footer=yes ;;
