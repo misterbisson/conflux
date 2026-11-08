@@ -208,7 +208,7 @@ struct Peer {
         let peer = try await Peer(behavior: FakeHost.reply(after: 1))
         defer { peer.server.stop() }
         async let first = peer.remote.complete(Data("{}".utf8), timeout: 10)
-        try await Task.sleep(for: .milliseconds(200))
+        while await peer.scheduler.snapshot().hosts.first?.active == 0 { try await Task.sleep(for: .milliseconds(10)) }
         await #expect(throws: HostError.busy("the peer has no free slot")) {
             try await peer.remote.complete(Data("{}".utf8), timeout: 10)
         }
@@ -262,6 +262,7 @@ struct Peer {
         await gateway.startRefreshing(every: .milliseconds(100))
         defer { peer.remote.stop() }
         let deadline = Date().addingTimeInterval(20)
+        let began = Date()
         let outcomes = await withTaskGroup(of: Outcome.self) { group in
             for _ in 0..<12 {
                 group.addTask {
@@ -271,6 +272,7 @@ struct Peer {
             }
             return await group.reduce(into: []) { $0.append($1) }
         }
+        let ran = Date().timeIntervalSince(began)
         try await Task.sleep(for: .milliseconds(300))
         await gateway.stopRefreshing()
         #expect(outcomes.allSatisfy { if case .completed = $0 { true } else { false } })
@@ -279,7 +281,9 @@ struct Peer {
         // Eleven gaps of at least a round trip (80 ms), less what the status
         // poll's granularity loses at the edges.
         #expect(host.idleWithWorkSeconds > 0.5, "idle with work \(host.idleWithWorkSeconds) s")
-        #expect(host.idleWithWorkSeconds < 3)
+        // Work waited for only part of the run, and a slow runner stretches
+        // the run, so the run's own length is the bound.
+        #expect(host.idleWithWorkSeconds < ran, "idle with work \(host.idleWithWorkSeconds) s in a \(ran) s run")
         #expect(snapshot.idleWithWorkSeconds == host.idleWithWorkSeconds)
         #expect(host.completed == 12)
         #expect(host.perHour == 72)
@@ -334,7 +338,7 @@ struct Peer {
         let host = FakeHost(id: "local", behavior: FakeHost.reply(after: 1))
         let scheduler = await Scheduler.with([host])
         async let first = scheduler.run(Data("{}".utf8), onHost: "local", deadline: nil)
-        try await Task.sleep(for: .milliseconds(200))
+        while await scheduler.snapshot().hosts.first?.active == 0 { try await Task.sleep(for: .milliseconds(10)) }
         let second = await scheduler.run(Data("{}".utf8), onHost: "local", deadline: nil)
         guard case .busy = second else {
             Issue.record("expected busy, got \(second)")

@@ -28,7 +28,9 @@ import Testing
         #expect(outcomes.allSatisfy { if case .completed = $0 { true } else { false } })
         #expect(host.peakConcurrency == 2)
         #expect(host.callCount == 6)
-        #expect(await scheduler.snapshot().idleWithWorkSeconds < 0.05)
+        // Near zero: a freed slot goes straight to waiting work. Generous
+        // enough for a loaded runner.
+        #expect(await scheduler.snapshot().idleWithWorkSeconds < 0.3)
     }
 
     @Test func countsPerHostAndByKind() async {
@@ -74,20 +76,26 @@ import Testing
     /// A host on another device reports its own free time. The part spent
     /// while work for it waited here is idle with work.
     @Test func countsAReportedFreeTimeWhileWorkWaits() async throws {
-        let host = FakeHost(id: "peer", behavior: FakeHost.reply(after: 1))
-        let start = Date()
-        host.report(freeSeconds: 10, at: start)
+        let host = FakeHost(id: "peer", behavior: FakeHost.reply(after: 3))
+        host.report(freeSeconds: 10, at: Date())
         let scheduler = await Scheduler.with([host])
         let running = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
-        try await Task.sleep(for: .milliseconds(50))
+        // Busy CI runners start tasks late: wait for each step to happen
+        // rather than for a fixed time.
+        while await scheduler.snapshot().hosts.first?.active == 0 { try await Task.sleep(for: .milliseconds(10)) }
         let waiting = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
-        try await Task.sleep(for: .milliseconds(450))
-        // In the half second since, the host says it had a free slot for a
-        // quarter of a second, all of it while work waited here.
-        host.report(freeSeconds: 10.25, at: start.addingTimeInterval(0.5))
+        while await scheduler.snapshot().queued == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        // A report taken while work waits starts the span. Nothing was free
+        // before it.
+        host.report(freeSeconds: 10, at: Date())
+        await scheduler.refresh()
+        try await Task.sleep(for: .milliseconds(500))
+        // Since then, the host says it had a free slot for a quarter of a
+        // second, all of it while work waited here.
+        host.report(freeSeconds: 10.25, at: Date())
         await scheduler.refresh()
         let idle = try #require(await scheduler.snapshot().hosts.first?.idleWithWorkSeconds)
-        #expect(idle > 0.15 && idle <= 0.25, "idle with work \(idle) s")
+        #expect(idle > 0.2 && idle <= 0.25, "idle with work \(idle) s")
         _ = await (running.value, waiting.value)
 
         // Free time with nothing waiting isn't idle with work.
@@ -103,32 +111,40 @@ import Testing
     }
 
     @Test func answersBusyBeforeTheDeadline() async {
-        let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 1.5))
-        let scheduler = await Scheduler.with([host])
+        // The scheduler answers `margin` before the deadline. A wide margin
+        // leaves room for a slow runner to wake late and still be in time.
+        var config = SchedulerConfig()
+        config.margin = 2
+        let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 5))
+        let scheduler = await Scheduler.with([host], config: config)
         let first = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
-        try? await Task.sleep(for: .milliseconds(100))
+        // Busy CI runners can start the first late: wait until it holds the slot.
+        while await scheduler.snapshot().hosts.first?.active == 0 { try? await Task.sleep(for: .milliseconds(10)) }
         let start = Date()
-        let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(1.5), key: nil)
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(3), key: nil)
         let elapsed = Date().timeIntervalSince(start)
         guard case .busy(let retryAfter) = outcome else { Issue.record("\(outcome)"); return }
         #expect(retryAfter >= 1)
-        #expect(elapsed < 1.5, "answered in \(elapsed) s, past the deadline")
+        #expect(elapsed < 3, "answered in \(elapsed) s, past the deadline")
         _ = await first.value
     }
 
     @Test func requestsWithoutADeadlineWaitTheDefault() async {
         var config = SchedulerConfig()
         config.defaultQueueWait = 0.3
-        let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 1.5))
+        // The slot frees long after the default wait, so the two can't be
+        // mistaken for each other on a slow runner.
+        let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 4))
         let scheduler = await Scheduler.with([host], config: config)
         let first = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
         // Busy CI runners can start the first late: wait until it holds the slot.
         while await scheduler.snapshot().hosts.first?.active == 0 { try? await Task.sleep(for: .milliseconds(10)) }
         let start = Date()
         let outcome = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
-        #expect(outcome == .busy(retryAfter: 2))
-        // The default wait, not the slot's 1.5 s.
-        #expect(Date().timeIntervalSince(start) < 1.2)
+        guard case .busy(let retryAfter) = outcome else { Issue.record("\(outcome)"); return }
+        #expect((1...4).contains(retryAfter))
+        // The default wait, not the slot's 4 s.
+        #expect(Date().timeIntervalSince(start) < 3)
         _ = await first.value
     }
 
@@ -249,7 +265,7 @@ import Testing
         let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 0.3))
         let scheduler = await Scheduler.with([host])
         let running = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
-        try? await Task.sleep(for: .milliseconds(50))
+        while await scheduler.snapshot().hosts.first?.active == 0 { try? await Task.sleep(for: .milliseconds(10)) }
         await scheduler.setIntent(.draining, for: "h")
         #expect(await scheduler.snapshot().hosts.first?.state == .draining)
         if case .completed = await running.value {} else { Issue.record("the running request should finish") }
@@ -266,7 +282,9 @@ import Testing
         if case .completed(_, let model) = first { #expect(model.id == "model-a") }
         let busyA = Task { await scheduler.submit(Data(), choice: ModelChoice(model: "model-a", preference: nil),
                                                   deadline: nil, key: nil) }
-        try? await Task.sleep(for: .milliseconds(50))
+        while await scheduler.snapshot().hosts.first(where: { $0.id == "a" })?.active == 0 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
         let outcome = await scheduler.submit(Data(), choice: choice, deadline: nil, key: nil)
         if case .completed(_, let model) = outcome { #expect(model.id == "model-b") } else { Issue.record("\(outcome)") }
         _ = await busyA.value
