@@ -138,6 +138,9 @@ anyone can open a pull request that runs workflows. So:
   on our machines.
 - Keep the repository setting that requires approval before workflows run for
   first-time contributors.
+- Workflow permissions default to **read**, with **Allow GitHub Actions to
+  create and approve pull requests** on, so release-please can open its
+  pull request. No workflow approves pull requests.
 - **Xcode Cloud builds `v*` tags only.** Never give it a pull request or
   branch start condition: a pull request build runs the pull request's
   `ci_scripts/` where the team's signing is set up. No environment variables

@@ -46,11 +46,14 @@ jobs:
           manifest-file: .release-please-manifest.json
       - name: Build the release pull request
         if: steps.release.outputs.pr != ''
+        # GitHub reads a step's env even when its `if` skips it, and fromJSON
+        # of an empty output fails the job. A run with no release pull request
+        # to update, such as the one that tags a release, has an empty one.
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
-          NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+          BRANCH: ${{ fromJSON(steps.release.outputs.pr || '{}').headBranchName }}
+          NUMBER: ${{ fromJSON(steps.release.outputs.pr || '{}').number }}
         run: |
           echo "starting CI on #$NUMBER ($BRANCH)"
           gh workflow run ci.yml --ref "$BRANCH"

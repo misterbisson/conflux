@@ -96,6 +96,20 @@ the build log**, because the log shows success.
 To release a version release-please wouldn't choose, end a pull request's
 description with a line of its own, `Release-As: x.y.z`.
 
+release-please opens its pull request with the workflow's own token, which
+needs one repository setting: **Settings > Actions > General > Workflow
+permissions**, with **Read repository contents and packages permissions**
+selected and **Allow GitHub Actions to create and approve pull requests**
+on. Without it, the workflow pushes the release branch and then fails with
+"GitHub Actions is not permitted to create or approve pull requests". Every
+workflow still starts with `contents: read` and grants more per job.
+
+The release pull request also shows a CI run and a commit message run waiting
+for approval. Those are the `pull_request` runs, held by the setting that
+asks before running a first-time contributor's workflows, which counts the
+Actions bot. The runs the release workflow started cover the same checks on
+the same commit, so the held ones can be left alone.
+
 ## Setting up Xcode Cloud
 
 This lives in App Store Connect, not in the repository, so it's written down
