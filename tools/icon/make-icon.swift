@@ -4,7 +4,9 @@
 //   swift tools/icon/make-icon.swift App/Assets.xcassets/AppIcon.appiconset
 //
 // App Store Connect refuses a Mac app without a 512pt @2x icon (ITMS-90236),
-// and says so only by email after the upload.
+// and says so only by email after the upload. The iPad app's icon is the same
+// drawing, full-bleed and opaque, since iPadOS rounds the corners itself and
+// refuses an icon with an alpha channel.
 
 import AppKit
 import CoreGraphics
@@ -19,18 +21,26 @@ guard CommandLine.arguments.count == 2 else {
 let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 
-func draw(pixels: Int) -> CGImage {
+func draw(pixels: Int, fullBleed: Bool = false) -> CGImage {
     let size = CGFloat(pixels)
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    let alpha = fullBleed ? CGImageAlphaInfo.noneSkipLast : .premultipliedLast
     let ctx = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
-                        space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    ctx.scaleBy(x: size / 1024, y: size / 1024)
+                        space: space, bitmapInfo: alpha.rawValue)!
 
-    // macOS icon grid: an 824-point rounded square centred in 1024.
+    // macOS icon grid: an 824-point rounded square centred in 1024. Full
+    // bleed, that square fills the image, square-cornered.
     let tile = CGRect(x: 100, y: 100, width: 824, height: 824)
-    let tilePath = CGPath(roundedRect: tile, cornerWidth: 185, cornerHeight: 185, transform: nil)
-    ctx.addPath(tilePath)
-    ctx.clip()
+    if fullBleed {
+        ctx.scaleBy(x: size / 824, y: size / 824)
+        ctx.translateBy(x: -100, y: -100)
+        ctx.clip(to: tile)
+    } else {
+        ctx.scaleBy(x: size / 1024, y: size / 1024)
+        let tilePath = CGPath(roundedRect: tile, cornerWidth: 185, cornerHeight: 185, transform: nil)
+        ctx.addPath(tilePath)
+        ctx.clip()
+    }
     let background = CGGradient(colorsSpace: space, colors: [
         CGColor(srgbRed: 0.07, green: 0.10, blue: 0.20, alpha: 1),
         CGColor(srgbRed: 0.12, green: 0.20, blue: 0.36, alpha: 1),
@@ -97,6 +107,8 @@ for points in [16, 32, 128, 256, 512] {
         images.append(["idiom": "mac", "size": "\(points)x\(points)", "scale": "\(scale)x", "filename": name])
     }
 }
+try write(draw(pixels: 1024, fullBleed: true), to: output.appending(path: "icon_ios_1024.png"))
+images.append(["idiom": "universal", "platform": "ios", "size": "1024x1024", "filename": "icon_ios_1024.png"])
 let contents: [String: Any] = ["images": images, "info": ["version": 1, "author": "xcode"]]
 let json = try JSONSerialization.data(withJSONObject: contents, options: [.prettyPrinted, .sortedKeys])
-try json.write(to: output.appending(path: "Contents.json"))
+try (json + Data("\n".utf8)).write(to: output.appending(path: "Contents.json"))
