@@ -78,17 +78,31 @@ log shows success.
 This lives in App Store Connect, not in the repository, so it's written down
 here. It's done once. No step needs a Team ID, key or token in the repository.
 
-1. **The app record.** In App Store Connect, create a macOS app with the bundle
-   ID `com.caseybisson.conflux`. Xcode registers the ID the first time it signs
-   with automatic signing, if it isn't registered yet.
-2. **A tester group first.** In TestFlight, create an internal group and add at
+1. **The bundle ID.** On developer.apple.com, under **Certificates,
+   Identifiers & Profiles > Identifiers**, register an explicit App ID for
+   `com.caseybisson.conflux`, with no capabilities. Building in Xcode won't do
+   it: Xcode registers an ID only when it needs a provisioning profile, and
+   these entitlements don't.
+2. **The app record.** In App Store Connect, create a macOS app with that
+   bundle ID. Its name there is "Conflux Inference Mesh"; plain "Conflux" is
+   taken. The name under the icon stays "conflux", from `project.yml`.
+3. **A tester group first.** In TestFlight, create an internal group and add at
    least one tester. The workflow's TestFlight step can't be saved until a
    group with a tester exists.
-3. **Connect the repository.** Run `ci_scripts/ci_post_clone.sh`, open
-   `conflux.xcodeproj`, and choose **Product > Xcode Cloud > Create Workflow**.
-   When GitHub asks which repositories Xcode Cloud may read, choose only
-   `misterbisson/conflux`.
-4. **The workflow:**
+4. **Connect the repository, from a plain clone.** Clone the repository into a
+   folder of its own, run `ci_scripts/ci_post_clone.sh`, and open
+   `conflux.xcodeproj`. Open the Report navigator (⌘9), click **Cloud**, then
+   **Get Started**, and choose the `conflux` product. When GitHub asks which
+   repositories Xcode Cloud may read, choose only `misterbisson/conflux`.
+
+   Don't start from a Git worktree nested inside another checkout of this
+   repository. Xcode sees two copies of one repository there, and recreating a
+   deleted workflow from one failed with nothing more than "An unexpected error
+   occurred"; the same steps from a plain clone worked.
+
+   Only the first workflow needs Xcode. After that, App Store Connect's Xcode
+   Cloud page edits workflows and starts builds.
+5. **The workflow:**
    - **Environment:** Xcode **Latest Release**, macOS **Latest Release**, and
      **Clean** on. Don't pin a version here; `.xcode-version` follows Xcode
      Cloud, not the other way round.
@@ -99,10 +113,12 @@ here. It's done once. No step needs a Team ID, key or token in the repository.
      **Distribution Preparation** set to **TestFlight (Internal Testing
      Only)**.
    - **Post-actions:** **TestFlight Internal Testing - macOS**, with that
-     archive, to the group from step 2.
+     archive, to the group from step 3.
    - **Environment variables:** none. The Team ID comes from the build's own
      `CI_TEAM_ID`.
-5. **Build numbers.** In Xcode Cloud's settings for the app, let Xcode Cloud
+   - **Restrict Editing:** on, if anyone else on the team should see the
+     workflow without changing it.
+6. **Build numbers.** In the app's Xcode Cloud **Settings**, let Xcode Cloud
    manage the build number. Otherwise every build is number 1 and App Store
    Connect refuses the second.
 
