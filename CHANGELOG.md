@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/misterbisson/conflux/compare/v0.2.0...v0.3.0) (2026-11-08)
+
+
+### Features
+
+* **app:** include a small starter model, so a first request works before choosing one ([#29](https://github.com/misterbisson/conflux/issues/29)) ([f41d232](https://github.com/misterbisson/conflux/commit/f41d232281d8183025d1ba51fac7343eb0be3408))
+* **ipad:** add an iPad build of the app that checks whether a model fits ([#25](https://github.com/misterbisson/conflux/issues/25)) ([aef5b87](https://github.com/misterbisson/conflux/commit/aef5b87711c0fac16794a8a139c24740de76c1ca))
+
 ## [0.2.0](https://github.com/misterbisson/conflux/compare/v0.1.2...v0.2.0) (2026-11-08)
 
 
