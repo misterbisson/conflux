@@ -16,7 +16,8 @@ app's About window, so that's where they go.
 --iroh-metadata JSON
     `cargo metadata --format-version 1 --filter-platform TARGET` run in
     apple-iroh at the tag Package.swift pins, once per macOS target
-    (aarch64-apple-darwin, x86_64-apple-darwin). Only crates compiled into the
+    (aarch64-apple-darwin, x86_64-apple-darwin).
+    tools/notices/iroh-metadata.sh writes both. Only crates compiled into the
     library count: normal dependencies, not build or dev dependencies, and
     not procedural macros or what only they use. cargo metadata reads the
     crates' manifests and licence files, and compiles and runs nothing.
