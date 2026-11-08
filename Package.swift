@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "conflux",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v15), .iOS(.v18)],
     products: [
         .executable(name: "conflux", targets: ["conflux"]),
         .executable(name: "conflux-bench", targets: ["conflux-bench"]),

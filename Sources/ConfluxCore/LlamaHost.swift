@@ -178,8 +178,6 @@ public protocol ManagedHost: InferenceHost {
     func stop()
 }
 
-extension LlamaServerHost: ManagedHost {}
-
 /// A loaded model and its slots. llama.cpp's objects are freed when the last
 /// owner lets go: the host, or a request still running after it stopped.
 final class LlamaEngine: @unchecked Sendable {

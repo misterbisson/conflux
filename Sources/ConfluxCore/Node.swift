@@ -137,10 +137,7 @@ public final class ConfluxNode: @unchecked Sendable {
         await scheduler.startRefreshing()
 
         if let config = settings.host {
-            let host: any ManagedHost = switch config.runtime {
-            case .inProcess: LlamaHost(config: config)
-            case .llamaServer: LlamaServerHost(config: config)
-            }
+            let host = Self.host(for: config)
             let monitor = ResourceMonitor()
             lock.withLock {
                 self.host = host
@@ -284,6 +281,21 @@ public final class ConfluxNode: @unchecked Sendable {
 
     /// Devices that tried to connect and weren't peers.
     public var refusedConnections: Int { lock.withLock { mesh }?.refused ?? 0 }
+
+    /// The host for a model, by its runtime. iPadOS can't start processes,
+    /// so there a `llama-server` setting runs in-process instead.
+    static func host(for config: ModelConfig) -> any ManagedHost {
+        switch config.runtime {
+        case .inProcess:
+            return LlamaHost(config: config)
+        case .llamaServer:
+            #if os(macOS)
+            return LlamaServerHost(config: config)
+            #else
+            return LlamaHost(config: config)
+            #endif
+        }
+    }
 
     public func stop() async {
         // The watcher changes the mesh, so it stops first.

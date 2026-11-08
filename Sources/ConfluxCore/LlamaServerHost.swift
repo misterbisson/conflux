@@ -2,6 +2,9 @@ import CryptoKit
 import Darwin
 import Foundation
 
+// iPadOS can't start processes, so llama-server is a Mac runtime. FileHash,
+// below, is shared: the in-process runtime uses it too.
+#if os(macOS)
 extension ModelConfig {
     public func arguments(port: Int) -> [String] {
         var arguments = ["--host", "127.0.0.1", "--port", String(port), "-m", model]
@@ -17,7 +20,7 @@ extension ModelConfig {
 ///
 /// Supervising a separate process keeps a runtime crash from taking the
 /// gateway down. It also uses exactly what Phase 0 measured. The iPad host
-/// will have to link llama.cpp in-process instead (Phase 3).
+/// links llama.cpp in-process instead (`LlamaHost`).
 public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
     public let id: String
     public let config: ModelConfig
@@ -314,6 +317,9 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
         return Int(UInt16(bigEndian: address.sin_port))
     }
 }
+
+extension LlamaServerHost: ManagedHost {}
+#endif
 
 /// SHA-256 of model files, remembered by path, size and modification date,
 /// because hashing gigabytes on every launch is slow.
