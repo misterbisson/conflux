@@ -99,11 +99,11 @@ done
 # selectors, which Swift calls through objc_msgSend.
 category_symbols() {
 	case "$1" in
-	FileTimestamp) echo '^_(f?stat|lstat|fstatat|f?getattrlist|getattrlistbulk|getattrlistat)(\$INODE64)?$|^_NSFile(Creation|Modification)Date$|^_NSURL(ContentModification|Creation)DateKey$' ;;
+	FileTimestamp) echo '^_(f?stat|lstat|fstatat|f?getattrlist|getattrlistbulk|getattrlistat)([$]INODE64)?$|^_NSFile(Creation|Modification)Date$|^_NSURL(ContentModification|Creation)DateKey$' ;;
 	SystemBootTime) echo '^_mach_absolute_time$' ;;
-	DiskSpace) echo '^_f?statv?fs(\$INODE64)?$|^_NSFileSystem(Free)?Size$|^_NSURLVolume(Total|Available)Capacity' ;;
+	DiskSpace) echo '^_f?statv?fs([$]INODE64)?$|^_NSFileSystem(Free)?Size$|^_NSURLVolume(Total|Available)Capacity' ;;
 	ActiveKeyboards) echo '^$' ;;
-	UserDefaults) echo '^_OBJC_CLASS_\$_NSUserDefaults$' ;;
+	UserDefaults) echo '^_OBJC_CLASS_[$]_NSUserDefaults$' ;;
 	esac
 }
 category_selectors() {
