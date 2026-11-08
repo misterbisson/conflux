@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  conflux's privacy manifest.
+
+  Apple's required-reason API policy is enforced on iOS, iPadOS, tvOS, visionOS
+  and watchOS uploads. A Mac-only app isn't refused without one today, but the
+  manifest keys are documented for macOS 14, the file costs nothing, and it
+  stays true if the policy widens or conflux gains an iPhone or iPad app.
+
+  tools/ci/check-app.sh keeps it honest: it scans the archived app's binaries,
+  llama.framework included, for each category's APIs, and fails when a
+  category is used without being declared here or in that framework's own
+  manifest. When it fails, find the caller and add the reason that describes
+  it, from
+  https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api
+
+  What the Release archive of 0.1.0 imports:
+
+    FileTimestamp     NSFileModificationDate (ConfluxCore's FileHash)
+    UserDefaults      NSUserDefaults (the app's settings and bookmarks)
+    SystemBootTime    nothing: no systemUptime, no mach_absolute_time
+    DiskSpace         nothing: no statfs, statvfs or volume capacity keys
+    ActiveKeyboards   nothing
+-->
+<plist version="1.0">
+<dict>
+	<!-- No tracking and no tracking domains. conflux contacts no server of the
+	     developer's. The gateway listens on loopback, and a host talks to
+	     llama.cpp in the same process or to llama-server on loopback. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!-- Nothing is collected. No analytics, no crash reporter, no account.
+	     Prompts, images and answers pass between the client and the model on
+	     the user's own devices and reach no one else. -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- 3B52.1: files the user specifically granted access to.
+				     FileHash (Sources/ConfluxCore/LlamaServerHost.swift) caches
+				     each model file's SHA-256 under its path, size and
+				     modification date, so an unchanged file isn't hashed again
+				     at every start. The files are the models the user chose in
+				     an open panel, reopened through security-scoped bookmarks
+				     (Sources/conflux/ModelAccess.swift). -->
+				<string>3B52.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- CA92.1: information accessible only to the app itself. The
+				     node's settings (Sources/conflux/App.swift) and the model
+				     files' bookmarks (Sources/conflux/ModelAccess.swift), in
+				     the app's own domain. conflux belongs to no App Group. -->
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

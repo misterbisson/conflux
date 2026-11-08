@@ -20,11 +20,11 @@ needs to be: Xcode Cloud manages the certificates and profiles itself.
 | File | What it does |
 |---|---|
 | [`project.yml`](../project.yml) | The app target, for [XcodeGen](https://github.com/yonaskolb/XcodeGen). It compiles `Sources/conflux` against the package's `ConfluxCore` library. |
-| [`App/`](../App) | The entitlements, the icon, and the signing settings, without a Team ID. |
+| [`App/`](../App) | The entitlements, the icon, the privacy manifest, and the signing settings, without a Team ID. |
 | [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post_clone.sh) | Generates `conflux.xcodeproj`. Xcode Cloud runs it by name after cloning; GitHub's CI runs it too. |
 | [`.xcode-version`](../.xcode-version) | The Xcode that Xcode Cloud builds releases with, so GitHub can use the same one. |
 | [`tools/ci/build-app.sh`](../tools/ci/build-app.sh) | Archives the app signed ad hoc, checks it, and runs it in the sandbox. |
-| [`tools/ci/check-app.sh`](../tools/ci/check-app.sh) | The checks: version, bundle ID, export compliance, category, a 512pt @2x icon, the hardened runtime, the entitlements, and the embedded frameworks' versions. |
+| [`tools/ci/check-app.sh`](../tools/ci/check-app.sh) | The checks: version, bundle ID, export compliance and its basis, category, a 512pt @2x icon, a privacy manifest that covers what the binaries import, the hardened runtime, the entitlements, and the embedded frameworks' versions. |
 | [`tools/icon/make-icon.swift`](../tools/icon/make-icon.swift) | Draws the icon. It's a placeholder. |
 
 `conflux.xcodeproj` is generated and never committed. Xcode writes the signing
@@ -172,6 +172,28 @@ script can of this: it fails on a Team ID or provisioning profile setting in any
 tracked file, on key, certificate, profile and export options files, on a
 committed Xcode project, on a `ci_scripts/` file that isn't executable or that
 prints the environment, and on a workflow that signs.
+
+## Export compliance and privacy
+
+App Store Connect asks two questions of every upload that a build log never
+shows, and refuses or holds the build by email when they go unanswered.
+
+- **Export compliance.** `ITSAppUsesNonExemptEncryption` is `NO`, and the note
+  beside it in [`project.yml`](../project.yml) lists every use of cryptography
+  in the app, file by file: all of it the operating system's, none of it
+  encryption. `check-app.sh` fails when a source file not on that list uses
+  Apple's cryptography or TLS, or when the archive holds a bundled cryptography
+  library. Linking apple-iroh, in Phase 2, is that second case: its QUIC and
+  TLS come with it, not from the operating system, so the answer has to be
+  made again before that release.
+- **The privacy manifest.** [`App/PrivacyInfo.xcprivacy`](../App/PrivacyInfo.xcprivacy)
+  says conflux collects nothing and tracks nothing, and gives the reason for
+  each required-reason API it uses: file timestamps, for the model files the
+  user picked, and `UserDefaults`, for its own settings. Apple enforces this
+  for iOS and the other device platforms, not yet for macOS, but it costs
+  nothing and stays true. `check-app.sh` scans the archived binaries,
+  `llama.framework` included, and fails on a category that no manifest
+  declares.
 
 ## Not done yet
 
