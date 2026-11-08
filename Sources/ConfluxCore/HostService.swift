@@ -24,6 +24,11 @@ struct HostStatus: Codable, Equatable {
     var capacity: Int
     var active: Int
     var typicalSeconds: Double?
+    /// Seconds the host has had a free slot since it started, counted by
+    /// the host. A gateway can't see slots other gateways use, so it takes
+    /// this to measure the time the host sat idle while its work waited.
+    /// Optional: hosts before it was added don't send it.
+    var freeSeconds: Double?
 
     init(_ host: HostSnapshot?) {
         self.protocol = HostProtocol.version
@@ -31,6 +36,7 @@ struct HostStatus: Codable, Equatable {
         capacity = host?.capacity ?? 0
         active = host?.active ?? 0
         typicalSeconds = host?.typicalSeconds
+        freeSeconds = host?.freeSeconds
         switch host?.state {
         case nil:
             (availability, detail) = ("offline", "this device isn't serving a model")

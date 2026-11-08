@@ -12,6 +12,7 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
     private var running = 0
     private(set) var peak = 0
     private(set) var calls = 0
+    private var free: (seconds: Double, at: Date)?
     var behavior: @Sendable (Int) async throws -> HostReply
 
     init(id: String, model: String = "model-a", capabilities: Set<ModelInfo.Capability> = [.text, .vision],
@@ -28,6 +29,10 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
     var availability: HostAvailability { get async { lock.withLock { state } } }
 
     func set(_ availability: HostAvailability) { lock.withLock { state = availability } }
+    /// Makes this host report its own free time, like a host on another
+    /// device.
+    func report(freeSeconds: Double, at: Date = Date()) { lock.withLock { free = (freeSeconds, at) } }
+    var freeTime: (seconds: Double, at: Date)? { get async { lock.withLock { free } } }
     var callCount: Int { lock.withLock { calls } }
     var peakConcurrency: Int { lock.withLock { peak } }
 

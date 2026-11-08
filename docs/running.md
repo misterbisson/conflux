@@ -96,7 +96,17 @@ window counts the refused connections. A Mac with no peers starts no iroh
 endpoint and contacts nothing.
 
 The window shows each peer's state, its model, and whether the connection is
-direct or relayed, with its round trip. A peer that stops is shown as not
+direct or relayed, with its round trip. **Monitoring** shows throughput,
+failures and idle time for the mesh and for each host. `/health` with the
+token gives the same numbers:
+
+```bash
+curl -s -H "Authorization: Bearer $(swift run -c release conflux token)" http://127.0.0.1:8090/health
+```
+
+"Idle while work waited" is time a host had a free slot while work it could
+run waited at this gateway. It should stay near zero
+([design.md](design.md#monitoring)). A peer that stops is shown as not
 answering within seconds, and its requests go elsewhere or get a 503 with
 `Retry-After`.
 

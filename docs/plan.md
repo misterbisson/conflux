@@ -82,7 +82,10 @@ throughput, and never hits a client timeout while the mesh is busy.
   peers, and hosts admit work, refusing what they have no slot for. Pull,
   prefetch and hedging are next.
 - Monitoring: throughput per host and for the mesh, failures, idle time while
-  compatible work waits.
+  compatible work waits. *Built*: in the window's Monitoring section and in
+  `/health` for clients with the token. Peers count their own free time, so
+  a gateway sees the round trips its peers sit idle for
+  ([design.md](design.md#monitoring)).
 
 **Done when:**
 

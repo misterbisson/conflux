@@ -19,12 +19,18 @@ struct Peer {
     let server: HTTPServer
     let remote: RemoteHost
 
-    init(slots: Int = 1, behavior: @escaping @Sendable (Int) async throws -> HostReply = FakeHost.reply(after: 0))
-        async throws {
+    /// `latency` is added each way to every exchange, like a network.
+    init(slots: Int = 1, latency: Duration = .zero,
+         behavior: @escaping @Sendable (Int) async throws -> HostReply = FakeHost.reply(after: 0)) async throws {
         host = FakeHost(id: "local", slots: slots, behavior: behavior)
         scheduler = await Scheduler.with([host])
         let service = HostService(scheduler: scheduler, hostID: "local")
-        server = HTTPServer(onlyFromThisProcess: true) { request in await service.handle(request) }
+        server = HTTPServer(onlyFromThisProcess: true) { request in
+            if latency > .zero { try? await Task.sleep(for: latency) }
+            let response = await service.handle(request)
+            if latency > .zero { try? await Task.sleep(for: latency) }
+            return response
+        }
         let port = try await server.start(port: 0)
         remote = RemoteHost(endpointID: String(repeating: "ab", count: 32),
                             link: FixedLink(base: URL(string: "http://127.0.0.1:\(port)")!))
@@ -134,6 +140,52 @@ struct Peer {
         #expect(served.completed == 0)
     }
 
+    @Test func reportsItsFreeTime() async throws {
+        let peer = try await Peer()
+        defer { peer.server.stop() }
+        try await Task.sleep(for: .milliseconds(200))
+        await peer.remote.refresh()
+        let free = try #require(await peer.remote.freeTime)
+        #expect(free.seconds >= 0.15)
+        #expect(abs(free.at.timeIntervalSinceNow) < 1)
+    }
+
+    /// The yardstick for host pull: a gateway that sends work only once a
+    /// request comes back leaves a peer's slot free for a round trip each
+    /// time. The peer counts that free time, and the gateway counts it as
+    /// idle with work while more work waited.
+    @Test func measuresAPeersIdleTimeWhileWorkWaits() async throws {
+        let peer = try await Peer(latency: .milliseconds(40), behavior: FakeHost.reply(after: 0.1))
+        defer { peer.server.stop() }
+        let gateway = Scheduler()
+        await gateway.add(peer.remote)
+        peer.remote.start(every: .milliseconds(100))
+        await gateway.startRefreshing(every: .milliseconds(100))
+        defer { peer.remote.stop() }
+        let deadline = Date().addingTimeInterval(20)
+        let outcomes = await withTaskGroup(of: Outcome.self) { group in
+            for _ in 0..<12 {
+                group.addTask {
+                    await gateway.submit(Data("{}".utf8), choice: ModelChoice(model: "any", preference: nil),
+                                         deadline: deadline, key: nil)
+                }
+            }
+            return await group.reduce(into: []) { $0.append($1) }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        await gateway.stopRefreshing()
+        #expect(outcomes.allSatisfy { if case .completed = $0 { true } else { false } })
+        let snapshot = await gateway.snapshot()
+        let host = try #require(snapshot.hosts.first)
+        // Eleven gaps of at least a round trip (80 ms), less what the status
+        // poll's granularity loses at the edges.
+        #expect(host.idleWithWorkSeconds > 0.5, "idle with work \(host.idleWithWorkSeconds) s")
+        #expect(host.idleWithWorkSeconds < 3)
+        #expect(snapshot.idleWithWorkSeconds == host.idleWithWorkSeconds)
+        #expect(host.completed == 12)
+        #expect(host.perHour == 72)
+    }
+
     @Test func aSilentPeerIsLost() async throws {
         let peer = try await Peer()
         #expect(await peer.remote.availability == .available)
@@ -198,9 +250,9 @@ struct Peer {
     }
 
     @Test func statusFollowsTheHostsState() {
-        let snapshot = HostSnapshot(id: "local", model: nil, state: .paused("paused by its owner"), slots: 1,
-                                    capacity: 0, active: 0, completed: 0, failed: 0, typicalSeconds: nil)
+        let snapshot = HostSnapshot(id: "local", state: .paused("paused by its owner"), slots: 1, freeSeconds: 2.5)
         let status = HostStatus(snapshot)
+        #expect(status.freeSeconds == 2.5)
         #expect(status.hostAvailability == .paused("paused by its owner"))
         #expect(HostStatus(nil).hostAvailability == .offline)
     }

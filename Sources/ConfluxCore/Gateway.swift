@@ -24,7 +24,10 @@ public final class Gateway: Sendable {
     public func handle(_ request: HTTPRequest) async -> HTTPResponse {
         switch (request.method, request.path) {
         case ("GET", "/health"), ("HEAD", "/health"):
-            return .json(200, ["status": "ok"])
+            // Anyone may ask whether the gateway is up. How much it's doing,
+            // and for whom, is for clients with the token.
+            guard authorized(request) else { return .json(200, ["status": "ok"]) }
+            return .json(200, Gateway.health(await scheduler.snapshot()))
         case (_, "/health"):
             return methodNotAllowed("GET")
         case ("GET", "/v1/models"):
@@ -66,6 +69,39 @@ public final class Gateway: Sendable {
                          "conflux": conflux])
         }
         return .json(200, ["object": "list", "data": data])
+    }
+
+    /// `/health` for a client with the token: the mesh's and each host's
+    /// counts, as the window shows them.
+    static func health(_ snapshot: SchedulerSnapshot) -> [String: Any] {
+        func failures(_ counts: FailureCounts) -> [String: Any] {
+            ["unavailable": counts.unavailable, "failed": counts.failed, "busy": counts.busy,
+             "deadline": counts.deadline]
+        }
+        func seconds(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+        let hosts = snapshot.hosts.map { host -> [String: Any] in
+            var entry: [String: Any] = [
+                "id": host.id, "state": host.state.label.lowercased(), "slots": host.slots,
+                "capacity": host.capacity, "active": host.active, "completed": host.completed,
+                "per_hour": host.perHour, "failures": failures(host.failures),
+                "idle_with_work_seconds": seconds(host.idleWithWorkSeconds),
+            ]
+            if let model = host.model { entry["model"] = model.id }
+            if let detail = host.state.detail { entry["detail"] = detail }
+            if let typical = host.typicalSeconds { entry["typical_seconds"] = seconds(typical) }
+            return entry
+        }
+        return [
+            "status": "ok",
+            "mesh": [
+                "queued": snapshot.queued, "completed": snapshot.completed, "per_hour": snapshot.perHour,
+                "failures": failures(snapshot.failures),
+                "answered": ["rejected": snapshot.rejected, "busy": snapshot.busy,
+                             "unavailable": snapshot.unavailable],
+                "idle_with_work_seconds": seconds(snapshot.idleWithWorkSeconds),
+            ] as [String: Any],
+            "hosts": hosts,
+        ]
     }
 
     static func alias(_ id: String, _ description: String) -> [String: Any] {

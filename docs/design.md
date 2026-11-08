@@ -234,6 +234,24 @@ never looks like a dead one. See [clients.md](clients.md).
   idle while compatible work is waiting. That number should be close to zero,
   and it is the first one to look at when throughput disappoints.
 
+### Monitoring
+
+Each gateway keeps, for the mesh and for each host it schedules to:
+completions and completions per hour, failures by kind (not answering,
+server error, busy, out of the client's time), and idle-with-work seconds.
+The window shows them, and so does `GET /health` for a client with the token
+([clients.md](clients.md#the-api)).
+
+Idle-with-work is measured where it happens. For this Mac's own host, the
+gateway holds the slots, and the count is exact: seconds the host had a free
+slot while a request it could run waited. A host on another device may have
+a free slot the gateway doesn't know about yet, or be full with other
+gateways' work, so it counts its own free seconds and reports them in its
+status. The gateway counts the part of that free time spent while work for
+that host waited here. Between two reports, it takes the share of the time
+that work waited, which is exact while a mesh is saturated, the case the
+number exists for. The mesh's figure is the hosts' added up.
+
 ## Transport and trust
 
 ### iroh, through apple-iroh
@@ -267,10 +285,11 @@ forwarded connection. It's versioned in its paths, `/conflux/0/…`, until
 apple-iroh lets conflux name its own ALPN.
 
 - `GET /conflux/0/host`: the host's model, availability, the slots it takes
-  work in now, how many are busy, and its typical request time. The gateway
-  asks every second, and that's the heartbeat: a connection iroh reports
-  closed counts as lost at once, and three unanswered asks in a row count as
-  lost too.
+  work in now, how many are busy, its typical request time, and how many
+  seconds it has had a free slot since it started (`free_seconds`). The
+  gateway asks every second, and that's the heartbeat: a connection iroh
+  reports closed counts as lost at once, and three unanswered asks in a row
+  count as lost too.
 - `POST /conflux/0/complete`: one chat completion, with the time left in
   `Conflux-Timeout`. `Conflux-Outcome` says what became of it: `completed`,
   `rejected` (the runtime refused it, a 4xx the gateway passes on), `busy` or
