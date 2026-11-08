@@ -74,8 +74,10 @@ throughput, and never hits a client timeout while the mesh is busy.
   each host serves the [host protocol](design.md#the-host-protocol) to its
   peers, and each gateway schedules to them.
 - Trust: per-device keys, published endpoint IDs in iCloud Keychain, the allow
-  list. *Per-device keys and the allow list are built.* Peers are added by
-  hand until the list comes from iCloud Keychain.
+  list. *Built.* Each device lists its endpoint ID in iCloud Keychain and
+  trusts the others listed there, kept up to date while running; hand-added
+  peers stay, and are the only kind built from source. Syncing between
+  devices is tested only in a signed build ([design.md](design.md#trust)).
 - Scheduling: host pull, one request of prefetch on fast hosts, matching by
   model, preference list and capability, deadlines, retry on host loss, hedging
   at the tail. *So far:* matching, deadlines and retry on host loss work across
@@ -144,6 +146,13 @@ as the default, and has to be useful beyond conflux.
    then reach the peer's host without the gateway's token. An option to accept
    only connections from this process, or to forward a Unix socket instead,
    would close that. conflux's host side already checks.
+
+One more would help, though nothing waits on it:
+
+5. **Taking one ID off the allow list**, and closing its connection. Today
+   the list only grows, or empties without closing anything, so conflux
+   restarts its endpoint when a device leaves the mesh, dropping every peer's
+   connection for a moment.
 
 Every app links apple-iroh statically, pinned by version and checksum. So each
 one adopts a release on its own schedule, and different apps' iroh versions

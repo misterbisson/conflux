@@ -321,25 +321,86 @@ host without the gateway's token. Closing it needs a change in apple-iroh
   launches and no two devices can answer as one.
 - **Each device publishes its public endpoint ID** to iCloud Keychain as a
   synced item, one item per device, keyed by the ID. The set of those items is
-  the **allow list**. It contains only devices signed in to the same Apple
-  Account and running conflux.
-- **Both sides accept only IDs on the list**, and an empty list accepts
-  nobody. A device that can't read the list refuses everyone, rather than
-  accepting everyone.
+  the **device directory**, and the devices in it are trusted. It contains
+  only devices signed in to the same Apple Account and running conflux.
+- **Both sides accept only trusted IDs**, and an empty list accepts nobody. A
+  device that can't read the directory trusts nobody from it, rather than
+  everyone.
 - **Devices refresh their published item regularly.** Items that stop being
   refreshed are eventually treated as gone.
 
-conflux uses its own keychain service names and access group. It shares no
-keychain items with any other app.
+**The item.** A generic password, synchronizable, in the data protection
+keychain:
 
-**Until conflux reads devices from iCloud Keychain, peers are added by
-hand.** Each device shows its endpoint ID, and each device's peer list names
-the others. The rules are the same: only listed IDs may connect, the list
-starts empty, and trust is both ways, so a peer may use this device's host and
-this device's gateway uses the peer's. With no peers, conflux starts no iroh
-endpoint and contacts nothing. The device key is in the keychain for a signed
-build; built from source, it's in a file only the user can read, like the
-gateway's token.
+| Attribute | Value |
+|---|---|
+| service | `conflux.device` |
+| account | the endpoint ID, 64 lowercase hex characters |
+| access group | `<team ID>.com.caseybisson.conflux.devices` |
+| accessible | after first unlock (a synced item can't be `ThisDeviceOnly`) |
+| data | JSON: `{"name": "Studio", "published": "2026-11-07T12:00:00Z"}` |
+
+`name` is the Mac's computer name, from Sharing settings, for the window.
+`published` is when the device last wrote the item. Only the public key is in
+it; the secret key is a separate item, in the app's own group, not synced.
+An item that doesn't parse, or whose account isn't an endpoint ID, is
+skipped, not trusted.
+
+**The access group.** conflux uses its own service names and access groups,
+and shares no keychain items with any other app. The app's entitlements give
+two groups, both with the team's prefix as `$(AppIdentifierPrefix)`, so no
+team ID is written in the repository: first the app's own,
+`$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)`, which stays the default
+and so keeps the device key where it was; then the directory's,
+`$(AppIdentifierPrefix)com.caseybisson.conflux.devices`, which every build of
+the app shares. A Debug build from Xcode has its own bundle ID, and so its own
+key and its own entry in the directory: it's another device. The app finds the
+directory's group in its own entitlements at launch. Built from source or
+signed ad hoc, there's no group with a team prefix, so there's no directory,
+and peers are added by hand.
+
+**Joining, refreshing and leaving.** A device lists itself when the app opens
+with **Find my Macs through iCloud Keychain** on, which is the default, and
+rewrites the item when it's more than a day old or the Mac's name changed.
+Items more than 30 days old are trusted by nobody and shown nowhere, so a Mac
+that's been sold or wiped drops out on its own. Turning the setting off
+removes this device's item, and stops it trusting the directory.
+
+**Forgetting a device** removes its item, which iCloud Keychain then removes
+from every device, so none of them trusts it. The forgotten device would put
+the item back the next time it refreshed, so it remembers which ID it last
+listed: finding that item gone, it knows it was forgotten, turns the setting
+off and says so in its window. Its owner turns it on again to rejoin. A device
+that's forgotten while conflux is closed there notices at its next launch, as
+long as the deletion has synced by then.
+
+**Hand-added peers stay.** They're trusted alongside the directory, and
+they're the only source where there's no directory: `conflux serve`, `swift
+run`, `swift test` and ad hoc builds. A device in both is trusted while
+either says so. Each device shows its endpoint ID, and each hand-added peer
+list names the others. The rules are the same: only listed IDs may connect,
+trust is both ways, so a peer may use this device's host and this device's
+gateway uses the peer's, and with no peers, conflux starts no iroh endpoint
+and contacts nothing. The device key is in the keychain for a signed build;
+built from source, it's in a file only the user can read, like the gateway's
+token.
+
+**Changes while running.** The keychain sends no notice when a synced item
+changes, so a running node reads the directory every 10 seconds, and at once
+after this device forgets one. iCloud Keychain takes its own time to sync,
+often seconds and sometimes minutes, so that's the delay that counts.
+apple-iroh checks its allow list as each connection arrives, and
+`apple_iroh_allow` adds to it while the endpoint runs, so a new device joins
+the running mesh. It has no call to take one ID off the list or close one
+peer's connection, though, and `apple_iroh_allow_none` leaves held
+connections open. So a device that leaves means a new endpoint, under the
+same key, with the remaining peers: their connections drop and are dialled
+again, and requests in flight to them fail over like any lost host. A
+directory that can't be read keeps the peers it last gave, and the window
+says why it couldn't be read.
+
+The directory is behind a `DeviceDirectory` protocol, with the keychain one
+for the app and one in memory for tests, so tests need no entitlements.
 
 ### Client authorization
 

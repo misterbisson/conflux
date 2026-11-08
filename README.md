@@ -24,9 +24,9 @@ model that's too large for any single device.
 
 Phase 2, several Macs, is under way. The Mac app is built by Xcode Cloud and
 distributed through TestFlight, which the iCloud Keychain trust model needs.
-Macs that name each other as peers use each other's models over iroh. Peers
-are added by hand until they come from iCloud Keychain, and scheduling across
-them is still the simple kind: hosts refuse what they can't run, but don't yet
+Macs signed in to the same Apple Account find each other through iCloud
+Keychain and use each other's models over iroh; peers can also be added by
+hand. Scheduling across them is still the simple kind: hosts refuse what they can't run, but don't yet
 pull work.
 
 Phase 1 is done: the gateway, scheduler and a host running llama.cpp

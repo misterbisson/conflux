@@ -7,7 +7,9 @@
 #   tools/ci/build-app.sh
 #
 # Ad hoc signing still embeds the entitlements, so the archive runs in the App
-# Sandbox like the TestFlight build and check-app.sh can read them. No team,
+# Sandbox like the TestFlight build and check-app.sh can read them. All but the
+# keychain access groups, which need the team: without them, the app finds no
+# device directory and peers are added by hand, as built from source. No team,
 # certificate or profile is involved.
 
 set -euo pipefail
@@ -15,6 +17,14 @@ cd "$(git rev-parse --show-toplevel)"
 
 archive=build/conflux.xcarchive
 rm -rf "$archive"
+
+# The app's entitlements, less the keychain access groups. Those need a
+# provisioning profile, which only the team's signing brings, and their prefix
+# is the team's. check-app.sh checks them in App/conflux.entitlements instead.
+mkdir -p build
+entitlements=build/adhoc.entitlements
+cp App/conflux.entitlements "$entitlements"
+/usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$entitlements"
 
 xcodebuild archive \
 	-project conflux.xcodeproj \
@@ -26,6 +36,7 @@ xcodebuild archive \
 	CODE_SIGN_STYLE=Manual \
 	CODE_SIGN_IDENTITY=- \
 	DEVELOPMENT_TEAM= \
+	CODE_SIGN_ENTITLEMENTS="$entitlements" \
 	-quiet
 
 tools/ci/check-app.sh "$archive"
