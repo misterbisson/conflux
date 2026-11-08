@@ -42,7 +42,7 @@ expect CFBundleIdentifier com.caseybisson.conflux
 expect UIDeviceFamily:0 2
 expect UIFileSharingEnabled true
 expect ITSAppUsesNonExemptEncryption false
-expect MinimumOSVersion 18.0
+expect MinimumOSVersion 27.0
 expect CFBundleShortVersionString "$(sed -nE 's/^ *MARKETING_VERSION: "([^"]+)".*/\1/p' project.yml)"
 for file in Credits.html PrivacyInfo.xcprivacy; do
 	if [ -f "$app/$file" ]; then

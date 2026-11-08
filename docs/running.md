@@ -7,7 +7,7 @@ join the mesh as hosts later in Phase 3 ([plan.md](plan.md)).
 
 ## What you need
 
-- macOS 15 or later, on Apple Silicon.
+- macOS 27 or later, on Apple Silicon.
 - A GGUF model and, for a vision model, its multimodal projector (`mmproj`).
   [phase-0.md](phase-0.md) says how to choose one and how many slots it
   should get. To try conflux first, the app has one: see
@@ -191,7 +191,7 @@ the host serve anyway, and clients get the bad answers instead.
 
 ## On an iPad
 
-The iPad app is the same app as the Mac's, built for iPadOS 18 or later. Its
+The iPad app is the same app as the Mac's, built for iPadOS 27 or later. Its
 first version isn't a host yet. It's a memory probe: it checks whether a
 model fits on the iPad, and records the memory that took, to decide which
 models iPads can serve ([plan.md](plan.md), Phase 3).

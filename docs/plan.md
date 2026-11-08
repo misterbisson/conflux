@@ -127,7 +127,7 @@ the Macs' gateways, and runs no gateway and no clients, so it needs no token.
 
 What Phase 2 showed about the iPad:
 
-- The shared code builds for iPadOS 18, apple-iroh's floor, with two Mac-only
+- The shared code builds for iPadOS, with two Mac-only
   parts set aside: the `llama-server` runtime, because iPadOS can't start
   processes, and the check that a loopback connection came from this
   process, because iPadOS has no libproc.
@@ -163,11 +163,11 @@ contribution is measured against the effort of keeping it there.
 
 ## Phase 4: More runtimes and capabilities
 
-- **Apple Foundation Models**, as a host runtime alongside llama.cpp, on
-  macOS 26 and iPadOS 26 with Apple Intelligence turned on. It takes text and
-  images, so it answers `any-vision` as well as `any`, and passes the same
-  self-check before reporting Ready. The app's floors stay macOS 15 and
-  iPadOS 18, so the runtime is offered only where the OS has it. The model
+- **Apple Foundation Models**, as a host runtime alongside llama.cpp, with
+  Apple Intelligence turned on. It reads images from macOS 27 and iPadOS 27,
+  so those are conflux's floors, and it answers `any-vision` as well as
+  `any`, and passes the same self-check before reporting Ready. Apple's
+  Private Cloud Compute model is left out: it runs off the device. The model
   is the system's, advertised as a capability rather than an artifact:
   conflux can't choose or pin its weights, which change with OS updates, so
   its identity is the OS build ([design.md](design.md#runtimes)). On devices
