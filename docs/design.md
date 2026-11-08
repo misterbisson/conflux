@@ -260,6 +260,41 @@ The apple-iroh changes conflux needs are listed in [plan.md](plan.md). All of
 them are additive, keep today's defaults, and stay compatible with apple-iroh's
 other users.
 
+### The host protocol
+
+What a gateway and a host on another device say to each other, over the
+forwarded connection. It's versioned in its paths, `/conflux/0/…`, until
+apple-iroh lets conflux name its own ALPN.
+
+- `GET /conflux/0/host`: the host's model, availability, the slots it takes
+  work in now, how many are busy, and its typical request time. The gateway
+  asks every second, and that's the heartbeat: a connection iroh reports
+  closed counts as lost at once, and three unanswered asks in a row count as
+  lost too.
+- `POST /conflux/0/complete`: one chat completion, with the time left in
+  `Conflux-Timeout`. `Conflux-Outcome` says what became of it: `completed`,
+  `rejected` (the runtime refused it, a 4xx the gateway passes on), `busy` or
+  `unavailable`. A completion names the model that ran, as the host saw it.
+
+**Admission belongs to the host.** A request from a peer's gateway runs only
+if one of the host's slots is free now, whichever gateway sent it, and it
+never queues there: a busy host says `busy`, and the gateway, which holds the
+queue, tries another host. This is the first step towards the pull model in
+[Scheduling](#scheduling). Gateways still send, and a host refuses what it
+can't run, but no slot is promised twice.
+
+A host that serves no model still answers, so its peers see "serves no model"
+rather than silence.
+
+**The host service accepts connections only from its own process.** It
+listens on loopback, where apple-iroh delivers peers' streams, and it has no
+token. So it checks that the other end of each connection is a socket this
+process holds, which is true of apple-iroh's and of no other program's. The
+gateway side has a gap: the loopback port apple-iroh opens for each peer
+takes connections from any local process, which can then reach that peer's
+host without the gateway's token. Closing it needs a change in apple-iroh
+([plan.md](plan.md#apple-iroh-changes)).
+
 ### Trust
 
 - **Each device keeps its own secret key.** It is stored in the keychain as
@@ -277,6 +312,15 @@ other users.
 
 conflux uses its own keychain service names and access group. It shares no
 keychain items with any other app.
+
+**Until conflux reads devices from iCloud Keychain, peers are added by
+hand.** Each device shows its endpoint ID, and each device's peer list names
+the others. The rules are the same: only listed IDs may connect, the list
+starts empty, and trust is both ways, so a peer may use this device's host and
+this device's gateway uses the peer's. With no peers, conflux starts no iroh
+endpoint and contacts nothing. The device key is in the keychain for a signed
+build; built from source, it's in a file only the user can read, like the
+gateway's token.
 
 ### Client authorization
 

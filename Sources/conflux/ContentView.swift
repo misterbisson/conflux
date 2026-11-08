@@ -8,6 +8,7 @@ struct ContentView: View {
         Form {
             status
             modelSection
+            meshSection
             gatewaySection
         }
         .formStyle(.grouped)
@@ -68,7 +69,7 @@ struct ContentView: View {
         } else {
             Button("Start") { model.start() }
                 .keyboardShortcut(.defaultAction)
-                .disabled(model.settings.host?.model.isEmpty ?? true)
+                .disabled(!model.canStart)
         }
     }
 
@@ -79,12 +80,7 @@ struct ContentView: View {
 
     var color: Color {
         guard model.running, let state = model.host?.state else { return .gray }
-        switch state {
-        case .ready: return .green
-        case .busy: return .blue
-        case .draining, .paused, .starting: return .orange
-        case .failed, .offline: return .red
-        }
+        return color(for: state)
     }
 
     // MARK: Model
@@ -133,6 +129,86 @@ struct ContentView: View {
                     .lineLimit(1).truncationMode(.middle)
                 Button("Choose…") { model.choose(projector: projector) }
             }
+        }
+    }
+
+    // MARK: Mesh
+
+    @State private var newPeer = ""
+    @State private var peerProblem: String?
+
+    @ViewBuilder var meshSection: some View {
+        Section("Mesh") {
+            if let id = model.endpointID {
+                LabeledContent("This Mac") {
+                    HStack {
+                        Text(DeviceIdentity.short(id) + "…").font(.body.monospaced())
+                            .help(id)
+                        Button("Copy ID") { model.copy(id) }
+                    }
+                }
+            }
+            if let problem = model.meshProblem {
+                Text(problem).foregroundStyle(.red)
+            }
+            ForEach(model.settings.peers, id: \.self) { id in
+                peerRow(id)
+            }
+            if !model.running {
+                HStack {
+                    TextField("Peer", text: $newPeer, prompt: Text("another Mac's ID"))
+                        .font(.body.monospaced())
+                        .onSubmit(addPeer)
+                    Button("Add", action: addPeer).disabled(newPeer.isEmpty)
+                }
+                if let peerProblem {
+                    Text(peerProblem).font(.caption).foregroundStyle(.red)
+                }
+            }
+            if model.refused > 0 {
+                LabeledContent("Refused", value: "\(model.refused) connections from devices that aren't peers")
+            }
+            Text("Peers use each other's models. Each Mac has to add the others' IDs. With no peers, conflux connects to nothing.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    func addPeer() {
+        peerProblem = model.addPeer(newPeer)
+        if peerProblem == nil { newPeer = "" }
+    }
+
+    @ViewBuilder func peerRow(_ id: String) -> some View {
+        let status = model.peers.first { $0.endpointID == id }
+        let host = status.flatMap(model.peerHost)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Circle().fill(host.map { color(for: $0.state) } ?? .gray).frame(width: 8, height: 8)
+                Text(DeviceIdentity.short(id) + "…").font(.body.monospaced()).help(id)
+                Text(host?.state.label ?? (model.running ? "Not started" : "Peer"))
+                Spacer()
+                if !model.running {
+                    Button("Remove") { model.removePeer(id) }
+                }
+            }
+            if let host, model.running {
+                let parts = [host.model?.id, status.map(\.path.label),
+                             host.capacity > 0 ? "\(host.active) busy of \(host.capacity)" : nil,
+                             host.completed > 0 ? "\(host.completed) completed" : nil].compactMap { $0 }
+                Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                if let detail = host.state.detail {
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    func color(for state: HostState) -> Color {
+        switch state {
+        case .ready: .green
+        case .busy: .blue
+        case .draining, .paused, .starting: .orange
+        case .failed, .offline: .red
         }
     }
 

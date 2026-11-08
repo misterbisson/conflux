@@ -2,8 +2,9 @@ import AppKit
 import ConfluxCore
 import Foundation
 
-// `conflux` opens the window. `conflux serve ...` runs without one, and
-// `conflux token` prints the gateway's token.
+// `conflux` opens the window. `conflux serve ...` runs without one,
+// `conflux token` prints the gateway's token, and `conflux id` this device's
+// endpoint ID.
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 switch arguments.first {
@@ -19,6 +20,16 @@ case "token":
         exit(0)
     } catch {
         FileHandle.standardError.write(Data("conflux: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+case "id":
+    let rest = Array(arguments.dropFirst())
+    let label = rest.first == "--identity" && rest.count > 1 ? rest[1] : "default"
+    do {
+        print(try DeviceIdentity.load(label: label).endpointID)
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("conflux: \(error)\n".utf8))
         exit(1)
     }
 case "help", "-h", "--help":

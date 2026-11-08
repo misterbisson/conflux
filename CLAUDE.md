@@ -6,7 +6,9 @@ conflux is a personal inference mesh for Apple devices. Start with
 
 ## Building
 
-A Swift package, macOS 14 or later, with no dependencies beyond the SDK:
+A Swift package, macOS 15 or later. Its only dependencies are two prebuilt
+binaries, pinned by version and checksum in `Package.swift`: llama.cpp's
+xcframework and apple-iroh's. macOS 15 is apple-iroh's floor.
 
 ```bash
 swift build

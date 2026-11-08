@@ -193,18 +193,33 @@ check "export-compliance note names every source file that uses cryptography" \
 	"these use cryptography or TLS but aren't in the export-compliance note in project.yml, so ITSAppUsesNonExemptEncryption may no longer be true:$unnamed" \
 	absent "$unnamed"
 
+# apple-iroh brings rustls and ring, and the note above was answered for one
+# apple-iroh version. Another version, or any other library, means answering
+# again.
+iroh_pin="$(sed -nE 's#.*apple-iroh/releases/download/(v[0-9.]+)/.*#\1#p' Package.swift | head -1)"
+iroh_reviewed=no
+if [ -n "$iroh_pin" ] && grep -qF "# - apple-iroh $iroh_pin:" project.yml; then iroh_reviewed=yes; fi
+others='OpenSSL [0-9]|BoringSSL|mbed ?TLS|libsodium'
+irohs='ring_core_0_|ring-0\.1[0-9]|rustls|quinn-proto'
 bundled=""
 for binary in "${binaries[@]}"; do
 	# Not `strings | grep -q`: grep -q stops at the first match, strings dies
 	# of SIGPIPE, and pipefail turns the match into a miss.
-	if grep -qiE 'ring_core_0_|ring-0\.1[0-9]|rustls|quinn-proto|OpenSSL [0-9]|BoringSSL|mbed ?TLS|libsodium' \
-		< <(strings -a "$binary"); then
+	strings -a "$binary" >"$work/crypto-strings"
+	if grep -qiE "$others" "$work/crypto-strings"; then
 		bundled+=" $(basename "$binary")"
+	elif grep -qiE "$irohs" "$work/crypto-strings"; then
+		[ "$iroh_reviewed" = yes ] || bundled+=" $(basename "$binary")"
 	fi
 done
-check "no bundled cryptography library" \
-	"bundled cryptography in:$bundled. ITSAppUsesNonExemptEncryption=NO rests on all of it being the operating system's; answer it again (see project.yml)" \
+check "no bundled cryptography the export-compliance note doesn't cover" \
+	"bundled cryptography in:$bundled. The note beside ITSAppUsesNonExemptEncryption in project.yml doesn't cover it${iroh_pin:+ (it has to name apple-iroh $iroh_pin)}; answer it again" \
 	absent "$bundled"
+if [ -n "$iroh_pin" ]; then
+	check "export-compliance note covers apple-iroh $iroh_pin" \
+		"Package.swift pins apple-iroh $iroh_pin, and project.yml's export-compliance note doesn't name it; answer it again" \
+		same "$iroh_reviewed" yes
+fi
 
 # --- signing and entitlements -------------------------------------------------
 verified=yes
@@ -222,6 +237,8 @@ check "sandboxed" "the App Sandbox entitlement is missing; App Store Connect ref
 	same "$(entitlement com.apple.security.app-sandbox)" true
 check "may listen (the gateway)" "com.apple.security.network.server is missing, so the gateway can't listen" \
 	same "$(entitlement com.apple.security.network.server)" true
+check "may connect (the mesh)" "com.apple.security.network.client is missing, so the app can't reach peers" \
+	same "$(entitlement com.apple.security.network.client)" true
 check "no get-task-allow" "the Release build claims get-task-allow, which App Store Connect refuses" \
 	absent "$(entitlement com.apple.security.get-task-allow)"
 

@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "conflux",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     products: [
         .executable(name: "conflux", targets: ["conflux"]),
         .executable(name: "conflux-bench", targets: ["conflux-bench"]),
@@ -21,8 +21,27 @@ let package = Package(
             checksum: "fca702506b04cba11c7f1226056371d16ddfa80e1248da979166a1eec36c415f"
         ),
 
-        // The gateway, the scheduler, and the hosts that run models.
-        .target(name: "ConfluxCore", dependencies: ["llama"]),
+        // iroh, for connections between devices: QUIC with each device's
+        // identity a public key. A static library behind a small C ABI, from
+        // https://github.com/misterbisson/apple-iroh. Pinned by version and
+        // checksum, like llama.
+        .binaryTarget(
+            name: "AppleIroh",
+            url: "https://github.com/misterbisson/apple-iroh/releases/download/v0.9.0/AppleIroh.xcframework.zip",
+            checksum: "9ec6264f23f20ea204a10c8c8fdd708406a66cc9f7e5476fa6d95a9aedf6ed2b"
+        ),
+
+        // The gateway, the scheduler, the hosts that run models, and the mesh.
+        .target(
+            name: "ConfluxCore",
+            dependencies: ["llama", "AppleIroh"],
+            // What apple-iroh's static library needs (its README).
+            linkerSettings: [
+                .linkedFramework("SystemConfiguration"),
+                .linkedFramework("Network"),
+                .linkedLibrary("c++"),
+            ]
+        ),
         // The Mac app, and `conflux serve` without a window.
         .executableTarget(name: "conflux", dependencies: ["ConfluxCore"]),
         .testTarget(name: "ConfluxCoreTests", dependencies: ["ConfluxCore", "llama"]),

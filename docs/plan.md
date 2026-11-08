@@ -70,12 +70,17 @@ throughput, and never hits a client timeout while the mesh is busy.
   sandboxed app can do. *Done:* release-please tags each release, Xcode Cloud
   builds the tag, and TestFlight delivers it ([releasing.md](releasing.md)).
 - apple-iroh: expose on hosts, forward from gateways (see
-  [apple-iroh changes](#apple-iroh-changes)).
+  [apple-iroh changes](#apple-iroh-changes)). *Built*, on apple-iroh 0.9.0:
+  each host serves the [host protocol](design.md#the-host-protocol) to its
+  peers, and each gateway schedules to them.
 - Trust: per-device keys, published endpoint IDs in iCloud Keychain, the allow
-  list.
+  list. *Per-device keys and the allow list are built.* Peers are added by
+  hand until the list comes from iCloud Keychain.
 - Scheduling: host pull, one request of prefetch on fast hosts, matching by
   model, preference list and capability, deadlines, retry on host loss, hedging
-  at the tail.
+  at the tail. *So far:* matching, deadlines and retry on host loss work across
+  peers, and hosts admit work, refusing what they have no slot for. Pull,
+  prefetch and hedging are next.
 - Monitoring: throughput per host and for the mesh, failures, idle time while
   compatible work waits.
 
@@ -112,7 +117,7 @@ contribution is measured against the effort of keeping it there.
 
 ## apple-iroh changes
 
-conflux needs three changes in
+conflux needs four changes in
 [apple-iroh](https://github.com/misterbisson/apple-iroh), needed by Phase 2.
 apple-iroh has other users, so each change is additive, keeps today's behavior
 as the default, and has to be useful beyond conflux.
@@ -127,7 +132,15 @@ as the default, and has to be useful beyond conflux.
    internet is down.
 3. **A connection-closed signal.** For example a counter alongside the existing
    carried-bytes counters, so a gateway notices a lost host quickly. A heartbeat
-   over HTTP covers this in the meantime.
+   over HTTP covers this in the meantime. Measured on one Mac: a host that
+   stops cleanly is noticed in about 2 seconds, because `apple_iroh_path`
+   reports the closed connection, and a host killed outright in about 13, by
+   three missed heartbeats.
+4. **Forwarded ports that take only their own process's connections.** The
+   loopback port `apple_iroh_forward` opens accepts any local process, which can
+   then reach the peer's host without the gateway's token. An option to accept
+   only connections from this process, or to forward a Unix socket instead,
+   would close that. conflux's host side already checks.
 
 Every app links apple-iroh statically, pinned by version and checksum. So each
 one adopts a release on its own schedule, and different apps' iroh versions
