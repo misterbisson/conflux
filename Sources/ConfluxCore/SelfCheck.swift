@@ -10,10 +10,11 @@ import UniformTypeIdentifiers
 /// A vision model whose projector fails doesn't report the failure: it
 /// describes an image it never saw, fluently. So the check renders a short
 /// random string, asks the model to read it back, and passes if the answer
-/// contains it with at most one character misread. Small models misread a
-/// letter now and then; a model that can't see the image gets four of five
-/// random characters right by chance about once in 50,000 tries. A text-only
-/// model is asked to repeat a word instead.
+/// contains it with at most one character misread, added or dropped. Small
+/// models misread a letter now and then, and Apple's model sometimes adds
+/// one; a model that can't see the image comes that close by chance well
+/// under once in 10,000 tries. A text-only model is asked to repeat a word
+/// instead.
 public enum SelfCheck {
     /// No letters or digits that are easy to confuse with each other.
     static let alphabet = Array("ACDEFHJKLMNPRTUVWXY3479")
@@ -57,21 +58,34 @@ public enum SelfCheck {
     }
 
     /// Passes when some run of the answer matches the expected text with at
-    /// most `mistakes` characters different, ignoring case, spacing and
-    /// punctuation.
+    /// most `mistakes` characters changed, added or dropped, ignoring case,
+    /// spacing and punctuation.
     public static func passes(answer: String, expected: String, mistakes: Int = 1) -> Bool {
         func normalize(_ s: String) -> [Character] { Array(s.uppercased().filter { $0.isLetter || $0.isNumber }) }
         let answer = normalize(answer), expected = normalize(expected)
-        guard !expected.isEmpty, answer.count >= expected.count else { return false }
-        for start in 0...(answer.count - expected.count) {
-            var wrong = 0
-            for (offset, character) in expected.enumerated() where answer[start + offset] != character {
-                wrong += 1
-                if wrong > mistakes { break }
+        guard !expected.isEmpty else { return false }
+        let shortest = max(1, expected.count - mistakes), longest = expected.count + mistakes
+        guard answer.count >= shortest else { return false }
+        for length in shortest...min(longest, answer.count) {
+            for start in 0...(answer.count - length)
+            where distance(Array(answer[start..<(start + length)]), expected) <= mistakes {
+                return true
             }
-            if wrong <= mistakes { return true }
         }
         return false
+    }
+
+    /// Edits, of one character each, that turn `a` into `b`.
+    static func distance(_ a: [Character], _ b: [Character]) -> Int {
+        var previous = Array(0...b.count)
+        for (i, x) in a.enumerated() {
+            var current = [i + 1]
+            for (j, y) in b.enumerated() {
+                current.append(min(previous[j + 1] + 1, current[j] + 1, previous[j] + (x == y ? 0 : 1)))
+            }
+            previous = current
+        }
+        return previous[b.count]
     }
 
     /// Runs `probes` checks through `complete`, each with fresh text. Nil

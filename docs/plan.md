@@ -165,13 +165,30 @@ contribution is measured against the effort of keeping it there.
 
 - **Apple Foundation Models**, as a host runtime alongside llama.cpp, with
   Apple Intelligence turned on. It reads images from macOS 27 and iPadOS 27,
-  so those are conflux's floors, and it answers `any-vision` as well as
-  `any`, and passes the same self-check before reporting Ready. Apple's
-  Private Cloud Compute model is left out: it runs off the device. The model
-  is the system's, advertised as a capability rather than an artifact:
-  conflux can't choose or pin its weights, which change with OS updates, so
-  its identity is the OS build ([design.md](design.md#runtimes)). On devices
-  that have it, it's a model that works with nothing to copy in.
+  so those are conflux's floors. Apple's Private Cloud Compute model is left
+  out: it runs off the device. *Built*: a device serves it alongside its
+  model file, as a second host, `apple-on-device`, from the window or
+  `conflux serve --apple-model` ([running.md](running.md#apples-on-device-model)).
+  It answers `any-vision` as well as `any`, passes the self-check, and its
+  fingerprint is the OS build ([design.md](design.md#runtimes)). Requests it
+  declines, or can't fit in its 4,096 tokens, go to another host serving an
+  accepted model, across the mesh too. On an M2 MacBook Air it read 57 of 60
+  self-check images, in about 1 s each, and its misses each added a letter,
+  so the self-check now allows one letter added or dropped as well as
+  changed. It managed about 1.2 requests a second with two at once, little
+  more with four or eight, so it gets two slots.
+
+  *Left*, in order:
+  1. Peers see one host per device: the model file's, or Apple's model when
+     there's none. The host protocol has to carry both.
+  2. Structured output: `response_format` as Apple's guided generation.
+     Until then such requests go to another host.
+  3. Measurements: how many tokens an image costs, throughput against
+     Qwen3-VL-4B on the same images, both models at once on one Mac,
+     whether it slows in the background, and how often the default
+     guardrails decline ordinary images.
+  4. Apple's model in the iPad probe. It runs outside the app's memory
+     limit, which may make the 8 GB iPad Pro a useful host.
 - **A starter model in the app**, so a first request works before anyone
   has found a model. *Built*: SmolVLM-256M-Instruct (Apache 2.0), Q8_0 with
   its Q8_0 projector, about 280 MB together, served until the person chooses

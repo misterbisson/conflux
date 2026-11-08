@@ -21,15 +21,19 @@ public struct NodeSettings: Sendable, Equatable, Codable {
     /// The endpoint ID this Mac last listed in the directory. Its listing gone
     /// while this is set means another device forgot this one.
     public var listedID: String?
+    /// Apple's on-device model, served alongside `host`'s.
+    public var appleModel: AppleModelSettings
 
     public init(host: ModelConfig? = nil, port: UInt16 = 8090, requireToken: Bool = true, peers: [String] = [],
-                iCloudKeychain: Bool = true, listedID: String? = nil) {
+                iCloudKeychain: Bool = true, listedID: String? = nil,
+                appleModel: AppleModelSettings = AppleModelSettings()) {
         self.host = host
         self.port = port
         self.requireToken = requireToken
         self.peers = peers
         self.iCloudKeychain = iCloudKeychain
         self.listedID = listedID
+        self.appleModel = appleModel
     }
 
     // Settings saved before a field existed still load.
@@ -41,6 +45,21 @@ public struct NodeSettings: Sendable, Equatable, Codable {
         peers = try values.decodeIfPresent([String].self, forKey: .peers) ?? []
         iCloudKeychain = try values.decodeIfPresent(Bool.self, forKey: .iCloudKeychain) ?? true
         listedID = try values.decodeIfPresent(String.self, forKey: .listedID)
+        appleModel = try values.decodeIfPresent(AppleModelSettings.self, forKey: .appleModel) ?? AppleModelSettings()
+    }
+}
+
+/// Whether to serve Apple's on-device model, and how (`AppleModelHost`).
+public struct AppleModelSettings: Sendable, Equatable, Codable {
+    /// Off until the owner turns it on.
+    public var enabled: Bool
+    public var slots: Int
+    public var selfCheck: Bool
+
+    public init(enabled: Bool = false, slots: Int = AppleModelHost.defaultSlots, selfCheck: Bool = true) {
+        self.enabled = enabled
+        self.slots = slots
+        self.selfCheck = selfCheck
     }
 }
 
@@ -89,8 +108,11 @@ public final class ConfluxNode: @unchecked Sendable {
     public let scheduler: Scheduler
     private let lock = NSLock()
     private var server: HTTPServer?
+    /// The model file this device serves, with llama.cpp.
     private var host: (any ManagedHost)?
-    private var monitor: ResourceMonitor?
+    /// Apple's on-device model, alongside it.
+    private var apple: AppleModelHost?
+    private var monitors: [ResourceMonitor] = []
     private var boundPort: UInt16?
     private var service: HTTPServer?
     private var mesh: Mesh?
@@ -106,6 +128,10 @@ public final class ConfluxNode: @unchecked Sendable {
     /// How often a running node reads the directory. The keychain sends no
     /// notice of changes, so it asks.
     static let directoryInterval: Duration = .seconds(10)
+
+    /// The scheduler's IDs for this device's hosts.
+    public static let localHostID = "local"
+    public static let appleHostID = "apple"
 
     public init(scheduler: Scheduler = Scheduler()) {
         self.scheduler = scheduler
@@ -138,18 +164,14 @@ public final class ConfluxNode: @unchecked Sendable {
 
         if let config = settings.host {
             let host = Self.host(for: config)
-            let monitor = ResourceMonitor()
-            lock.withLock {
-                self.host = host
-                self.monitor = monitor
-            }
-            await scheduler.add(host)
-            let scheduler = self.scheduler
-            monitor.start { reading in
-                let limit = ResourcePolicy.limit(slots: config.slots, reading: reading)
-                Task { await scheduler.setLimit(limit.slots, reason: limit.reason, for: host.id) }
-            }
-            Task { await host.start() }
+            lock.withLock { self.host = host }
+            await serve(host, slots: config.slots)
+        }
+        if settings.appleModel.enabled {
+            let apple = AppleModelHost(id: Self.appleHostID, slots: settings.appleModel.slots,
+                                       selfCheck: settings.appleModel.selfCheck)
+            lock.withLock { self.apple = apple }
+            await serve(apple, slots: apple.slots)
         }
 
         let directory = settings.iCloudKeychain ? directory : nil
@@ -171,6 +193,25 @@ public final class ConfluxNode: @unchecked Sendable {
         await refreshPeers()
         if directory != nil { watchDirectory() }
         return port
+    }
+
+    /// Adds a local host to the scheduler, starts it, and holds its slots to
+    /// what resource policy allows.
+    private func serve(_ host: any LocalHost, slots: Int) async {
+        let monitor = ResourceMonitor()
+        lock.withLock { monitors.append(monitor) }
+        await scheduler.add(host)
+        let scheduler = self.scheduler
+        monitor.start { reading in
+            let limit = ResourcePolicy.limit(slots: slots, reading: reading)
+            Task { await scheduler.setLimit(limit.slots, reason: limit.reason, for: host.id) }
+        }
+        Task { await host.start() }
+    }
+
+    /// The hosts on this device.
+    private var localHosts: [any LocalHost] {
+        lock.withLock { [host as (any LocalHost)?, apple].compactMap { $0 } }
     }
 
     /// Reads the directory, then grows or restarts the mesh to match. A
@@ -246,8 +287,9 @@ public final class ConfluxNode: @unchecked Sendable {
 
     private func startMesh(peers: [String], identity: DeviceIdentity) async throws {
         // This Mac's host, for peers' gateways. Served without a host too,
-        // so peers hear "serves no model" rather than nothing.
-        let handler = HostService(scheduler: scheduler, hostID: lock.withLock { host?.id })
+        // so peers hear "serves no model" rather than nothing. Peers see one
+        // host per device for now: the model file's, or else Apple's model.
+        let handler = HostService(scheduler: scheduler, hostID: localHosts.first?.id)
         let service = HTTPServer(onlyFromThisProcess: true) { request in await handler.handle(request) }
         let exposed = try await service.start(port: 0)
         lock.withLock { self.service = service }
@@ -308,12 +350,13 @@ public final class ConfluxNode: @unchecked Sendable {
             watching.wake.finish()
             await watching.task.value
         }
-        let (server, host, monitor) = lock.withLock { () -> (HTTPServer?, (any ManagedHost)?, ResourceMonitor?) in
-            defer { self.server = nil; self.host = nil; self.monitor = nil; boundPort = nil }
-            return (self.server, self.host, self.monitor)
+        let hosts = localHosts
+        let (server, monitors) = lock.withLock { () -> (HTTPServer?, [ResourceMonitor]) in
+            defer { self.server = nil; host = nil; apple = nil; self.monitors = []; boundPort = nil }
+            return (self.server, self.monitors)
         }
-        monitor?.stop()
-        host?.stop()
+        for monitor in monitors { monitor.stop() }
+        for host in hosts { host.stop() }
         server?.stop()
         await stopMesh()
         lock.withLock {
@@ -326,7 +369,7 @@ public final class ConfluxNode: @unchecked Sendable {
             trusted = []
         }
         await scheduler.stopRefreshing()
-        if let host { await scheduler.remove(hostID: host.id) }
+        for host in hosts { await scheduler.remove(hostID: host.id) }
     }
 
     private func stopMesh() async {
@@ -343,8 +386,7 @@ public final class ConfluxNode: @unchecked Sendable {
     }
 
     public func setIntent(_ intent: OwnerIntent) async {
-        guard let id = lock.withLock({ host?.id }) else { return }
-        await scheduler.setIntent(intent, for: id)
+        for host in localHosts { await scheduler.setIntent(intent, for: host.id) }
     }
 
     public var logURL: URL? { lock.withLock { host?.logURL } }

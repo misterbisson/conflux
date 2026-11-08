@@ -152,8 +152,10 @@ struct ChatCompletionResult: Equatable {
     }
 
     /// An error in OpenAI's shape, for a status the gateway passes through.
-    static func error(_ message: String, type: String = "invalid_request_error") -> Data {
-        let object = ["error": ["message": message, "type": type]]
+    static func error(_ message: String, type: String = "invalid_request_error", code: String? = nil) -> Data {
+        var error = ["message": message, "type": type]
+        error["code"] = code
+        let object = ["error": error]
         return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
     }
 }

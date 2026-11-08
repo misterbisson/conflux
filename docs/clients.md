@@ -134,6 +134,13 @@ Conflux-Models: model-a, model-b, model-c
 The gateway takes the first model in the list that has a free slot. conflux
 never ranks models itself. Whatever ran is in the response.
 
+Some models refuse requests that others take. Apple's on-device model
+declines some content, and takes only short requests. When a model refuses
+that way, the gateway tries another host serving a model the request
+accepts, so accepting more than one model avoids the refusal. With nowhere
+else to go, the client gets `400` with `error.code` set to `content_filter`
+or `context_length_exceeded`, as OpenAI's API names them.
+
 ### Send images at the size the model needs
 
 Each model's entry in `/v1/models` includes the largest image dimension it

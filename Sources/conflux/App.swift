@@ -103,8 +103,11 @@ final class AppModel: ObservableObject {
         if let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 
-    /// This Mac's own host.
-    var host: HostSnapshot? { snapshot?.hosts.first { !$0.id.hasPrefix("peer-") } }
+    /// This Mac's own host, for its model file.
+    var host: HostSnapshot? { snapshot?.hosts.first { $0.id == ConfluxNode.localHostID } }
+
+    /// This Mac's host for Apple's on-device model.
+    var appleHost: HostSnapshot? { snapshot?.hosts.first { $0.id == ConfluxNode.appleHostID } }
 
     func peerHost(_ peer: PeerStatus) -> HostSnapshot? { snapshot?.hosts.first { $0.id == peer.hostID } }
 
@@ -116,7 +119,9 @@ final class AppModel: ObservableObject {
     /// has one.
     var servesStarter: Bool { starter != nil && (settings.host?.model.isEmpty ?? true) }
 
-    var canStart: Bool { !(settings.host?.model.isEmpty ?? true) || starter != nil || !trusted.isEmpty }
+    var canStart: Bool {
+        !(settings.host?.model.isEmpty ?? true) || starter != nil || settings.appleModel.enabled || !trusted.isEmpty
+    }
 
     /// Every device this Mac trusts: added by hand, listed in iCloud
     /// Keychain, or both.

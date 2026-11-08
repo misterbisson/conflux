@@ -13,8 +13,10 @@ public enum HostProtocol {
     /// Names one copy of a request, on a completion and on a cancel.
     public static let requestIDHeader = "Conflux-Request-ID"
     /// What became of a request sent to a host: `completed`, `rejected`
-    /// (the runtime refused it, a 4xx to pass on), `busy`, `unavailable`, or
-    /// `cancelled` by the gateway that sent it.
+    /// (the runtime refused it, a 4xx to pass on), `unsuitable` (refused
+    /// here, but another host might take it: declined content, or too long
+    /// for this model), `busy`, `unavailable`, or `cancelled` by the gateway
+    /// that sent it. Gateways that predate `unsuitable` pass it on as a 4xx.
     public static let outcomeHeader = "Conflux-Outcome"
     /// On a status request: the `generation` the gateway last saw. The host
     /// answers once its status has changed since, or after `Conflux-Wait`
@@ -210,7 +212,7 @@ final class HostService: Sendable {
             // Named here, by the host that ran it.
             return reply(result.status, "completed", Gateway.attribute(result.body, to: model))
         case .rejected(let result):
-            return reply(result.status, "rejected", result.body)
+            return reply(result.status, result.retryElsewhere ? "unsuitable" : "rejected", result.body)
         case .busy(let retryAfter):
             return reply(429, "busy", ChatCompletionResult.error("no free slot", type: "rate_limit_error"),
                          [(ContractHeader.retryAfter, String(retryAfter))])

@@ -337,8 +337,9 @@ apple-iroh lets conflux name its own ALPN.
   `Conflux-Timeout` and the copy's ID in `Conflux-Request-ID`.
   `Conflux-Prefetch: 1` says the request may wait on the host for a slot.
   `Conflux-Outcome` says what became of it: `completed`, `rejected` (the
-  runtime refused it, a 4xx the gateway passes on), `busy`, `unavailable`, or
-  `cancelled`. A completion names the model that ran, as the host saw it.
+  runtime refused it, a 4xx the gateway passes on), `unsuitable` (refused
+  here, though another host might take it: content the model declined, or a
+  request too long for it), `busy`, `unavailable`, or `cancelled`. A completion names the model that ran, as the host saw it.
   `Conflux-Slots: <generation> <capacity> <active> <held>` says how the
   host's slots stand once the request has left its slot, so the gateway can
   send the next request without waiting for the status that says the same.
@@ -504,13 +505,21 @@ and restarts it if it exits, giving up after four exits in five minutes. It's
 useful for comparing the two and where crash isolation matters more than
 distribution.
 
+**Apple's on-device model** is the third runtime, through the Foundation
+Models framework: the model Apple Intelligence uses, which reads text and
+images from macOS 27 and iPadOS 27, conflux's floors. A device serves it
+alongside its model file, as a second host, `apple-on-device`. It runs in a
+system process, so it takes none of conflux's memory. conflux can't choose
+or pin it, and it changes with OS updates, so its fingerprint is the OS
+build. Its guardrails decline some content, and its context is small,
+4,096 tokens on macOS 27.0, images included. A request it declines or can't
+fit isn't the client's fault, so the host marks it for another host, and the
+gateway tries one that serves an accepted model. The client sees the
+refusal, a `400` with code `content_filter` or `context_length_exceeded`,
+only when there's none.
+
 Later candidates, each behind the same host interface:
 
-- **Apple Foundation Models**: a system-provided model that takes text and
-  images, advertised as a capability rather than an artifact. It reads
-  images from macOS 27 and iPadOS 27, conflux's floors, and needs Apple
-  Intelligence turned on. The weights aren't chosen by conflux,
-  can't be pinned, and change with OS updates. Its identity is the OS build.
 - **MLX**: a strong option on Apple Silicon, for artifacts that run only there.
 
 The runtime interface reports what each engine actually supports. It doesn't

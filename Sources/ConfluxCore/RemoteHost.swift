@@ -199,6 +199,8 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             return HostReply(status: response.statusCode, body: data, model: ranModel(data))
         case "rejected":
             return HostReply(status: response.statusCode, body: data)
+        case "unsuitable":
+            return HostReply(status: response.statusCode, body: data, retryElsewhere: true)
         case "busy":
             throw HostError.busy("the peer has no free slot")
         case "cancelled":

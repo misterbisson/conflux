@@ -5,13 +5,13 @@ import Foundation
 enum ServeCommand {
     static let usage = """
     usage: conflux                  open the window
-           conflux serve [--model PATH] [--peer ID ...] [options] [-- llama-server arguments]
+           conflux serve [--model PATH] [--apple-model] [--peer ID ...] [options] [-- llama-server arguments]
            conflux token [--rotate] print the gateway's bearer token
            conflux id [--identity NAME]
                                     print this device's endpoint ID, for peers
 
-    serve: run the gateway on 127.0.0.1, serve one model, and use peers'.
-    It needs a model, peers, or both.
+    serve: run the gateway on 127.0.0.1, serve a model file, Apple's
+    on-device model or both, and use peers'. It needs a model, peers, or both.
 
       --model PATH            GGUF model file
       --mmproj PATH           multimodal projector, for vision models
@@ -22,6 +22,9 @@ enum ServeCommand {
       --port N                gateway port (default 8090)
       --no-token              let clients connect without the bearer token
       --skip-self-check       report Ready without checking the model reads input
+      --apple-model           also serve Apple's on-device model, as
+                              apple-on-device (Apple Intelligence must be on)
+      --apple-slots N         its requests run at once (default 2)
       --runtime NAME          in-process (default), or llama-server to run
                               llama.cpp's server as a separate process
       --llama-server PATH     llama-server to run (default: Homebrew or PATH)
@@ -46,13 +49,14 @@ enum ServeCommand {
         var extra: [String] = []
         var index = 0
         let valued: Set<String> = ["--model", "--mmproj", "--slots", "--ctx-per-slot", "--max-image-dimension",
-                                   "--port", "--llama-server", "--image-min-tokens", "--runtime", "--identity"]
+                                   "--port", "--llama-server", "--image-min-tokens", "--runtime", "--identity",
+                                   "--apple-slots"]
         while index < args.count {
             let arg = args[index]
             if arg == "--" {
                 extra = Array(args[(index + 1)...])
                 break
-            } else if ["--no-token", "--skip-self-check"].contains(arg) {
+            } else if ["--no-token", "--skip-self-check", "--apple-model"].contains(arg) {
                 flags.insert(arg)
                 index += 1
             } else if arg == "--peer" {
@@ -72,7 +76,11 @@ enum ServeCommand {
             }
         }
         let model = values["--model"]
-        guard model != nil || !peers.isEmpty else { throw UsageError("give a --model, a --peer, or both") }
+        let apple = flags.contains("--apple-model")
+        guard model != nil || apple || !peers.isEmpty else {
+            throw UsageError("give a --model, --apple-model, a --peer, or more than one")
+        }
+        if values["--apple-slots"] != nil && !apple { throw UsageError("--apple-slots needs --apple-model") }
         func int(_ flag: String, _ fallback: Int, minimum: Int = 1) throws -> Int {
             guard let text = values[flag] else { return fallback }
             guard let value = Int(text), value >= minimum else { throw UsageError("\(flag) must be at least \(minimum)") }
@@ -96,8 +104,10 @@ enum ServeCommand {
             imageMinTokens: values["--image-min-tokens"] == nil ? nil : try int("--image-min-tokens", 0),
             selfCheck: !flags.contains("--skip-self-check"),
             executable: values["--llama-server"], extraArguments: extra) }
+        let appleModel = AppleModelSettings(enabled: apple, slots: try int("--apple-slots", AppleModelHost.defaultSlots),
+                                            selfCheck: !flags.contains("--skip-self-check"))
         let settings = NodeSettings(host: host, port: UInt16(port), requireToken: !flags.contains("--no-token"),
-                                    peers: peers)
+                                    peers: peers, appleModel: appleModel)
         return Options(settings: settings, identity: values["--identity"] ?? "default")
     }
 
