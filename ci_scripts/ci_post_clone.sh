@@ -73,17 +73,32 @@ fi
 
 # --- signing ------------------------------------------------------------------
 # The Team ID never goes in the repository. On Xcode Cloud it comes from the
-# build, into the untracked file App/Signing.xcconfig includes. It isn't
-# printed. Elsewhere, App/Signing.local.xcconfig is left as it is.
+# build, into the untracked file App/Signing.xcconfig includes. Elsewhere,
+# App/Signing.local.xcconfig is left as it is.
+#
+# Apple documents CI_TEAM_ID as the ten-character Team ID, but the first build
+# (v0.1.0) had something else in it. Anything that isn't a Team ID isn't
+# written: the archive then signs with whatever team Xcode Cloud's own signing
+# settings give it. The value is never printed, only its shape, so the log can
+# say what it was without saying what it is.
+shape() {
+	printf '%s characters' "${#1}"
+	case "$1" in *[A-Z]*) printf ', capitals' ;; esac
+	case "$1" in *[a-z]*) printf ', lowercase' ;; esac
+	case "$1" in *[0-9]*) printf ', digits' ;; esac
+	case "$1" in *-*) printf ', hyphens' ;; esac
+	case "$1" in *[!A-Za-z0-9-]*) printf ', and other characters' ;; esac
+}
 if on_xcode_cloud; then
 	team="${CI_TEAM_ID:-}"
+	team="$(printf '%s' "$team" | tr -d '[:space:]')"
 	if [ -z "$team" ]; then
-		say "warning: CI_TEAM_ID is empty, so the project has no signing team"
+		say "warning: CI_TEAM_ID is empty; leaving the team to Xcode Cloud"
 	elif printf '%s' "$team" | grep -Eq '^[A-Z0-9]{10}$'; then
 		printf 'DEVELOPMENT_TEAM = %s\n' "$team" >App/Signing.local.xcconfig
 		say "wrote App/Signing.local.xcconfig from CI_TEAM_ID"
 	else
-		fail "CI_TEAM_ID isn't ten letters and digits; not writing it"
+		say "warning: CI_TEAM_ID isn't a Team ID ($(shape "$team")); leaving the team to Xcode Cloud"
 	fi
 fi
 

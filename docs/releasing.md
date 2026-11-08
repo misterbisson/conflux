@@ -157,8 +157,12 @@ here. It's done once. No step needs a Team ID, key or token in the repository.
      Only)**.
    - **Post-actions:** **TestFlight Internal Testing - macOS**, with that
      archive, to the group from step 3.
-   - **Environment variables:** none. The Team ID comes from the build's own
-     `CI_TEAM_ID`.
+   - **Environment variables:** none. The team comes from Xcode Cloud: the
+     post-clone hook writes `CI_TEAM_ID` into `App/Signing.local.xcconfig`
+     when it holds a Team ID, and otherwise leaves signing to Xcode Cloud's
+     settings, logging the value's shape but not the value. The first build's
+     `CI_TEAM_ID` wasn't the ten-character Team ID Apple's documentation
+     describes.
    - **Restrict Editing:** on, if anyone else on the team should see the
      workflow without changing it.
 6. **Build numbers.** In the app's Xcode Cloud **Settings**, let Xcode Cloud
