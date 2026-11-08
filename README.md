@@ -22,9 +22,12 @@ model that's too large for any single device.
 
 ## Status
 
-Phase 1: one Mac. The gateway, scheduler and a host running llama.cpp
-in-process run on a single Mac, with a window or headless. Other devices join
-in Phase 2.
+Phase 2, several Macs, is under way. The Mac app is built by Xcode Cloud and
+distributed through TestFlight, which the iCloud Keychain trust model needs.
+Serving over iroh comes next, and until then each Mac serves only itself.
+
+Phase 1 is done: the gateway, scheduler and a host running llama.cpp
+in-process on a single Mac, with a window or headless.
 
 - [Design](docs/design.md): architecture and decisions
 - [Client requirements](docs/clients.md): what a client does, and what it gets back
