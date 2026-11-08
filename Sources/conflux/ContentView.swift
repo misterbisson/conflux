@@ -264,6 +264,10 @@ struct ContentView: View {
                 LabeledContent("Host failures", value: Self.describe(snapshot.failures))
                 LabeledContent("Answered busy · unavailable", value: "\(snapshot.busy) · \(snapshot.unavailable)")
                     .help("Answers of 429, no slot in time, and 503, hosts failed or none up")
+                if snapshot.hedged > 0 {
+                    LabeledContent("Hedged", value: "\(snapshot.hedged), \(snapshot.hedgeWins) answered first")
+                        .help("Copies of straggling requests sent to an idle host at the end of a batch")
+                }
                 ForEach(snapshot.hosts) { host in
                     monitoringRow(host)
                 }

@@ -104,7 +104,9 @@ Stable across retries of the same work. The gateway uses it to:
 - return the original result when a client retries something that already
   finished;
 - run extra copies of a slow request on other hosts and return exactly one
-  answer.
+  answer. The gateway does this at the tail of a batch, when nothing is
+  waiting, and with or without a key the client gets one answer per
+  request. With a key, a retry gets that same answer.
 
 ### Allow generous concurrency
 

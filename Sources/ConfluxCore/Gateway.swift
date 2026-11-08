@@ -100,6 +100,7 @@ public final class Gateway: Sendable {
                 "answered": ["rejected": snapshot.rejected, "busy": snapshot.busy,
                              "unavailable": snapshot.unavailable],
                 "idle_with_work_seconds": seconds(snapshot.idleWithWorkSeconds),
+                "hedged": snapshot.hedged, "hedge_wins": snapshot.hedgeWins,
             ] as [String: Any],
             "hosts": hosts,
         ]
@@ -144,6 +145,10 @@ public final class Gateway: Sendable {
                                  headers: [(ContractHeader.retryAfter, String(retryAfter))])
         case .unknownModel(let message):
             return Gateway.error(404, message, type: "invalid_request_error", code: "model_not_found")
+        case .cancelled:
+            // Only a host answers this, to a peer's gateway.
+            return Gateway.error(503, "the request was cancelled", type: "server_error", code: "unavailable",
+                                 headers: [(ContractHeader.retryAfter, "1")])
         }
     }
 

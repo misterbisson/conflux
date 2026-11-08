@@ -12,6 +12,9 @@ public enum Outcome: Sendable, Equatable {
     case unavailable(retryAfter: Int, message: String)
     /// No host has served a model this request accepts: 404.
     case unknownModel(String)
+    /// The gateway that sent it cancelled it: a hedged copy that lost. Only
+    /// a host answers this, to another device's gateway.
+    case cancelled
 }
 
 public struct SchedulerConfig: Sendable {
@@ -34,6 +37,13 @@ public struct SchedulerConfig: Sendable {
     /// ...and at most this many seconds. A round trip matters less against
     /// a long request, and a request waiting behind one is held back longer.
     public var prefetchUpTo: TimeInterval = 20
+    /// At the tail of a batch, when nothing waits, send a copy of a request
+    /// that has run well past its host's typical time to an idle host, take
+    /// the first answer, and cancel the other (docs/design.md, *Failures and
+    /// stragglers*).
+    public var hedge = true
+    /// Well past is this many times the host's typical time.
+    public var hedgeAfter = 2.0
 
     public init() {}
 }
@@ -107,6 +117,7 @@ public struct FailureCounts: Sendable, Equatable {
         case .busy: busy += 1
         case .unavailable: unavailable += 1
         case .failed: failed += 1
+        case .cancelled: break
         }
     }
 }
@@ -175,6 +186,10 @@ public struct SchedulerSnapshot: Sendable, Equatable {
     public var busy: Int
     /// Answers of 503: hosts failed and time ran out, or none was up.
     public var unavailable: Int
+    /// Copies of requests sent to an idle host at the tail of a batch.
+    public var hedged: Int
+    /// Copies that answered first.
+    public var hedgeWins: Int
     /// This gateway's completions in the last ten minutes, scaled to an hour.
     public var perHour: Double
     /// The hosts' idle-with-work seconds, added up: seconds of a host with a
@@ -320,6 +335,34 @@ public actor Scheduler {
     private var fingerprints: [String: String] = [:]
     private var watchers: [UUID: (host: String, continuation: CheckedContinuation<Void, Never>)] = [:]
 
+    /// One request's copies in flight: the first, and a hedge.
+    struct Attempt {
+        let body: Data
+        let choice: ModelChoice
+        let tried: Set<String>
+        let remaining: () -> TimeInterval?
+        /// The first copy's lease.
+        let first: UUID
+        var copies: [UUID: (lease: Lease, model: ModelInfo, started: Date)] = [:]
+        var hedged = false
+        /// Hosts where a copy failed while another ran on.
+        var failed: Set<String> = []
+        let continuation: CheckedContinuation<Answer, Never>
+    }
+
+    /// The copy that settled a request, and what became of it.
+    struct Answer {
+        let host: String
+        let model: ModelInfo
+        let result: Result<HostReply, HostError>
+        let failed: Set<String>
+    }
+
+    private var attempts: [UUID: Attempt] = [:]
+    /// Each copy's task, by lease, to cancel the one that loses.
+    private var copies: [UUID: Task<Void, Never>] = [:]
+    private var hedgeCount = 0, hedgeWinCount = 0
+
     public init(config: SchedulerConfig = SchedulerConfig()) {
         self.config = config
     }
@@ -459,18 +502,21 @@ public actor Scheduler {
                 busyCount += 1
                 return .busy(retryAfter: estimateWait(choice))
             }
-            let hostID = lease.host
-            guard let entry = entries[hostID], let model = entry.model else {
-                entries[hostID]?.active[lease.id] = nil
-                tried.insert(hostID)
+            guard let model = entries[lease.host]?.model else {
+                entries[lease.host]?.active[lease.id] = nil
+                tried.insert(lease.host)
                 continue
             }
-            switch await perform(body, lease: lease, host: entry.host, remaining: remaining) {
+            let answer = await attempt(body, lease: lease, model: model, choice: choice, tried: tried,
+                                       remaining: remaining)
+            tried.formUnion(answer.failed)
+            let hostID = answer.host
+            switch answer.result {
             case .success(let reply):
                 if (200..<300).contains(reply.status) {
                     completedCount += 1
                     recent.append(Date())
-                    return .completed(reply, model: reply.model ?? model)
+                    return .completed(reply, model: reply.model ?? answer.model)
                 }
                 rejectedCount += 1
                 return .rejected(reply)
@@ -492,6 +538,7 @@ public actor Scheduler {
                 let message: String = switch error {
                 case .unavailable(let why), .busy(let why): why
                 case .failed(let status, let why): "runtime answered \(status): \(why)"
+                case .cancelled: "the request was cancelled"
                 }
                 let others = entries.values.contains { $0.model.map { choice.rank($0) != nil } ?? false
                     && !tried.contains($0.host.id) && $0.capacity > 0 }
@@ -518,11 +565,12 @@ public actor Scheduler {
         } else {
             do {
                 result = .success(try await host.complete(body, timeout: timeout,
-                                                          options: RequestOptions(prefetch: lease.mayWait)))
+                                                          options: RequestOptions(id: lease.id, prefetch: lease.mayWait)))
             } catch let error as HostError {
-                result = .failure(error)
+                result = .failure(Task.isCancelled ? .cancelled : error)
             } catch {
-                result = .failure(.unavailable(error.localizedDescription))
+                result = .failure(Task.isCancelled || error is CancellationError
+                                  ? .cancelled : .unavailable(error.localizedDescription))
             }
         }
 
@@ -540,6 +588,8 @@ public actor Scheduler {
                     entries[lease.host]?.recent.removeAll { $0 < now.addingTimeInterval(-600) }
                 }
             }
+        case .failure(.cancelled):
+            break // A hedged copy that lost: not the host's doing.
         case .failure(let error):
             let outOfTime = remaining().map { $0 <= 0.5 } ?? false
             entries[lease.host]?.failures.record(error, outOfTime: outOfTime)
@@ -576,6 +626,7 @@ public actor Scheduler {
                 return .unavailable(retryAfter: 30, message: entry.state.detail ?? "this device isn't taking work")
             }
             guard prefetch, let held = await hold(hostID, deadline: deadline, remaining: remaining) else {
+                if Task.isCancelled { return .cancelled }
                 return .busy(retryAfter: estimateWait(ModelChoice(options: [.exact(model.id)])))
             }
             lease = held
@@ -589,6 +640,8 @@ public actor Scheduler {
             return (200..<300).contains(reply.status) ? .completed(reply, model: model) : .rejected(reply)
         case .failure(.busy):
             return .busy(retryAfter: 1)
+        case .failure(.cancelled):
+            return .cancelled
         case .failure(.unavailable(let why)):
             return .unavailable(retryAfter: 5, message: why)
         case .failure(.failed(let status, let why)):
@@ -633,7 +686,23 @@ public actor Scheduler {
         let wait = until.timeIntervalSinceNow
         guard wait > 0 else { return nil }
         let id = UUID()
-        return await withCheckedContinuation { continuation in
+        // Work waiting here means the tail of the batch is over: hedged
+        // copies give their slots back.
+        if pinned == nil { shedHedges() }
+        return await withTaskCancellationHandler {
+            await park(id, choice: choice, excluding: excluding, pinned: pinned, for: wait, remaining: remaining)
+        } onCancel: {
+            Task { await self.expire(id) }
+        }
+    }
+
+    private func park(_ id: UUID, choice: ModelChoice, excluding: Set<String>, pinned: String?,
+                      for wait: TimeInterval, remaining: @escaping () -> TimeInterval?) async -> Lease? {
+        await withCheckedContinuation { continuation in
+            guard !Task.isCancelled else {
+                continuation.resume(returning: nil)
+                return
+            }
             waiting.append(Waiter(id: id, choice: choice, excluded: excluding, pinned: pinned, remaining: remaining,
                                   continuation: continuation))
             account()
@@ -749,7 +818,113 @@ public actor Scheduler {
                 }
             }
         }
+        // A slot that nothing waits for may take a straggler's copy.
+        if waiting.isEmpty {
+            for id in attempts.keys { hedge(id) }
+        }
         account()
+    }
+
+    // MARK: Hedging
+
+    /// Runs a request on the host holding `lease`, and, if it runs well past
+    /// that host's typical time while another host sits idle and nothing
+    /// waits, a copy on that host too. Returns the first answer and cancels
+    /// the other copy. Failures wait for the other copy, if one is running.
+    private func attempt(_ body: Data, lease: Lease, model: ModelInfo, choice: ModelChoice, tried: Set<String>,
+                         remaining: @escaping () -> TimeInterval?) async -> Answer {
+        let id = UUID()
+        return await withCheckedContinuation { continuation in
+            attempts[id] = Attempt(body: body, choice: choice, tried: tried, remaining: remaining, first: lease.id,
+                                   continuation: continuation)
+            launch(lease, model: model, for: id)
+            if config.hedge, let due = hedgeDue(lease) {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(due))
+                    await self?.hedge(id)
+                }
+            }
+        }
+    }
+
+    private func launch(_ lease: Lease, model: ModelInfo, for id: UUID) {
+        guard let attempt = attempts[id], let host = entries[lease.host]?.host else { return }
+        attempts[id]?.copies[lease.id] = (lease, model, Date())
+        let body = attempt.body, remaining = attempt.remaining
+        copies[lease.id] = Task {
+            let result = await self.perform(body, lease: lease, host: host, remaining: remaining)
+            self.settle(id, lease: lease, result: result)
+        }
+    }
+
+    /// One copy is done. The first answer settles the request, and the other
+    /// copy is cancelled. A failure settles it only if no other copy runs.
+    private func settle(_ id: UUID, lease: Lease, result: Result<HostReply, HostError>) {
+        copies[lease.id] = nil
+        guard var attempt = attempts[id], let copy = attempt.copies.removeValue(forKey: lease.id) else { return }
+        if case .failure(let error) = result, !attempt.copies.isEmpty {
+            if error != .cancelled { attempt.failed.insert(lease.host) }
+            attempts[id] = attempt
+            return
+        }
+        attempts[id] = nil
+        for other in attempt.copies.values { cancel(other.lease) }
+        if case .success = result, lease.id != attempt.first { hedgeWinCount += 1 }
+        attempt.continuation.resume(returning: Answer(host: lease.host, model: copy.model, result: result,
+                                                      failed: attempt.failed))
+    }
+
+    /// Stops a copy. A host on another device is told, and answers the copy
+    /// as cancelled once it has left its slot. A host this scheduler runs
+    /// stops when the copy's task is cancelled.
+    private func cancel(_ lease: Lease) {
+        guard let entry = entries[lease.host], entry.report != nil else {
+            copies[lease.id]?.cancel()
+            return
+        }
+        let host = entry.host
+        Task { await host.cancel(lease.id) }
+    }
+
+    /// Sends a copy of a straggling request to an idle host, if nothing waits
+    /// and it hasn't been hedged already. The idle host is the quickest with a
+    /// free slot that the request accepts and that would finish in time.
+    private func hedge(_ id: UUID) {
+        guard config.hedge, waiting.isEmpty, let attempt = attempts[id], !attempt.hedged,
+              attempt.copies.count == 1, let running = attempt.copies.values.first,
+              // Still in its slot: not one that has just answered.
+              entries[running.lease.host]?.active[running.lease.id] != nil,
+              let due = hedgeDue(running.lease), Date().timeIntervalSince(running.started) >= due else { return }
+        let excluding = attempt.tried.union(attempt.failed).union([running.lease.host])
+        let remaining = attempt.remaining()
+        let idle = order.compactMap { host -> (id: String, model: ModelInfo, typical: Double)? in
+            guard let entry = entries[host], entry.free > 0, let model = entry.model,
+                  rank(entry, for: attempt.choice, excluding: excluding, remaining: remaining) != nil else { return nil }
+            return (host, model, entry.typical ?? .infinity)
+        }
+        guard let target = idle.min(by: { $0.typical < $1.typical }) else { return }
+        attempts[id]?.hedged = true
+        hedgeCount += 1
+        launch(reserve(target.id), model: target.model, for: id)
+        account()
+    }
+
+    /// How long a copy runs before it counts as straggling: well past its
+    /// host's typical time, plus one more for a copy sent ahead, which may
+    /// first wait behind a whole request.
+    private func hedgeDue(_ lease: Lease) -> TimeInterval? {
+        guard let typical = entries[lease.host]?.typical else { return nil }
+        return typical * config.hedgeAfter + (lease.prefetch ? typical : 0)
+    }
+
+    /// Cancels hedged copies still running alongside their first, so their
+    /// slots go to work that's waiting.
+    private func shedHedges() {
+        for attempt in attempts.values where attempt.copies.count > 1 {
+            for copy in attempt.copies.values where copy.lease.id != attempt.first {
+                cancel(copy.lease)
+            }
+        }
     }
 
     /// Seconds until a slot is likely to free up for this choice.
@@ -896,7 +1071,7 @@ public actor Scheduler {
         }
         return SchedulerSnapshot(hosts: hosts, queued: waiting.count, completed: completedCount,
                                  failures: failures, rejected: rejectedCount, busy: busyCount,
-                                 unavailable: unavailableCount,
+                                 unavailable: unavailableCount, hedged: hedgeCount, hedgeWins: hedgeWinCount,
                                  perHour: Double(recent.filter { $0 > cutoff }.count) * 6,
                                  idleWithWorkSeconds: idleWithWork)
     }

@@ -253,6 +253,22 @@ never looks like a dead one. See [clients.md](clients.md).
   idle, it sends copies of requests still running on slow hosts to the idle
   ones, takes the first answer and cancels the rest. The client sees one
   answer. Request IDs make this safe ([clients.md](clients.md)).
+
+  In detail: a request **straggles** once it has run twice its host's typical
+  time, or three times for a request sent ahead, which may first wait behind
+  a whole request. If nothing at all waits at the gateway, the gateway sends
+  one copy of a straggler to the quickest host that has a free slot, serves
+  a model the request accepts, and would finish inside its deadline. The
+  first answer goes to the client and the other copy is cancelled: a host
+  this gateway runs stops its task, and a peer's host is told by request ID
+  ([The host protocol](#the-host-protocol)). A cancelled copy isn't a
+  failure. A copy that fails while the other runs waits for the other. Both
+  copies run inside the client's deadline, so the answer still comes in
+  time, and a request with an `Idempotency-Key` still has one result. As
+  soon as any request has to wait, copies still running are cancelled and
+  their slots go to it: a copy never holds up new work. With a preference
+  list, the copy can go to a host serving a less preferred model, as any
+  request can, and the answer names the model that ran.
 - **Idle-with-work is a bug.** The gateway counts time a compatible host spends
   idle while compatible work is waiting. That number should be close to zero,
   and it is the first one to look at when throughput disappoints.
@@ -318,13 +334,19 @@ apple-iroh lets conflux name its own ALPN.
   once. That's also the heartbeat: a connection iroh reports closed counts as
   lost at once, and three unanswered asks in a row count as lost too.
 - `POST /conflux/0/complete`: one chat completion, with the time left in
-  `Conflux-Timeout`. `Conflux-Prefetch: 1` says the request may wait on the
-  host for a slot. `Conflux-Outcome` says what became of it: `completed`,
-  `rejected` (the runtime refused it, a 4xx the gateway passes on), `busy` or
-  `unavailable`. A completion names the model that ran, as the host saw it.
+  `Conflux-Timeout` and the copy's ID in `Conflux-Request-ID`.
+  `Conflux-Prefetch: 1` says the request may wait on the host for a slot.
+  `Conflux-Outcome` says what became of it: `completed`, `rejected` (the
+  runtime refused it, a 4xx the gateway passes on), `busy`, `unavailable`, or
+  `cancelled`. A completion names the model that ran, as the host saw it.
   `Conflux-Slots: <generation> <capacity> <active> <held>` says how the
   host's slots stand once the request has left its slot, so the gateway can
   send the next request without waiting for the status that says the same.
+- `POST /conflux/0/cancel`, with `Conflux-Request-ID`: stops that completion,
+  running or waiting for a slot, and its answer says `cancelled` once it has
+  left its slot. In-process, generation stops at the next token. A cancel
+  that arrives before its request is remembered for a minute, and the
+  request is answered `cancelled` without running.
 
 **Admission belongs to the host.** A request from a peer's gateway runs only
 if one of the host's slots is free now, whichever gateway sent it. It

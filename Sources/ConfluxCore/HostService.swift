@@ -7,8 +7,14 @@ public enum HostProtocol {
     public static let version = 0
     public static let statusPath = "/conflux/0/host"
     public static let completePath = "/conflux/0/complete"
+    /// Stops the completion named by `Conflux-Request-ID`, if it's still
+    /// running or waiting: a hedged copy that lost.
+    public static let cancelPath = "/conflux/0/cancel"
+    /// Names one copy of a request, on a completion and on a cancel.
+    public static let requestIDHeader = "Conflux-Request-ID"
     /// What became of a request sent to a host: `completed`, `rejected`
-    /// (the runtime refused it, a 4xx to pass on), `busy` or `unavailable`.
+    /// (the runtime refused it, a 4xx to pass on), `busy`, `unavailable`, or
+    /// `cancelled` by the gateway that sent it.
     public static let outcomeHeader = "Conflux-Outcome"
     /// On a status request: the `generation` the gateway last saw. The host
     /// answers once its status has changed since, or after `Conflux-Wait`
@@ -95,6 +101,47 @@ final class HostService: Sendable {
     /// This device's host, or nil when it serves no model and only uses
     /// peers'.
     let hostID: String?
+    /// Completions running or waiting, by request ID, so a gateway can cancel
+    /// them, and IDs cancelled before their request arrived.
+    private let running = Running()
+
+    final class Running: @unchecked Sendable {
+        private let lock = NSLock()
+        private var tasks: [String: Task<Outcome, Never>] = [:]
+        private var early: [String: Date] = [:]
+
+        /// Whether this request was cancelled before it arrived.
+        func cancelledEarly(_ id: String) -> Bool {
+            lock.withLock {
+                early = early.filter { $0.value > Date().addingTimeInterval(-60) }
+                return early.removeValue(forKey: id) != nil
+            }
+        }
+
+        /// Registers a completion, unless it was cancelled in the meantime.
+        func start(_ id: String, _ task: Task<Outcome, Never>) -> Bool {
+            lock.withLock {
+                if early.removeValue(forKey: id) != nil { return false }
+                tasks[id] = task
+                return true
+            }
+        }
+
+        func finish(_ id: String) { lock.withLock { _ = tasks.removeValue(forKey: id) } }
+
+        /// Whether a running completion was cancelled. Remembered for a
+        /// minute either way, in case the request is still on its way.
+        func cancel(_ id: String) -> Bool {
+            lock.withLock {
+                guard let task = tasks.removeValue(forKey: id) else {
+                    early[id] = Date()
+                    return false
+                }
+                task.cancel()
+                return true
+            }
+        }
+    }
 
     init(scheduler: Scheduler, hostID: String?) {
         self.scheduler = scheduler
@@ -119,6 +166,12 @@ final class HostService: Sendable {
             return HTTPResponse(status: 200, headers: [("Content-Type", "application/json")], body: body)
         case ("POST", HostProtocol.completePath):
             return await complete(request)
+        case ("POST", HostProtocol.cancelPath):
+            guard let id = request.header(HostProtocol.requestIDHeader) else {
+                return Gateway.error(400, "name the request in \(HostProtocol.requestIDHeader)",
+                                     type: "invalid_request_error")
+            }
+            return .json(200, ["cancelled": running.cancel(id)])
         default:
             return Gateway.error(404, "no such endpoint: \(request.path)", type: "invalid_request_error")
         }
@@ -133,7 +186,17 @@ final class HostService: Sendable {
                                 body: ChatCompletionResult.error("this device serves no model", type: "server_error"))
         }
         let prefetch = request.header(HostProtocol.prefetchHeader) == "1"
-        let outcome = await scheduler.run(request.body, onHost: hostID, deadline: deadline, prefetch: prefetch)
+        let id = request.header(HostProtocol.requestIDHeader)
+        let outcome: Outcome
+        if let id, running.cancelledEarly(id) {
+            outcome = .cancelled
+        } else {
+            let scheduler = self.scheduler, body = request.body
+            let task = Task { await scheduler.run(body, onHost: hostID, deadline: deadline, prefetch: prefetch) }
+            if let id, !running.start(id, task) { task.cancel() }
+            outcome = await task.value
+        }
+        if let id { running.finish(id) }
         let (host, generation) = await scheduler.status(of: hostID, after: nil, wait: 0)
         let slots = (HostProtocol.slotsHeader,
                      "\(generation) \(host?.capacity ?? 0) \(host?.active ?? 0) \(host?.held ?? 0)")
@@ -156,6 +219,9 @@ final class HostService: Sendable {
                          [(ContractHeader.retryAfter, String(retryAfter))])
         case .unknownModel(let message):
             return reply(503, "unavailable", ChatCompletionResult.error(message, type: "server_error"))
+        case .cancelled:
+            return reply(409, "cancelled", ChatCompletionResult.error("cancelled by the gateway that sent it",
+                                                                      type: "server_error"))
         }
     }
 

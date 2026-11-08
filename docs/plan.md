@@ -57,7 +57,7 @@ run it is in [running.md](running.md).
   throughput. Also `conflux serve`, the same thing without a window.
 
 Left for later phases: streaming responses and hedging (it needs a second
-host).
+host, and came in Phase 2).
 
 **Done when:** an existing OpenAI-compatible client pointed at the gateway gets
 the same answers as from `llama-server` directly, at the same or better
@@ -87,7 +87,10 @@ throughput, and never hits a client timeout while the mesh is busy.
   slot to another gateway waits for the next one
   ([design.md](design.md#hosts-pull-the-gateway-holds-a-short-queue)). With
   fake hosts behind 40 ms of latency, a fast host's idle-with-work fell from
-  about 2 s to 0.1 s over 30 requests. Hedging is next.
+  about 2 s to 0.1 s over 30 requests. Hedging at the tail is built too: a
+  request that runs past twice its host's typical time, while another host
+  is idle and nothing waits, gets a copy there, and the loser is cancelled by
+  request ID ([design.md](design.md#failures-and-stragglers)).
 - Monitoring: throughput per host and for the mesh, failures, idle time while
   compatible work waits. *Built*: in the window's Monitoring section and in
   `/health` for clients with the token. Peers count their own free time, so
