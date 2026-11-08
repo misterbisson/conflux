@@ -62,7 +62,9 @@ So the title is a [Conventional Commit](https://www.conventionalcommits.org/),
 The title is a changelog entry, so write it for someone reading release notes:
 what changed, in plain words, without a trailing period. In the description,
 don't start a line with something shaped like a title, such as `fix: …`:
-release-please reads it as another change.
+release-please reads it as another change. The exception is a
+`BEGIN_COMMIT_OVERRIDE` block, which rewrites a merged pull request's entry
+([docs/releasing.md](docs/releasing.md#making-a-release)).
 
 ## This repository is public
 

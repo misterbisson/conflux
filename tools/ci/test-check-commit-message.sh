@@ -29,6 +29,9 @@ expect pass "fix: a thing" "- **fix:** a list item is prose${nl}  fix: an indent
 cr=$'\r'
 expect pass "fix: a thing" "Windows line endings.${cr}${nl}Second line.${cr}"
 expect fail "fix: a thing" "Windows line endings.${cr}${nl}feat: still a commit${cr}"
+override="BEGIN_COMMIT_OVERRIDE${nl}feat(bench): add the benchmark${nl}ci: build every pull request${nl}END_COMMIT_OVERRIDE"
+expect pass "docs: a merged change" "Prose.${nl}${nl}${override}"
+expect fail "docs: a merged change" "${override}${nl}feat: after the block, an entry nobody meant"
 
 expect fail "Prepare the Mac app for Xcode Cloud"
 expect fail "feature: not a type"
