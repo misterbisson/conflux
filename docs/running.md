@@ -1,8 +1,8 @@
 # Running conflux
 
-Phase 1 runs on one Mac: a gateway on loopback, serving this Mac's own model
-with llama.cpp. Other Macs and iPads join in later phases
-([plan.md](plan.md)).
+For now conflux runs on one Mac: a gateway on loopback, serving this Mac's own
+model with llama.cpp. Other Macs join as Phase 2 continues, and iPads in Phase
+3 ([plan.md](plan.md)).
 
 ## What you need
 

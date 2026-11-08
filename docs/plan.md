@@ -55,9 +55,6 @@ run it is in [running.md](running.md).
   ([design.md](design.md#runtimes)). Both runtimes remain.
 - A simple window: the model served, state, active and completed requests,
   throughput. Also `conflux serve`, the same thing without a window.
-- A sandboxed app, signed by Xcode Cloud and distributed through TestFlight
-  ([releasing.md](releasing.md)). Phase 2's trust model needs it for iCloud
-  Keychain.
 
 Left for later phases: streaming responses and hedging (it needs a second
 host).
@@ -70,7 +67,8 @@ throughput, and never hits a client timeout while the mesh is busy.
 
 - Distribution: a sandboxed app built by Xcode Cloud and distributed with
   TestFlight, which iCloud Keychain needs. Models run in-process, which a
-  sandboxed app can do. *The in-process runtime is built.*
+  sandboxed app can do. *Done:* release-please tags each release, Xcode Cloud
+  builds the tag, and TestFlight delivers it ([releasing.md](releasing.md)).
 - apple-iroh: expose on hosts, forward from gateways (see
   [apple-iroh changes](#apple-iroh-changes)). *Built*, on apple-iroh 0.9.0:
   each host serves the [host protocol](design.md#the-host-protocol) to its
