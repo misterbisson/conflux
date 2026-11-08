@@ -82,6 +82,108 @@ else
 	ok "icon has a 512pt @2x image"
 fi
 
+# --- the binaries -------------------------------------------------------------
+binaries=("$app/Contents/MacOS/$(value "$info" CFBundleExecutable)")
+for framework in "$app"/Contents/Frameworks/*.framework; do
+	[ -d "$framework" ] || continue
+	binaries+=("$framework/Versions/Current/$(basename "$framework" .framework)")
+done
+
+# --- the privacy manifest -----------------------------------------------------
+# App Store Connect scans an upload for the APIs on Apple's required-reason
+# list, and refuses one that uses them without saying why in a privacy
+# manifest (ITMS-91053, by email). Apple enforces it for iOS and the other
+# device platforms, not yet for macOS; conflux declares them anyway.
+#
+# Each category, as what a binary imports for it: symbols, or Objective-C
+# selectors, which Swift calls through objc_msgSend.
+category_symbols() {
+	case "$1" in
+	FileTimestamp) echo '^_(f?stat|lstat|fstatat|f?getattrlist|getattrlistbulk|getattrlistat)([$]INODE64)?$|^_NSFile(Creation|Modification)Date$|^_NSURL(ContentModification|Creation)DateKey$' ;;
+	SystemBootTime) echo '^_mach_absolute_time$' ;;
+	DiskSpace) echo '^_f?statv?fs([$]INODE64)?$|^_NSFileSystem(Free)?Size$|^_NSURLVolume(Total|Available)Capacity' ;;
+	ActiveKeyboards) echo '^$' ;;
+	UserDefaults) echo '^_OBJC_CLASS_[$]_NSUserDefaults$' ;;
+	esac
+}
+category_selectors() {
+	case "$1" in
+	FileTimestamp) echo '^(fileCreationDate|fileModificationDate)$' ;;
+	SystemBootTime) echo '^systemUptime$' ;;
+	ActiveKeyboards) echo '^activeInputModes$' ;;
+	*) echo '^$' ;;
+	esac
+}
+# declared MANIFEST: the categories it gives at least one reason for.
+declared() {
+	local i=0 type
+	[ -f "$1" ] || return 0
+	while type="$(value "$1" "NSPrivacyAccessedAPITypes:$i:NSPrivacyAccessedAPIType")" && [ -n "$type" ]; do
+		[ -n "$(value "$1" "NSPrivacyAccessedAPITypes:$i:NSPrivacyAccessedAPITypeReasons:0")" ] &&
+			echo "${type#NSPrivacyAccessedAPICategory}"
+		i=$((i + 1))
+	done
+}
+
+manifest="$app/Contents/Resources/PrivacyInfo.xcprivacy"
+if [ ! -f "$manifest" ]; then
+	fail "no PrivacyInfo.xcprivacy in the app's Resources"
+elif ! plutil -lint -s "$manifest"; then
+	fail "PrivacyInfo.xcprivacy isn't a valid property list"
+else
+	ok "privacy manifest"
+	check "no tracking" "PrivacyInfo.xcprivacy should say NSPrivacyTracking is false" \
+		same "$(value "$manifest" NSPrivacyTracking)" false
+	app_declared="$(declared "$manifest")"
+	for binary in "${binaries[@]}"; do
+		name="$(basename "$binary")"
+		# A framework may carry its own manifest, which covers its own calls.
+		own="$(dirname "$(dirname "$(dirname "$binary")")")/Resources/PrivacyInfo.xcprivacy"
+		[ "$binary" = "${binaries[0]}" ] && own=/dev/null
+		allowed="$(printf '%s\n%s\n' "$app_declared" "$(declared "$own")")"
+		nm -u "$binary" 2>/dev/null | sort -u >"$work/imports"
+		strings -a "$binary" | sort -u >"$work/strings"
+		for category in FileTimestamp SystemBootTime DiskSpace ActiveKeyboards UserDefaults; do
+			found="$({
+				grep -E "$(category_symbols "$category")" "$work/imports"
+				grep -E "$(category_selectors "$category")" "$work/strings"
+			} | grep . | tr '\n' ' ' || true)"
+			[ -n "$found" ] || continue
+			if grep -qx "$category" <<<"$allowed"; then
+				ok "$name uses $category APIs, and the manifest says why"
+			else
+				fail "$name uses $category APIs (${found% }) that no privacy manifest declares; add the reason to App/PrivacyInfo.xcprivacy"
+			fi
+		done
+	done
+fi
+
+# --- export compliance --------------------------------------------------------
+# ITSAppUsesNonExemptEncryption is false because every use of cryptography in
+# the app is the operating system's and encrypts nothing, file by file, as the
+# note beside it in project.yml says. Two things would change that answer: a
+# new use in the sources, and a cryptography library compiled into the app
+# (iroh's QUIC and TLS, OpenSSL, BoringSSL, mbedTLS, libsodium).
+grep -rlE '^[[:space:]]*(@preconcurrency[[:space:]]+)?import[[:space:]]+(CryptoKit|CommonCrypto|Security|CryptoTokenKit)\b|\bSec(Random|Key|Trust|Identity|Certificate)|\bCC(Crypt|_SHA|_MD5|Hmac)|NWProtocolTLS|sec_protocol_|\.tls\b' \
+	Sources/conflux Sources/ConfluxCore | sort >"$work/uses" || true
+unnamed=""
+while read -r file; do
+	grep -qF "# - $file:" project.yml || unnamed+=" $file"
+done <"$work/uses"
+check "export-compliance note names every source file that uses cryptography" \
+	"these use cryptography or TLS but aren't in the export-compliance note in project.yml, so ITSAppUsesNonExemptEncryption may no longer be true:$unnamed" \
+	absent "$unnamed"
+
+bundled=""
+for binary in "${binaries[@]}"; do
+	if strings -a "$binary" | grep -qiE 'ring_core_0_|ring-0\.1[0-9]|rustls|quinn-proto|OpenSSL [0-9]|BoringSSL|mbed ?TLS|libsodium'; then
+		bundled+=" $(basename "$binary")"
+	fi
+done
+check "no bundled cryptography library" \
+	"bundled cryptography in:$bundled. ITSAppUsesNonExemptEncryption=NO rests on all of it being the operating system's; answer it again (see project.yml)" \
+	absent "$bundled"
+
 # --- signing and entitlements -------------------------------------------------
 verified=yes
 codesign --verify --deep --strict "$app" 2>"$work/verify.log" || verified=no

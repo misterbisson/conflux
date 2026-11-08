@@ -47,6 +47,10 @@ targets:
     sources:
       - path: Sources/conflux
       - path: App/Assets.xcassets
+      # The privacy manifest. tools/ci/check-app.sh checks it against what the
+      # archived binaries import.
+      - path: App/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: ConfluxPackage
         product: ConfluxCore
@@ -96,7 +100,27 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: conflux
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         # Without this, every TestFlight build waits on an export-compliance
-        # question. conflux uses only the operating system's encryption.
+        # question. NO is a claim about the app, and this is its basis: every
+        # use of cryptography in what the app compiles and links. All of it is
+        # the operating system's, and none of it encrypts anything.
+        #
+        # - Sources/ConfluxCore/LlamaServerHost.swift: FileHash takes the
+        #   SHA-256 of the model files, through CryptoKit, so a host can say
+        #   which model it serves. A fingerprint: no key, nothing encrypted.
+        # - Sources/ConfluxCore/Gateway.swift: the gateway's bearer token is 32
+        #   bytes from SecRandomCopyBytes, compared on each request. A secret,
+        #   not a key: nothing is encrypted with it.
+        # - The gateway serves plain HTTP on loopback (HTTPServer.swift), and
+        #   LlamaServerHost talks plain HTTP to llama-server on loopback. No TLS.
+        # - llama.framework holds no cryptography.
+        #
+        # **Answer this again before a release that links apple-iroh** (Phase 2
+        # in docs/plan.md). iroh brings its own QUIC and TLS, compiled into the
+        # app rather than provided by the operating system, and whether the
+        # app is still exempt then is a compliance question, not a code one.
+        # tools/ci/check-app.sh fails when a source file not named above uses
+        # Apple's cryptography or TLS, or when the archive holds a bundled
+        # cryptography library, so neither change goes unnoticed.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
