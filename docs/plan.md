@@ -163,8 +163,30 @@ contribution is measured against the effort of keeping it there.
 
 ## Phase 4: More runtimes and capabilities
 
-- Apple Foundation Models as a system-provided capability, identified by OS
-  build.
+- **Apple Foundation Models**, as a host runtime alongside llama.cpp, on
+  macOS 26 and iPadOS 26 with Apple Intelligence turned on. It takes text and
+  images, so it answers `any-vision` as well as `any`, and passes the same
+  self-check before reporting Ready. The app's floors stay macOS 15 and
+  iPadOS 18, so the runtime is offered only where the OS has it. The model
+  is the system's, advertised as a capability rather than an artifact:
+  conflux can't choose or pin its weights, which change with OS updates, so
+  its identity is the OS build ([design.md](design.md#runtimes)). On devices
+  that have it, it's a model that works with nothing to copy in.
+- **A starter model in the app**, so a first request works before anyone
+  has found a model: SmolVLM-256M-Instruct (Apache 2.0), Q8_0 with its Q8_0
+  projector, about 280 MB together. It reads text and images. On an M2
+  MacBook Air it read 88 of 90 self-check probes, in 0.45 s each, while
+  SmolVLM-500M did worse, 55 of 60. Nearly every miss read a doubled letter
+  once, so the self-check's text shouldn't repeat a character back to back.
+  Its text answers are weak: it proves the plumbing, not the work.
+  - The weights still aren't committed. The build fetches the file pinned
+    by URL and SHA-256, as `tools/ci/fetch-test-model.sh` does for tests,
+    and its licence goes in `App/Credits.html`.
+  - Shipping it changes the rule in [CLAUDE.md](../CLAUDE.md) that conflux
+    points at models and doesn't ship them. `tools/ci/check-public.sh` still
+    keeps weights out of the repository.
+  - It ships inside the app, not as a download the app makes, which risks
+    App Store review.
 - Capability requests and aliases beyond vision.
 - MLX for artifacts that benefit from it.
 
