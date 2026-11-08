@@ -36,12 +36,23 @@ struct ProbeView: View {
         }
         .onChange(of: probe.projectors) { _, projectors in
             if let chosen = projector, !projectors.contains(chosen) { projector = nil }
-            if projector == nil, projectors.count == 1 { projector = projectors.first }
+            if projector == nil { projector = suggestedProjector }
         }
+        .onChange(of: model) { _, _ in projector = suggestedProjector }
         .onAppear {
             model = probe.models.first
-            if probe.projectors.count == 1 { projector = probe.projectors.first }
+            projector = suggestedProjector
         }
+    }
+
+    /// The projector that goes with the chosen model: the starter model's
+    /// with it, and otherwise the one copied in, if there's only one. A
+    /// projector made for another model fails to load.
+    private var suggestedProjector: URL? {
+        guard let model else { return nil }
+        let copied = probe.projectors.filter { !Probe.included($0) }
+        if Probe.included(model) { return probe.projectors.first(where: Probe.included) }
+        return copied.count == 1 ? copied.first : nil
     }
 
     private var device: some View {
@@ -73,13 +84,13 @@ struct ProbeView: View {
             } else {
                 Picker("Model", selection: $model) {
                     ForEach(probe.models, id: \.self) { url in
-                        Text("\(url.lastPathComponent) · \(Memory.gigabytes(Probe.size(url)))").tag(Optional(url))
+                        Text(Probe.label(url)).tag(Optional(url))
                     }
                 }
                 Picker("Projector", selection: $projector) {
                     Text("None, text only").tag(URL?.none)
                     ForEach(probe.projectors, id: \.self) { url in
-                        Text("\(url.lastPathComponent) · \(Memory.gigabytes(Probe.size(url)))").tag(Optional(url))
+                        Text(Probe.label(url)).tag(Optional(url))
                     }
                 }
                 Stepper("Slots: \(slots)", value: $slots, in: 1...4)
@@ -102,8 +113,15 @@ struct ProbeView: View {
         } header: {
             Text("Model")
         } footer: {
-            Text("Keep conflux open while it checks. If iPadOS ends it, the next launch records the model as killed: "
-                + "too big for this iPad, or for these slots.")
+            VStack(alignment: .leading, spacing: 6) {
+                if probe.models.first.map(Probe.included) == true {
+                    Text("The starter model is included with conflux. To check another, copy it here from a Mac: "
+                        + "in Finder, select the iPad, open the Files tab, and drag the file onto conflux. A vision "
+                        + "model's projector goes alongside it, with \"mmproj\" in its name.")
+                }
+                Text("Keep conflux open while it checks. If iPadOS ends it, the next launch records the model as "
+                    + "killed: too big for this iPad, or for these slots.")
+            }
         }
     }
 

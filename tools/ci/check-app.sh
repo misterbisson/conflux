@@ -175,7 +175,26 @@ else
 	check "notices match Package.swift" \
 		"Credits.html is for '$versions' and Package.swift pins '$expected'; run tools/notices/make-notices.py" \
 		same "$versions" "$expected"
+	starter_pin="$(sed -nE 's/^revision=([0-9a-f]{40})$/\1/p' tools/ci/fetch-starter-model.sh)"
+	starter_named="$(sed -nE 's#.*<span id="starter-revision">([0-9a-f]+)</span>.*#\1#p' "$credits")"
+	check "notices name the starter model's pinned revision" \
+		"Credits.html names starter model revision '$starter_named' and fetch-starter-model.sh pins '$starter_pin'; run tools/notices/make-notices.py" \
+		same "$starter_named" "$starter_pin"
 fi
+
+# --- the starter model ----------------------------------------------------------
+# The app ships one small model, so a first request works before anyone has
+# chosen one: the files fetch-starter-model.sh pins, and nothing else.
+starter="$app/Contents/Resources/StarterModel"
+while read -r name sha256; do
+	got="$(shasum -a 256 "$starter/$name" 2>/dev/null | awk '{ print $1 }')"
+	check "ships the starter model's $name" \
+		"the app's StarterModel folder has no $name with the checksum fetch-starter-model.sh pins" \
+		same "$got" "$sha256"
+done < <(sed -nE 's/^[[:space:]]*"([^ ]+\.gguf) ([0-9a-f]{64})"$/\1 \2/p' tools/ci/fetch-starter-model.sh)
+check "the starter model's folder holds only its two files" \
+	"the app's StarterModel folder holds $(find "$starter" -type f 2>/dev/null | wc -l | tr -d ' ') files, not 2" \
+	same "$(find "$starter" -type f 2>/dev/null | wc -l | tr -d ' ')" 2
 
 # --- export compliance --------------------------------------------------------
 # ITSAppUsesNonExemptEncryption is false because every use of cryptography in

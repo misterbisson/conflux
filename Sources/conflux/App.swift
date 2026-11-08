@@ -108,7 +108,15 @@ final class AppModel: ObservableObject {
 
     func peerHost(_ peer: PeerStatus) -> HostSnapshot? { snapshot?.hosts.first { $0.id == peer.hostID } }
 
-    var canStart: Bool { !(settings.host?.model.isEmpty ?? true) || !trusted.isEmpty }
+    /// The model the app ships, served until the person chooses one. Built
+    /// from source, there's none.
+    let starter = StarterModel.files()
+
+    /// Whether this Mac serves the starter model: none is chosen, and the app
+    /// has one.
+    var servesStarter: Bool { starter != nil && (settings.host?.model.isEmpty ?? true) }
+
+    var canStart: Bool { !(settings.host?.model.isEmpty ?? true) || starter != nil || !trusted.isEmpty }
 
     /// Every device this Mac trusts: added by hand, listed in iCloud
     /// Keychain, or both.
@@ -212,8 +220,11 @@ final class AppModel: ObservableObject {
     func start() {
         problem = nil
         var settings = settings
-        if settings.host?.model.isEmpty == true { settings.host = nil }
-        if var host = settings.host {
+        if settings.host?.model.isEmpty ?? true {
+            // None chosen: the starter model, if the app has one. It's inside
+            // the app, so it needs no bookmark.
+            settings.host = starter.map { StarterModel.serving($0, from: settings.host ?? ModelConfig(model: "")) }
+        } else if var host = settings.host {
             // In the sandbox, the model files open only through the bookmarks
             // made when they were chosen.
             do {
@@ -229,11 +240,11 @@ final class AppModel: ObservableObject {
                 self.settings.host?.model = host.model
                 self.settings.host?.projector = host.projector
             }
-            // The app runs models in-process: a sandboxed app can't run
-            // llama-server. `conflux serve --runtime llama-server` can.
-            host.runtime = .inProcess
             settings.host = host
         }
+        // The app runs models in-process: a sandboxed app can't run
+        // llama-server. `conflux serve --runtime llama-server` can.
+        settings.host?.runtime = .inProcess
         Task {
             do {
                 port = try await node.start(settings, directory: directory)
@@ -270,6 +281,15 @@ final class AppModel: ObservableObject {
         _ = try? TokenStore.rotate()
         objectWillChange.send()
         if running { start() }
+    }
+
+    /// Goes back to the starter model, keeping the other model settings.
+    func useStarter() {
+        guard var host = settings.host else { return }
+        host.model = ""
+        host.projector = nil
+        settings.host = host
+        access.keep(only: [])
     }
 
     func choose(projector: Bool) {

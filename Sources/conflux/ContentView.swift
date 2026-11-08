@@ -80,10 +80,27 @@ struct ContentView: View {
 
     @ViewBuilder var modelSection: some View {
         Section("Model") {
-            path("Model", model.settings.host?.model, projector: false)
-            path("Projector", model.settings.host?.projector, projector: true)
-            if model.settings.host?.projector != nil {
-                Button("Remove projector (text only)") { model.settings.host?.projector = nil }
+            if model.servesStarter {
+                LabeledContent("Model") {
+                    HStack {
+                        Text("Starter model, included").lineLimit(1)
+                        Button("Choose…") { model.choose(projector: false) }
+                    }
+                }
+                Text("""
+                    \(StarterModel.modelFile), with its projector: small, reads text and images, and answers \
+                    poorly. Enough to see a client work through conflux. Choose a model to serve a real one.
+                    """)
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                path("Model", model.settings.host?.model, projector: false)
+                path("Projector", model.settings.host?.projector, projector: true)
+                if model.settings.host?.projector != nil {
+                    Button("Remove projector (text only)") { model.settings.host?.projector = nil }
+                }
+                if model.starter != nil {
+                    Button("Use the starter model") { model.useStarter() }
+                }
             }
             Stepper("Slots: \(host.slots)", value: binding(\.slots), in: 1...32)
             Stepper("Context per slot: \(host.contextPerSlot)", value: binding(\.contextPerSlot),

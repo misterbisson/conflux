@@ -22,13 +22,18 @@ app's About window, so that's where they go.
     not procedural macros or what only they use. cargo metadata reads the
     crates' manifests and licence files, and compiles and runs nothing.
 
+The starter model the app ships, SmolVLM-256M-Instruct, is Apache 2.0. Its
+repositories publish no licence file, only the licence's name, so its notice
+is the licence's text as Apache publishes it, Apache-2.0.txt here, and names
+the revision tools/ci/fetch-starter-model.sh pins.
+
 Each crate's own licence files are copied as published. A crate that ships
 none is given the MIT licence, which every such crate offers, with its
 authors as the copyright holders. Identical texts are printed once.
 
-Run it again whenever Package.swift moves llama.cpp or apple-iroh.
-tools/ci/check-app.sh fails when the versions in Credits.html and
-Package.swift differ.
+Run it again whenever Package.swift moves llama.cpp or apple-iroh, or
+fetch-starter-model.sh moves the starter model. tools/ci/check-app.sh fails
+when Credits.html names other versions than those pins.
 """
 
 import argparse
@@ -146,6 +151,29 @@ def crate_texts(package):
     return texts
 
 
+def starter_model():
+    """The starter model's repository and revision, from the script that fetches it."""
+    with open(os.path.join(ROOT, "tools", "ci", "fetch-starter-model.sh"), encoding="utf-8") as handle:
+        script = handle.read()
+    repository = re.search(r"^repository=(\S+)$", script, re.M)
+    revision = re.search(r"^revision=([0-9a-f]{40})$", script, re.M)
+    if not repository or not revision:
+        sys.exit("make-notices: no repository= and revision= in tools/ci/fetch-starter-model.sh")
+    return repository.group(1), revision.group(1)
+
+
+def starter_html(ref):
+    """The starter model's notice. `ref` numbers its licence text."""
+    repository, revision = starter_model()
+    with open(os.path.join(ROOT, "tools", "notices", "Apache-2.0.txt"), encoding="utf-8") as handle:
+        number = ref(handle.read())
+    base = "https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct"
+    return (f'<h2>SmolVLM-256M-Instruct, the starter model</h2><p>By Hugging Face, <a href="{base}">{base}</a>'
+            f' · Apache-2.0 · <a href="#t{number}">licence {number}</a>. Included as GGUF from '
+            f'<a href="https://huggingface.co/{html.escape(repository)}">{html.escape(repository)}</a> at revision '
+            f'<span id="starter-revision">{html.escape(revision)}</span>.</p>')
+
+
 def render(sections, iroh_version, crates):
     llama = pinned("llama")
     texts, order = {}, []
@@ -185,6 +213,7 @@ def render(sections, iroh_version, crates):
                        f"{html.escape(package.get('license') or 'see licence')} · "
                        + ", ".join(f'<a href="#t{n}">licence {n}</a>' for n in numbers) + link + "</li>")
         out.append("</ul>")
+    out.append(starter_html(ref))
     out.append("<h2>Licences</h2>")
     for number, text in enumerate(order, 1):
         out.append(f'<h3 id="t{number}">Licence {number}</h3><pre>{html.escape(text)}</pre>')

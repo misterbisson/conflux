@@ -24,7 +24,7 @@ public enum SelfCheck {
     }
 
     public static func probe(vision: Bool) throws -> Probe {
-        let text = String((0..<5).map { _ in alphabet.randomElement()! })
+        let text = String(randomText())
         var content: [[String: Any]]
         if vision {
             // Spaced apart, so neighbouring letters don't run together.
@@ -41,6 +41,19 @@ public enum SelfCheck {
             "max_tokens": 24, "temperature": 0, "stream": false,
         ]
         return Probe(expected: text, body: try JSONSerialization.data(withJSONObject: body))
+    }
+
+    /// Five characters, never the same one twice in a row. Small vision
+    /// models read a doubled letter as one: the starter model misread almost
+    /// nothing else (docs/plan.md, Phase 4). A dropped letter fails the
+    /// check, so without this a working model failed it now and then.
+    static func randomText(count: Int = 5) -> [Character] {
+        var text: [Character] = []
+        while text.count < count {
+            let next = alphabet.randomElement()!
+            if next != text.last { text.append(next) }
+        }
+        return text
     }
 
     /// Passes when some run of the answer matches the expected text with at

@@ -10,7 +10,8 @@ join the mesh as hosts later in Phase 3 ([plan.md](plan.md)).
 - macOS 15 or later, on Apple Silicon.
 - A GGUF model and, for a vision model, its multimodal projector (`mmproj`).
   [phase-0.md](phase-0.md) says how to choose one and how many slots it
-  should get.
+  should get. To try conflux first, the app has one: see
+  [the starter model](#the-starter-model).
 
 ## The app
 
@@ -18,7 +19,8 @@ join the mesh as hosts later in Phase 3 ([plan.md](plan.md)).
 swift run -c release conflux
 ```
 
-Choose the model and projector, set the slots, and press **Start**. The
+Choose the model and projector, or keep the
+[starter model](#the-starter-model), set the slots, and press **Start**. The
 window shows the host's state, what's running and waiting, and throughput.
 **Drain** finishes what's running and takes nothing new. **Pause** takes
 nothing new straight away. **Stop** ends serving and unloads the model.
@@ -30,6 +32,21 @@ runs in the App Sandbox, so it can open only the model files chosen in it, and
 it keeps that access between launches. A file that's moved or renamed is
 followed. One that's replaced, or on a disk that isn't connected, has to be
 chosen again, and the app says so when you press **Start**.
+
+### The starter model
+
+The app includes one small model, so a client can get an answer before
+you've chosen one: SmolVLM-256M-Instruct, by Hugging Face (Apache 2.0), with
+its vision projector, about 280 MB. Until you choose a model, the app serves
+it, as `SmolVLM-256M-Instruct-Q8_0`. It reads text and images, and passes the
+self-check, but its answers are poor: it shows a client working through
+conflux, not what a real model can do. **Use the starter model** goes back to
+it.
+
+`ci_scripts/ci_post_clone.sh` fetches it, pinned by revision and checksum,
+with [`tools/ci/fetch-starter-model.sh`](../tools/ci/fetch-starter-model.sh).
+Run from source with `swift run`, there's no app bundle and no starter
+model.
 
 ## Without a window
 
@@ -186,6 +203,9 @@ generate the project, open it, choose the `conflux-ipad` scheme and your iPad,
 and run. Xcode's automatic signing adds the app's two memory capabilities,
 the increased memory limit and extended virtual addressing, to its app ID the
 first time.
+
+**The starter model** is listed first, so the probe can check something
+before any model is copied in.
 
 **Copying models in.** Connect the iPad to the Mac, select it in Finder, open
 the **Files** tab, and drag the GGUF files onto conflux. The Files app shows

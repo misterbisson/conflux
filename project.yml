@@ -57,6 +57,13 @@ targets:
       # checks it names the versions Package.swift pins.
       - path: App/Credits.html
         buildPhase: resources
+      # The starter model, served until the person chooses one
+      # (Sources/ConfluxCore/StarterModel.swift). Fetched, never committed:
+      # tools/ci/fetch-starter-model.sh puts it here, and ci_post_clone.sh
+      # runs that before generating this project.
+      - path: App/StarterModel
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: ConfluxPackage
         product: ConfluxCore
@@ -183,6 +190,9 @@ targets:
       - path: App/PrivacyInfo.xcprivacy
         buildPhase: resources
       - path: App/Credits.html
+        buildPhase: resources
+      - path: App/StarterModel
+        type: folder
         buildPhase: resources
     dependencies:
       - package: ConfluxPackage

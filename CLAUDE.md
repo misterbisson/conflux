@@ -32,6 +32,8 @@ under `Sources/conflux` or `Sources/conflux-ipad`:
 ci_scripts/ci_post_clone.sh
 ```
 
+It also fetches the starter model the app ships, about 280 MB, once.
+
 Then archive and check it the way CI does, signed ad hoc:
 
 ```bash
@@ -121,7 +123,13 @@ Don't copy code from private repositories. Reimplement the pattern.
 
 Weights are fetched, never committed. Document where a model comes from and
 under what license. Some model licenses restrict redistribution or use, so
-conflux points at models and doesn't ship them.
+conflux points at models and doesn't ship them, with one exception: the app
+includes a small starter model, so a first request works before anyone has
+chosen one. `tools/ci/fetch-starter-model.sh` fetches it at build time,
+pinned by revision and checksum, into the ignored `App/StarterModel`, and its
+licence, Apache 2.0, is in `App/Credits.html`. Only a model whose license
+allows redistribution without passing on use restrictions can take its
+place. The app never downloads models itself.
 
 ### Dependencies
 
@@ -130,7 +138,8 @@ Pin binary dependencies by version **and** checksum, the way
 A tag can be moved, a checksum can't.
 
 The app ships what those binaries compile in, so their licences ship with it,
-in `App/Credits.html`. Moving a pin means writing it again with
+in `App/Credits.html`, with the starter model's. Moving a pin, the starter
+model's included, means writing it again with
 `tools/notices/make-notices.py`, and `tools/ci/check-app.sh` fails until it's
 done.
 
