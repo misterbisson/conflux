@@ -56,8 +56,8 @@ run it is in [running.md](running.md).
 - A simple window: the model served, state, active and completed requests,
   throughput. Also `conflux serve`, the same thing without a window.
 
-Left for later phases: streaming responses and hedging (it needs a second
-host, and came in Phase 2).
+Left for later phases: streaming responses, and hedging, which needs a
+second host and came in Phase 2.
 
 **Done when:** an existing OpenAI-compatible client pointed at the gateway gets
 the same answers as from `llama-server` directly, at the same or better
@@ -80,7 +80,7 @@ throughput, and never hits a client timeout while the mesh is busy.
   devices is tested only in a signed build ([design.md](design.md#trust)).
 - Scheduling: host pull, one request of prefetch on fast hosts, matching by
   model, preference list and capability, deadlines, retry on host loss, hedging
-  at the tail. *So far:* matching, deadlines and retry on host loss work across
+  at the tail. *Built.* Matching, deadlines and retry on host loss work across
   peers, and hosts admit work. Host pull and prefetch are built within the
   fixed connection direction: hosts answer a held status request when a
   slot frees, fast hosts take one request ahead, and a request that loses a
@@ -103,6 +103,12 @@ throughput, and never hits a client timeout while the mesh is busy.
 - idle-with-work time is near zero;
 - closing a host's lid mid-run costs at most retries, with no lost or
   double-recorded results on a client that follows the contract.
+
+*Left:* measuring those on several real Macs, and syncing trust through
+iCloud Keychain in a TestFlight build. Everything so far is measured on one
+Mac, with peers as separate processes. The [apple-iroh
+changes](#apple-iroh-changes) would improve the mesh but none blocks these
+measurements.
 
 ## Phase 3: iPad hosts
 
@@ -172,8 +178,9 @@ The repository is public, so GitHub's macOS runners are free. CI runs on every
 pull request, with the Xcode that Xcode Cloud releases with:
 
 - build and test the package: scheduling, admission, the contract's status
-  codes and headers, the in-process runtime against a tiny model, and later
-  identity and allow-list logic;
+  codes and headers, the in-process runtime against a tiny model, device
+  identity, the allow list and the device directory, and the host protocol
+  between processes;
 - archive the Mac app as Xcode Cloud does, signed ad hoc, check it for what App
   Store Connect requires, and run it in the sandbox;
 - build the iPadOS target, once there is one (Phase 3);
