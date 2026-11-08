@@ -24,6 +24,16 @@ public struct SchedulerConfig: Sendable {
     /// How long a finished result is kept for clients that retry with the same key.
     public var idempotencyTTL: TimeInterval = 900
     public var idempotencyCapacity = 1000
+    /// Send one request ahead to fast hosts on other devices, to wait there
+    /// for their next free slot, so the slot doesn't sit idle for a round
+    /// trip (docs/design.md, *Hosts pull*).
+    public var prefetch = true
+    /// A host is fast enough to take a request ahead when its typical time is
+    /// at most this many times the quickest compatible host's...
+    public var prefetchFactor = 1.5
+    /// ...and at most this many seconds. A round trip matters less against
+    /// a long request, and a request waiting behind one is held back longer.
+    public var prefetchUpTo: TimeInterval = 20
 
     public init() {}
 }
@@ -120,11 +130,17 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
     /// Seconds this host has had a free slot at all, by its own count. A
     /// host reports it to peers' gateways, which can't see its slots.
     public var freeSeconds: Double
+    /// Requests sent ahead and waiting for a slot: on this Mac's host, from
+    /// peers' gateways; on a peer's, as it last said.
+    public var held: Int
+    /// Requests sent ahead: to a peer's host by this gateway, or taken ahead
+    /// by this Mac's host.
+    public var prefetched: Int
 
     public init(id: String, model: ModelInfo? = nil, state: HostState, slots: Int = 0, capacity: Int = 0,
                 active: Int = 0, completed: Int = 0, failures: FailureCounts = FailureCounts(),
                 typicalSeconds: Double? = nil, perHour: Double = 0, idleWithWorkSeconds: Double = 0,
-                freeSeconds: Double = 0) {
+                freeSeconds: Double = 0, held: Int = 0, prefetched: Int = 0) {
         self.id = id
         self.model = model
         self.state = state
@@ -137,6 +153,8 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
         self.perHour = perHour
         self.idleWithWorkSeconds = idleWithWorkSeconds
         self.freeSeconds = freeSeconds
+        self.held = held
+        self.prefetched = prefetched
     }
 
     /// Requests that failed because of the host.
@@ -202,13 +220,39 @@ public actor Scheduler {
         var idleSince: Date?
         /// For a host on another device, which counts its own free time: the
         /// last count it reported, and `waitedTime` when it arrived.
-        var reported: (free: Double, waited: TimeInterval, at: Date)?
+        var freeSample: (free: Double, waited: TimeInterval, at: Date)?
+
+        /// What a host on another device last said about its slots.
+        var report: HostReport?
+        /// The host said busy: it has no slot free until it says otherwise.
+        var full = false
+        /// When a request was last sent ahead to this host.
+        var prefetchedAt: Date?
+        var prefetched = 0
 
         var capacity: Int {
             guard intent == .serving, availability == .available, model != nil else { return 0 }
             return min(host.slots, limit?.slots ?? host.slots)
         }
-        var free: Int { max(0, capacity - active.count) }
+
+        /// Slots free for this scheduler to fill. For a host on another
+        /// device that does host pull, other gateways share the slots, so
+        /// it's what the host last said, less what was sent since. The host
+        /// says again whenever its slots change, and with each answer.
+        var free: Int {
+            let own = max(0, capacity - active.count)
+            guard let report, report.pulls else { return own }
+            if full { return 0 }
+            let sent = active.values.filter { $0 > report.at }.count
+            return max(0, min(own, report.free - sent))
+        }
+
+        /// Whether a request may be sent ahead to wait here: a host on
+        /// another device that holds none, as far as this gateway knows.
+        var canHold: Bool {
+            guard let report, report.pulls, !full, capacity > 0, report.held == 0 else { return false }
+            return (prefetchedAt ?? .distantPast) < report.at
+        }
 
         var state: HostState {
             switch availability {
@@ -238,12 +282,20 @@ public actor Scheduler {
     struct Lease: Sendable {
         let host: String
         let id: UUID
+        /// Sent ahead, to wait on the host for a slot.
+        var prefetch = false
+        /// May wait on the host for a slot if another gateway took the free
+        /// one first: sent to a fast host. True of every request sent ahead.
+        var mayWait = false
     }
 
     struct Waiter {
         let id: UUID
         let choice: ModelChoice
         let excluded: Set<String>
+        /// Waiting for a slot on this host only: a request a peer's gateway
+        /// sent ahead.
+        var pinned: String?
         let remaining: () -> TimeInterval?
         let continuation: CheckedContinuation<Lease?, Never>
     }
@@ -262,6 +314,11 @@ public actor Scheduler {
     /// that leave.
     private var idleWithWork: TimeInterval = 0
     private var refreshing: Task<Void, Never>?
+    /// Each host's status changes, counted, so peers' gateways can wait for
+    /// the next one (`status(of:after:wait:)`).
+    private var generations: [String: Int] = [:]
+    private var fingerprints: [String: String] = [:]
+    private var watchers: [UUID: (host: String, continuation: CheckedContinuation<Void, Never>)] = [:]
 
     public init(config: SchedulerConfig = SchedulerConfig()) {
         self.config = config
@@ -272,6 +329,8 @@ public actor Scheduler {
     public func add(_ host: any InferenceHost) async {
         if entries[host.id] == nil { order.append(host.id) }
         entries[host.id] = Entry(host: host)
+        let id = host.id
+        host.observe { [weak self] in Task { await self?.refresh(hostID: id) } }
         await refresh()
     }
 
@@ -290,20 +349,40 @@ public actor Scheduler {
         dispatch()
     }
 
+    /// Sets a host's typical time as if it had been measured, so tests of
+    /// decisions that depend on it don't depend on how fast the machine
+    /// running them is. Requests that complete still update it.
+    func setTypical(_ seconds: Double?, for hostID: String) {
+        entries[hostID]?.typical = seconds
+        dispatch()
+    }
+
     /// Reads each host's model and availability. Runs every second once
     /// `startRefreshing` is called. Tests call it directly.
     public func refresh() async {
-        for id in order {
-            guard let host = entries[id]?.host else { continue }
-            let model = await host.model
-            let availability = await host.availability
-            let reported = await host.freeTime
-            entries[id]?.model = model
-            entries[id]?.availability = availability
-            if let model { seen[model.id] = model }
-            if let reported { note(reported, for: id) }
-        }
+        for id in order { await read(id) }
         dispatch()
+    }
+
+    /// Reads one host, when it says something changed.
+    func refresh(hostID: String) async {
+        await read(hostID)
+        dispatch()
+    }
+
+    private func read(_ id: String) async {
+        guard let host = entries[id]?.host else { return }
+        let model = await host.model
+        let availability = await host.availability
+        let report = await host.report
+        entries[id]?.model = model
+        entries[id]?.availability = availability
+        if let model { seen[model.id] = model }
+        if let report, report.at > (entries[id]?.report?.at ?? .distantPast) {
+            entries[id]?.report = report
+            entries[id]?.full = false
+            if let seconds = report.freeSeconds { note((seconds, report.at), for: id) }
+        }
     }
 
     public func startRefreshing(every interval: Duration = .seconds(1)) {
@@ -402,6 +481,13 @@ public actor Scheduler {
                 if outOfTime {
                     return unavailable(retryAfter: estimateWait(choice), "the deadline passed while the request was running")
                 }
+                if case .busy = error, entries[hostID]?.report?.pulls == true {
+                    // Another gateway took the slot first. The request waits
+                    // here again, for this host to say it has one free, or
+                    // for another host.
+                    entries[hostID]?.full = true
+                    continue
+                }
                 tried.insert(hostID)
                 let message: String = switch error {
                 case .unavailable(let why), .busy(let why): why
@@ -431,7 +517,8 @@ public actor Scheduler {
             result = .failure(.unavailable("no time left before the deadline"))
         } else {
             do {
-                result = .success(try await host.complete(body, timeout: timeout))
+                result = .success(try await host.complete(body, timeout: timeout,
+                                                          options: RequestOptions(prefetch: lease.mayWait)))
             } catch let error as HostError {
                 result = .failure(error)
             } catch {
@@ -440,6 +527,8 @@ public actor Scheduler {
         }
 
         entries[lease.host]?.active[lease.id] = nil
+        // A host on another device says how its slots stand with each answer.
+        if entries[lease.host]?.report != nil { await read(lease.host) }
         switch result {
         case .success(let reply):
             let now = Date()
@@ -466,23 +555,36 @@ public actor Scheduler {
     /// own hosts, now or not at all: no queue, since that gateway holds the
     /// queue and can try another host. Admission is this host's: a request
     /// gets a slot only if one is free, whoever's gateway it came from.
-    public func run(_ body: Data, onHost hostID: String, deadline: Date?) async -> Outcome {
+    ///
+    /// A request sent ahead (`prefetch`) may instead wait here for the next
+    /// free slot, ahead of anything else, if nothing else is waiting ahead
+    /// and it would still finish in time.
+    public func run(_ body: Data, onHost hostID: String, deadline: Date?, prefetch: Bool = false) async -> Outcome {
         func remaining() -> TimeInterval? { deadline.map { $0.timeIntervalSinceNow - config.margin } }
         guard let entry = entries[hostID], let model = entry.model else {
             return .unavailable(retryAfter: 30, message: "this device isn't serving a model")
         }
-        guard entry.free > 0 else {
+        let lease: Lease
+        if entry.free > 0 {
+            if let remaining = remaining(), remaining <= (entry.typical ?? 0) {
+                return .busy(retryAfter: 1)
+            }
+            lease = reserve(hostID)
+            account()
+        } else {
             if entry.capacity == 0 {
                 return .unavailable(retryAfter: 30, message: entry.state.detail ?? "this device isn't taking work")
             }
-            return .busy(retryAfter: estimateWait(ModelChoice(options: [.exact(model.id)])))
+            guard prefetch, let held = await hold(hostID, deadline: deadline, remaining: remaining) else {
+                return .busy(retryAfter: estimateWait(ModelChoice(options: [.exact(model.id)])))
+            }
+            lease = held
         }
-        if let remaining = remaining(), remaining <= (entry.typical ?? 0) {
-            return .busy(retryAfter: 1)
+        guard let host = entries[hostID]?.host else {
+            entries[hostID]?.active[lease.id] = nil
+            return .unavailable(retryAfter: 30, message: "this device isn't serving a model")
         }
-        let lease = reserve(hostID)
-        account()
-        switch await perform(body, lease: lease, host: entry.host, remaining: remaining) {
+        switch await perform(body, lease: lease, host: host, remaining: remaining) {
         case .success(let reply):
             return (200..<300).contains(reply.status) ? .completed(reply, model: model) : .rejected(reply)
         case .failure(.busy):
@@ -503,15 +605,36 @@ public actor Scheduler {
     /// or nil if none does before `until`.
     private func acquire(choice: ModelChoice, excluding: Set<String>, until: Date,
                          remaining: @escaping () -> TimeInterval?) async -> Lease? {
-        if let id = pick(choice: choice, excluding: excluding, remaining: remaining()) {
+        if let choice = pick(choice: choice, excluding: excluding, remaining: remaining()) {
             defer { account() }
-            return reserve(id)
+            return reserve(choice)
         }
+        return await enqueue(choice: choice, excluding: excluding, pinned: nil, until: until, remaining: remaining)
+    }
+
+    /// Holds a request a peer's gateway sent ahead until this host's next
+    /// slot frees up, if it would still finish in time and no other request
+    /// is held here. One at most, whichever gateway sent it: a host takes
+    /// one request more than its slots, no more.
+    private func hold(_ hostID: String, deadline: Date?, remaining: @escaping () -> TimeInterval?) async -> Lease? {
+        guard let entry = entries[hostID], let typical = entry.typical,
+              !waiting.contains(where: { $0.pinned == hostID }) else { return nil }
+        let now = Date()
+        let soonest = entry.active.values.map { max(0, typical - now.timeIntervalSince($0)) }.min() ?? 0
+        let left = remaining() ?? config.defaultQueueWait
+        guard soonest + typical < left else { return nil }
+        entries[hostID]?.prefetched += 1
+        return await enqueue(choice: ModelChoice(options: [.any]), excluding: [], pinned: hostID,
+                             until: now.addingTimeInterval(left - typical), remaining: remaining)
+    }
+
+    private func enqueue(choice: ModelChoice, excluding: Set<String>, pinned: String?, until: Date,
+                         remaining: @escaping () -> TimeInterval?) async -> Lease? {
         let wait = until.timeIntervalSinceNow
         guard wait > 0 else { return nil }
         let id = UUID()
         return await withCheckedContinuation { continuation in
-            waiting.append(Waiter(id: id, choice: choice, excluded: excluding, remaining: remaining,
+            waiting.append(Waiter(id: id, choice: choice, excluded: excluding, pinned: pinned, remaining: remaining,
                                   continuation: continuation))
             account()
             Task { [weak self] in
@@ -521,9 +644,16 @@ public actor Scheduler {
         }
     }
 
-    private func reserve(_ host: String) -> Lease {
-        let lease = Lease(host: host, id: UUID())
-        entries[host]?.active[lease.id] = Date()
+    private func reserve(_ choice: Pick) -> Lease { reserve(choice.id, prefetch: choice.prefetch, mayWait: choice.mayWait) }
+
+    private func reserve(_ host: String, prefetch: Bool = false, mayWait: Bool = false) -> Lease {
+        let lease = Lease(host: host, id: UUID(), prefetch: prefetch, mayWait: mayWait || prefetch)
+        let now = Date()
+        entries[host]?.active[lease.id] = now
+        if prefetch {
+            entries[host]?.prefetchedAt = now
+            entries[host]?.prefetched += 1
+        }
         return lease
     }
 
@@ -533,14 +663,54 @@ public actor Scheduler {
         account()
     }
 
+    /// Where to send a request.
+    struct Pick {
+        let id: String
+        /// Sent ahead, to wait for a slot.
+        var prefetch = false
+        /// May wait for a slot if the free one is taken first.
+        var mayWait = false
+    }
+
     /// The most preferred host with a free slot whose typical time fits.
-    private func pick(choice: ModelChoice, excluding: Set<String>, remaining: TimeInterval?) -> String? {
-        let candidates = order.compactMap { id -> (id: String, rank: Int, free: Int)? in
+    /// Failing that, a fast host on another device to send the request
+    /// ahead to, where it waits for that host's next free slot.
+    ///
+    /// Fast is judged against the quickest host the request could use, and
+    /// a request may wait on a fast host only if it would still have time to
+    /// wait behind a whole request, then run. A slow host is never sent
+    /// work to wait.
+    private func pick(choice: ModelChoice, excluding: Set<String>, remaining: TimeInterval?) -> Pick? {
+        let quickest = config.prefetch ? entries.values.filter {
+            $0.capacity > 0 && rank($0, for: choice, excluding: excluding, remaining: remaining) != nil
+        }.compactMap(\.typical).min() : nil
+        func fast(_ entry: Entry) -> Bool {
+            guard let quickest, entry.report?.pulls == true, let typical = entry.typical,
+                  typical <= config.prefetchUpTo, typical <= quickest * config.prefetchFactor else { return false }
+            return remaining.map { $0 > 2 * typical } ?? true
+        }
+
+        let candidates = order.compactMap { id -> (entry: Entry, rank: Int)? in
             guard let entry = entries[id], entry.free > 0,
                   let rank = rank(entry, for: choice, excluding: excluding, remaining: remaining) else { return nil }
-            return (id, rank, entry.free)
+            return (entry, rank)
         }
-        return candidates.min { ($0.rank, -$0.free) < ($1.rank, -$1.free) }?.id
+        if let best = candidates.min(by: { ($0.rank, -$0.entry.free) < ($1.rank, -$1.entry.free) }) {
+            return Pick(id: best.entry.host.id, mayWait: fast(best.entry))
+        }
+
+        let ahead = order.compactMap { id -> (id: String, rank: Int, typical: Double)? in
+            guard let entry = entries[id], entry.canHold, fast(entry), let typical = entry.typical,
+                  let rank = rank(entry, for: choice, excluding: excluding, remaining: remaining) else { return nil }
+            return (id, rank, typical)
+        }
+        return ahead.min { ($0.rank, $0.typical) < ($1.rank, $1.typical) }.map { Pick(id: $0.id, prefetch: true) }
+    }
+
+    /// Whether a waiting request could run on this host, free slot or not.
+    private func fits(_ waiter: Waiter, _ entry: Entry) -> Bool {
+        if let pinned = waiter.pinned { return pinned == entry.host.id }
+        return rank(entry, for: waiter.choice, excluding: waiter.excluded, remaining: waiter.remaining()) != nil
     }
 
     /// How far down a request's preferences this host is, if the request
@@ -554,17 +724,29 @@ public actor Scheduler {
         return rank
     }
 
-    /// Hands free slots to waiting requests, oldest first.
+    /// Hands free slots to waiting requests: first those sent ahead by
+    /// peers' gateways, which are already here, then the rest, oldest first.
     private func dispatch() {
-        var index = 0
-        while index < waiting.count {
-            let waiter = waiting[index]
-            if let id = pick(choice: waiter.choice, excluding: waiter.excluded, remaining: waiter.remaining()) {
-                waiting.remove(at: index)
-                // Reserved here, so the next waiter can't see the slot as free.
-                waiter.continuation.resume(returning: reserve(id))
-            } else {
-                index += 1
+        for ahead in [true, false] {
+            var index = 0
+            while index < waiting.count {
+                let waiter = waiting[index]
+                guard (waiter.pinned != nil) == ahead else {
+                    index += 1
+                    continue
+                }
+                let choice: Pick? = if let pinned = waiter.pinned {
+                    (entries[pinned]?.free ?? 0) > 0 ? Pick(id: pinned) : nil
+                } else {
+                    pick(choice: waiter.choice, excluding: waiter.excluded, remaining: waiter.remaining())
+                }
+                if let choice {
+                    waiting.remove(at: index)
+                    // Reserved here, so the next waiter can't see the slot as free.
+                    waiter.continuation.resume(returning: reserve(choice))
+                } else {
+                    index += 1
+                }
             }
         }
         account()
@@ -587,7 +769,7 @@ public actor Scheduler {
         }
         guard typical > 0 else { return 2 }
         if soonest == .infinity { soonest = 0 }
-        let ahead = Double(waiting.filter { $0.choice == choice }.count) / Double(capacity)
+        let ahead = Double(waiting.filter { $0.pinned == nil && $0.choice == choice }.count) / Double(capacity)
         return min(60, max(1, Int((soonest + ahead * typical).rounded(.up))))
     }
 
@@ -632,13 +814,48 @@ public actor Scheduler {
                 idleWithWork += idle
             }
             let free = entry.free > 0
-            let waited = waiting.contains { rank(entry, for: $0.choice, excluding: $0.excluded,
-                                                 remaining: $0.remaining()) != nil }
+            let waited = waiting.contains { fits($0, entry) }
             entry.freeSince = free ? now : nil
             entry.waitedSince = waited ? now : nil
-            entry.idleSince = free && waited && entry.reported == nil ? now : nil
+            entry.idleSince = free && waited && entry.report == nil ? now : nil
             entries[id] = entry
+
+            // What a peer's gateway sees of this host, to tell it when it changes.
+            let fingerprint = "\(entry.state)|\(entry.capacity)|\(entry.active.count)|\(held(id))|"
+                + (entry.model?.fingerprint ?? "")
+            if fingerprints[id] != fingerprint {
+                fingerprints[id] = fingerprint
+                generations[id, default: 0] += 1
+                for (key, watcher) in watchers where watcher.host == id {
+                    watchers.removeValue(forKey: key)
+                    watcher.continuation.resume()
+                }
+            }
         }
+    }
+
+    private func held(_ id: String) -> Int { waiting.filter { $0.pinned == id }.count }
+
+    /// One host's snapshot, and the count of its status changes. With
+    /// `after`, waits up to `wait` seconds for a change past that count, so a
+    /// peer's gateway hears of a free slot the moment there is one.
+    func status(of hostID: String, after: Int?, wait: TimeInterval) async -> (host: HostSnapshot?, generation: Int) {
+        account()
+        if let after, generations[hostID, default: 0] <= after, wait > 0 {
+            let id = UUID()
+            await withCheckedContinuation { continuation in
+                watchers[id] = (hostID, continuation)
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(wait))
+                    await self?.stopWatching(id)
+                }
+            }
+        }
+        return (snapshot().hosts.first { $0.id == hostID }, generations[hostID, default: 0])
+    }
+
+    private func stopWatching(_ id: UUID) {
+        watchers.removeValue(forKey: id)?.continuation.resume()
     }
 
     /// Takes a free-time count from a host on another device, and counts the
@@ -649,7 +866,7 @@ public actor Scheduler {
     private func note(_ reported: (seconds: Double, at: Date), for id: String) {
         account()
         guard var entry = entries[id] else { return }
-        if let last = entry.reported {
+        if let last = entry.freeSample {
             guard reported.at > last.at else { return }
             let span = reported.at.timeIntervalSince(last.at)
             let free = reported.seconds - last.free
@@ -660,7 +877,7 @@ public actor Scheduler {
                 idleWithWork += idle
             }
         }
-        entry.reported = (reported.seconds, entry.waitedTime, reported.at)
+        entry.freeSample = (reported.seconds, entry.waitedTime, reported.at)
         entry.idleSince = nil
         entries[id] = entry
     }
@@ -674,7 +891,8 @@ public actor Scheduler {
                                 active: e.active.count, completed: e.completed, failures: e.failures,
                                 typicalSeconds: e.typical,
                                 perHour: Double(e.recent.filter { $0 > cutoff }.count) * 6,
-                                idleWithWorkSeconds: e.idleTime, freeSeconds: e.freeTime)
+                                idleWithWorkSeconds: e.idleTime, freeSeconds: e.freeTime,
+                                held: e.report?.held ?? held(id), prefetched: e.prefetched)
         }
         return SchedulerSnapshot(hosts: hosts, queued: waiting.count, completed: completedCount,
                                  failures: failures, rejected: rejectedCount, busy: busyCount,

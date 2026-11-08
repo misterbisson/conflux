@@ -15,9 +15,12 @@ protocol PeerLink: Sendable {
 /// A host on another device, reached over iroh: what this Mac's gateway
 /// schedules to when it sends work to a peer.
 ///
-/// It asks the peer's host service for its status every second, which is
-/// also the heartbeat: three misses in a row and the host counts as not
-/// answering, and the link dials again.
+/// It keeps a status request open to the peer's host service, which answers
+/// as soon as the host's slots change, and after a second if they don't.
+/// So the gateway hears of a free slot within half a round trip, and the
+/// requests are also the heartbeat: three misses in a row and the host counts
+/// as not answering, and the link dials again. A peer from before host pull
+/// answers at once, and is asked every second instead.
 public final class RemoteHost: InferenceHost, @unchecked Sendable {
     public let id: String
     public let endpointID: String
@@ -29,7 +32,11 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
     private var misses = 0
     private var answering = false
     private var polling: Task<Void, Never>?
+    private var changed: (@Sendable () -> Void)?
     static let missesBeforeLost = 3
+    /// How long the peer may hold a status request before answering
+    /// unchanged.
+    static let statusWait: TimeInterval = 1
 
     init(endpointID: String, link: any PeerLink) {
         self.endpointID = endpointID
@@ -65,20 +72,30 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         }
     }
 
-    public var freeTime: (seconds: Double, at: Date)? {
+    public var report: HostReport? {
         get async {
-            lock.withLock { answering ? status?.freeSeconds.map { ($0, statusAt) } : nil }
+            lock.withLock {
+                guard answering, let status else { return nil }
+                let held = status.held ?? 0
+                return HostReport(free: max(0, status.capacity - status.active - held), held: held,
+                                  freeSeconds: status.freeSeconds, pulls: status.generation != nil, at: statusAt)
+            }
         }
     }
 
-    /// Starts the status poll. `refresh` is called by it; tests call it
-    /// directly.
+    public func observe(_ changed: @escaping @Sendable () -> Void) {
+        lock.withLock { self.changed = changed }
+    }
+
+    /// Starts asking for the peer's status. `refresh` is called by it; tests
+    /// call it directly. `interval` is for peers that answer at once.
     func start(every interval: Duration = .seconds(1)) {
         polling?.cancel()
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refresh()
-                try? await Task.sleep(for: interval)
+                guard let self else { return }
+                let held = await self.refresh(waitingUpTo: Self.statusWait)
+                if !held { try? await Task.sleep(for: interval) }
             }
         }
     }
@@ -89,7 +106,15 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         lock.withLock { answering = false }
     }
 
-    func refresh() async {
+    /// Asks for the peer's status. With `waitingUpTo`, a peer that does host
+    /// pull holds the request until its status changes or that time passes.
+    /// Returns whether it did, so the caller can ask again at once.
+    @discardableResult
+    func refresh(waitingUpTo wait: TimeInterval = 0) async -> Bool {
+        defer {
+            let changed = lock.withLock { self.changed }
+            changed?()
+        }
         // A closed connection is known at once, and redialling can take
         // seconds: say so before trying.
         if !(await link.connected) {
@@ -107,11 +132,17 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
                 misses = max(misses + 1, Self.missesBeforeLost)
                 answering = false
             }
-            return
+            return false
         }
+        let after = wait > 0 ? lock.withLock { answering ? status?.generation : nil } : nil
         do {
-            var request = URLRequest(url: base.appending(path: HostProtocol.statusPath), timeoutInterval: 3)
+            var request = URLRequest(url: base.appending(path: HostProtocol.statusPath),
+                                     timeoutInterval: 3 + (after == nil ? 0 : wait))
             request.httpMethod = "GET"
+            if let after {
+                request.setValue(String(after), forHTTPHeaderField: HostProtocol.afterHeader)
+                request.setValue(String(wait), forHTTPHeaderField: HostProtocol.waitHeader)
+            }
             let (data, response) = try await session.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
             let status = try HostService.decoder.decode(HostStatus.self, from: data)
@@ -121,6 +152,7 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
                 misses = 0
                 answering = true
             }
+            return after != nil
         } catch {
             let lost = lock.withLock { () -> Bool in
                 misses += 1
@@ -128,10 +160,15 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
                 return misses >= Self.missesBeforeLost
             }
             if lost { link.reconnect() }
+            return false
         }
     }
 
     public func complete(_ body: Data, timeout: TimeInterval) async throws -> HostReply {
+        try await complete(body, timeout: timeout, options: RequestOptions())
+    }
+
+    public func complete(_ body: Data, timeout: TimeInterval, options: RequestOptions) async throws -> HostReply {
         let base: URL
         do {
             base = try await link.url()
@@ -143,6 +180,7 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(String(format: "%.1f", timeout), forHTTPHeaderField: ContractHeader.timeout)
+        if options.prefetch { request.setValue("1", forHTTPHeaderField: HostProtocol.prefetchHeader) }
         let data: Data, response: HTTPURLResponse
         do {
             let (bytes, answer) = try await session.data(for: request)
@@ -152,6 +190,7 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             link.reconnect()
             throw HostError.unavailable("the peer didn't answer: \(error.localizedDescription)")
         }
+        take(slots: response.value(forHTTPHeaderField: HostProtocol.slotsHeader))
         let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
             .flatMap { ($0["error"] as? [String: Any])?["message"] as? String } ?? "status \(response.statusCode)"
         switch response.value(forHTTPHeaderField: HostProtocol.outcomeHeader) {
@@ -167,6 +206,22 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             if response.statusCode >= 500 { throw HostError.failed(status: response.statusCode, message: message) }
             return HostReply(status: response.statusCode, body: data)
         }
+    }
+
+    /// How the peer's slots stand, from a completion's answer: newer than
+    /// the last status if its generation is.
+    func take(slots header: String?) {
+        let numbers = header?.split(separator: " ").compactMap { Int($0) } ?? []
+        guard numbers.count == 4 else { return }
+        let updated = lock.withLock { () -> Bool in
+            guard answering, var status, let generation = status.generation, numbers[0] > generation
+            else { return false }
+            (status.generation, status.capacity, status.active, status.held) = (numbers[0], numbers[1], numbers[2], numbers[3])
+            self.status = status
+            statusAt = Date()
+            return true
+        }
+        if updated { lock.withLock { changed }?() }
     }
 
     /// The model the peer says ran, from the answer itself.

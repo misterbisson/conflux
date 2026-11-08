@@ -284,6 +284,7 @@ struct ContentView: View {
             let parts = ["\(host.completed) completed",
                          host.typicalSeconds.map { String(format: "typical %.1f s", $0) },
                          "idle with work \(Self.seconds(host.idleWithWorkSeconds))",
+                         host.prefetched > 0 ? "\(host.prefetched) sent ahead" : nil,
                          host.failures.total > 0 ? Self.describe(host.failures) : nil].compactMap { $0 }
             Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
         }

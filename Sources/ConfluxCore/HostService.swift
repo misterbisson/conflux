@@ -10,6 +10,20 @@ public enum HostProtocol {
     /// What became of a request sent to a host: `completed`, `rejected`
     /// (the runtime refused it, a 4xx to pass on), `busy` or `unavailable`.
     public static let outcomeHeader = "Conflux-Outcome"
+    /// On a status request: the `generation` the gateway last saw. The host
+    /// answers once its status has changed since, or after `Conflux-Wait`
+    /// seconds, whichever is first.
+    public static let afterHeader = "Conflux-After"
+    public static let waitHeader = "Conflux-Wait"
+    /// The longest a status request waits for a change.
+    public static let longestWait: TimeInterval = 5
+    /// On a completion: `1` if the request was sent ahead and may wait on the
+    /// host for its next free slot.
+    public static let prefetchHeader = "Conflux-Prefetch"
+    /// On a completion's answer: how the host's slots stand once the request
+    /// has left its slot, as `generation capacity active held`, so the
+    /// gateway needn't wait for the status that says the same.
+    public static let slotsHeader = "Conflux-Slots"
 }
 
 /// What a host tells gateways about itself, polled every second.
@@ -29,14 +43,22 @@ struct HostStatus: Codable, Equatable {
     /// this to measure the time the host sat idle while its work waited.
     /// Optional: hosts before it was added don't send it.
     var freeSeconds: Double?
+    /// Requests sent ahead, waiting for a slot. Nil from hosts before host
+    /// pull.
+    var held: Int?
+    /// Counts the host's status changes, for `Conflux-After`. Nil from
+    /// hosts before host pull, which answer at once.
+    var generation: Int?
 
-    init(_ host: HostSnapshot?) {
+    init(_ host: HostSnapshot?, generation: Int? = nil) {
         self.protocol = HostProtocol.version
         model = host?.model
         capacity = host?.capacity ?? 0
         active = host?.active ?? 0
         typicalSeconds = host?.typicalSeconds
         freeSeconds = host?.freeSeconds
+        held = host?.held ?? 0
+        self.generation = generation
         switch host?.state {
         case nil:
             (availability, detail) = ("offline", "this device isn't serving a model")
@@ -82,8 +104,18 @@ final class HostService: Sendable {
     func handle(_ request: HTTPRequest) async -> HTTPResponse {
         switch (request.method, request.path) {
         case ("GET", HostProtocol.statusPath):
-            let host = hostID == nil ? nil : await scheduler.snapshot().hosts.first { $0.id == hostID }
-            let body = (try? HostService.encoder.encode(HostStatus(host))) ?? Data()
+            let after = request.header(HostProtocol.afterHeader).flatMap(Int.init)
+            let wait = request.header(HostProtocol.waitHeader).flatMap(TimeInterval.init)
+                .map { min(max(0, $0), HostProtocol.longestWait) } ?? 0
+            var status = HostStatus(nil, generation: 0)
+            if let hostID {
+                let (host, generation) = await scheduler.status(of: hostID, after: after, wait: wait)
+                status = HostStatus(host, generation: generation)
+            } else if after != nil {
+                // Nothing will change: don't have the gateway ask again at once.
+                try? await Task.sleep(for: .seconds(wait))
+            }
+            let body = (try? HostService.encoder.encode(status)) ?? Data()
             return HTTPResponse(status: 200, headers: [("Content-Type", "application/json")], body: body)
         case ("POST", HostProtocol.completePath):
             return await complete(request)
@@ -95,15 +127,22 @@ final class HostService: Sendable {
     func complete(_ request: HTTPRequest) async -> HTTPResponse {
         let deadline = request.header(ContractHeader.timeout).flatMap(TimeInterval.init)
             .map { Date().addingTimeInterval($0) }
+        guard let hostID else {
+            return HTTPResponse(status: 503, headers: [("Content-Type", "application/json"),
+                                                       (HostProtocol.outcomeHeader, "unavailable")],
+                                body: ChatCompletionResult.error("this device serves no model", type: "server_error"))
+        }
+        let prefetch = request.header(HostProtocol.prefetchHeader) == "1"
+        let outcome = await scheduler.run(request.body, onHost: hostID, deadline: deadline, prefetch: prefetch)
+        let (host, generation) = await scheduler.status(of: hostID, after: nil, wait: 0)
+        let slots = (HostProtocol.slotsHeader,
+                     "\(generation) \(host?.capacity ?? 0) \(host?.active ?? 0) \(host?.held ?? 0)")
         func reply(_ status: Int, _ outcome: String, _ body: Data,
                    _ headers: [(name: String, value: String)] = []) -> HTTPResponse {
             HTTPResponse(status: status, headers: [("Content-Type", "application/json"),
-                                                   (HostProtocol.outcomeHeader, outcome)] + headers, body: body)
+                                                   (HostProtocol.outcomeHeader, outcome), slots] + headers, body: body)
         }
-        guard let hostID else {
-            return reply(503, "unavailable", ChatCompletionResult.error("this device serves no model", type: "server_error"))
-        }
-        switch await scheduler.run(request.body, onHost: hostID, deadline: deadline) {
+        switch outcome {
         case .completed(let result, let model):
             // Named here, by the host that ran it.
             return reply(result.status, "completed", Gateway.attribute(result.body, to: model))

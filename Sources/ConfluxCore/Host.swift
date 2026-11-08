@@ -13,14 +13,59 @@ public protocol InferenceHost: AnyObject, Sendable {
     /// Runs one OpenAI chat completion request body and returns the runtime's
     /// response. Throws `HostError` when the runtime couldn't answer.
     func complete(_ body: Data, timeout: TimeInterval) async throws -> HostReply
-    /// For a host on another device, whose slots other gateways share: the
-    /// seconds it has had a free slot, by its own count, and when that count
-    /// was read. Nil for a host whose slots the scheduler holds itself.
-    var freeTime: (seconds: Double, at: Date)? { get async }
+    /// The same, with what the scheduler says about the request.
+    func complete(_ body: Data, timeout: TimeInterval, options: RequestOptions) async throws -> HostReply
+    /// For a host on another device, whose slots other gateways share: what
+    /// it last said about its slots. Nil for a host whose slots the
+    /// scheduler holds itself.
+    var report: HostReport? { get async }
+    /// Calls `changed` whenever the host's model, availability or report may
+    /// have changed, so the scheduler needn't wait for its next look.
+    func observe(_ changed: @escaping @Sendable () -> Void)
 }
 
 extension InferenceHost {
-    public var freeTime: (seconds: Double, at: Date)? { get async { nil } }
+    public func complete(_ body: Data, timeout: TimeInterval, options: RequestOptions) async throws -> HostReply {
+        try await complete(body, timeout: timeout)
+    }
+    public var report: HostReport? { get async { nil } }
+    public func observe(_ changed: @escaping @Sendable () -> Void) {}
+}
+
+/// What the scheduler says about one request when it sends it to a host.
+public struct RequestOptions: Sendable, Equatable {
+    /// The request may wait on the host for its next free slot: it was sent
+    /// ahead, so that a slot freeing up doesn't wait for a round trip.
+    public var prefetch: Bool
+
+    public init(prefetch: Bool = false) {
+        self.prefetch = prefetch
+    }
+}
+
+/// What a host on another device last said about its slots.
+public struct HostReport: Sendable, Equatable {
+    /// Slots free when it reported: the ones it takes work in, less those
+    /// running or holding a request.
+    public var free: Int
+    /// Requests sent ahead and waiting there for a slot.
+    public var held: Int
+    /// Seconds it has had a free slot since it started, by its own count.
+    /// Nil from hosts that don't count.
+    public var freeSeconds: Double?
+    /// Whether it tells changes as they happen and holds a request sent
+    /// ahead. Hosts from before host pull don't.
+    public var pulls: Bool
+    /// When the report arrived.
+    public var at: Date
+
+    public init(free: Int, held: Int = 0, freeSeconds: Double? = nil, pulls: Bool = true, at: Date = Date()) {
+        self.free = free
+        self.held = held
+        self.freeSeconds = freeSeconds
+        self.pulls = pulls
+        self.at = at
+    }
 }
 
 public enum HostAvailability: Sendable, Equatable {
