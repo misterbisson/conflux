@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/misterbisson/conflux/compare/v0.1.0...v0.1.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* keep Xcode Cloud building when CI_TEAM_ID isn't a Team ID ([#11](https://github.com/misterbisson/conflux/issues/11)) ([390e854](https://github.com/misterbisson/conflux/commit/390e85400b824213b471f28d7f66746302598d15))
+
 ## 0.1.0 (2026-11-08)
 
 
