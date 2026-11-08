@@ -139,7 +139,13 @@ final class AppModel: ObservableObject {
         panel.allowedContentTypes = [UTType(filenameExtension: "gguf") ?? .data]
         panel.message = projector ? "Choose the model's multimodal projector (mmproj)" : "Choose a GGUF model"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        access.remember(url)
+        problem = nil
+        do {
+            try access.remember(url)
+        } catch where ModelAccess.sandboxed {
+            // It still opens until the app quits, but not after.
+            problem = "conflux can open \(url.lastPathComponent) until it quits, but not after: \(error.localizedDescription)"
+        } catch {}
         var host = settings.host ?? ModelConfig(model: "")
         if projector { host.projector = url.path } else { host.model = url.path }
         settings.host = host

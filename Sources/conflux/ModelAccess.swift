@@ -23,9 +23,13 @@ final class ModelAccess {
 
     /// Records a file the user chose. Call it while the open panel's access
     /// lasts, which is until the app quits.
-    func remember(_ url: URL) {
-        guard let data = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil,
-                                               relativeTo: nil) else { return }
+    ///
+    /// The bookmark is read-only, because the app's entitlement is
+    /// (`files.user-selected.read-only`): asking for a read-write bookmark to
+    /// a file the app can only read fails.
+    func remember(_ url: URL) throws {
+        let data = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                        includingResourceValuesForKeys: nil, relativeTo: nil)
         bookmarks[url.path] = data
         save()
     }
@@ -47,13 +51,17 @@ final class ModelAccess {
             guard let data = bookmarks[path],
                   let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil,
                                      bookmarkDataIsStale: &stale) else {
-                if Self.sandboxed { throw ModelAccessError.choose(again: path) }
+                // Without a bookmark, a file chosen since launch is still
+                // readable, until the app quits.
+                if Self.sandboxed && !FileManager.default.isReadableFile(atPath: path) {
+                    throw ModelAccessError.choose(again: path)
+                }
                 return path
             }
             if url.startAccessingSecurityScopedResource() { accessing.append(url) }
             if stale || url.path != path {
-                bookmarks[path] = nil
-                remember(url)
+                // Replace the bookmark only once a new one is made.
+                if (try? remember(url)) != nil, url.path != path { bookmarks[path] = nil }
             }
             return url.path
         }
