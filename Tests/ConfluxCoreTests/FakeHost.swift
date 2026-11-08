@@ -67,6 +67,33 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
     }
 }
 
+/// Holds requests until the test opens it, so a test controls when a slot
+/// frees instead of guessing how long a slow runner takes to get there.
+actor Gate {
+    private var open = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if open { return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func release() {
+        open = true
+        for continuation in waiting { continuation.resume() }
+        waiting = []
+    }
+
+    /// A host behavior that answers once the gate opens.
+    nonisolated func reply(status: Int = 200, body: Data = FakeHost.okBody)
+        -> @Sendable (Int) async throws -> HostReply {
+        { _ in
+            await self.wait()
+            return HostReply(status: status, body: body)
+        }
+    }
+}
+
 extension Scheduler {
     static func with(_ hosts: [FakeHost], config: SchedulerConfig = SchedulerConfig()) async -> Scheduler {
         let scheduler = Scheduler(config: config)

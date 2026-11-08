@@ -155,7 +155,9 @@ func attempt<T: Sendable>(_ body: @Sendable () async throws -> T) async -> Resul
     }
 
     @Test func aHeldRequestCanBeCancelled() async throws {
-        let peer = try await Peer(behavior: FakeHost.reply(after: 2))
+        // The first request runs until the held one has been cancelled.
+        let gate = Gate()
+        let peer = try await Peer(behavior: gate.reply())
         defer { peer.server.stop() }
         await peer.scheduler.setTypical(1, for: "local")
         async let running = peer.remote.complete(Data("{}".utf8), timeout: 30)
@@ -167,6 +169,7 @@ func attempt<T: Sendable>(_ body: @Sendable () async throws -> T) async -> Resul
         await peer.remote.cancel(id)
         let heldResult = await held
         #expect(throws: HostError.cancelled) { try heldResult.get() }
+        await gate.release()
         #expect(try await running.status == 200)
         #expect(peer.host.callCount == 1)
     }
