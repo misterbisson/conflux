@@ -9,6 +9,7 @@ struct ContentView: View {
             status
             modelSection
             meshSection
+            monitoringSection
             gatewaySection
         }
         .formStyle(.grouped)
@@ -41,16 +42,8 @@ struct ContentView: View {
                 LabeledContent("Slots", value: "\(host.active) busy of \(host.capacity)"
                     + (host.capacity < host.slots ? " (limited from \(host.slots))" : ""))
                 LabeledContent("Waiting", value: "\(snapshot.queued)")
-                LabeledContent("Throughput", value: "\(Int(snapshot.perHour.rounded())) per hour")
                 if let typical = host.typicalSeconds {
                     LabeledContent("Typical request", value: String(format: "%.1f s", typical))
-                }
-                LabeledContent("Completed", value: "\(snapshot.completed)")
-                LabeledContent("Failed · busy · unavailable",
-                               value: "\(snapshot.failed) · \(snapshot.busy) · \(snapshot.unavailable)")
-                if snapshot.idleWithWorkSeconds >= 1 {
-                    LabeledContent("Idle while work waited",
-                                   value: String(format: "%.0f s", snapshot.idleWithWorkSeconds))
                 }
             }
         }
@@ -210,6 +203,55 @@ struct ContentView: View {
         case .draining, .paused, .starting: .orange
         case .failed, .offline: .red
         }
+    }
+
+    // MARK: Monitoring
+
+    /// Throughput, failures and idle-with-work, for the mesh and each host,
+    /// as this Mac's gateway sees them.
+    @ViewBuilder var monitoringSection: some View {
+        if model.running, let snapshot = model.snapshot {
+            Section("Monitoring") {
+                LabeledContent("Throughput", value: "\(Int(snapshot.perHour.rounded())) per hour")
+                LabeledContent("Completed", value: "\(snapshot.completed)")
+                LabeledContent("Idle while work waited", value: Self.seconds(snapshot.idleWithWorkSeconds))
+                LabeledContent("Host failures", value: Self.describe(snapshot.failures))
+                LabeledContent("Answered busy · unavailable", value: "\(snapshot.busy) · \(snapshot.unavailable)")
+                    .help("Answers of 429, no slot in time, and 503, hosts failed or none up")
+                ForEach(snapshot.hosts) { host in
+                    monitoringRow(host)
+                }
+                Text("Idle while work waited is time a host had a free slot while work it could run waited here. It should stay near zero.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    func monitoringRow(_ host: HostSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(host.id.hasPrefix("peer-") ? host.id.dropFirst("peer-".count) + "…" : "This Mac")
+                    .font(host.id.hasPrefix("peer-") ? .body.monospaced() : .body)
+                Spacer()
+                Text("\(Int(host.perHour.rounded())) per hour").monospacedDigit()
+            }
+            let parts = ["\(host.completed) completed",
+                         host.typicalSeconds.map { String(format: "typical %.1f s", $0) },
+                         "idle with work \(Self.seconds(host.idleWithWorkSeconds))",
+                         host.failures.total > 0 ? Self.describe(host.failures) : nil].compactMap { $0 }
+            Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    static func seconds(_ value: Double) -> String {
+        value < 10 ? String(format: "%.1f s", value) : String(format: "%.0f s", value)
+    }
+
+    static func describe(_ failures: FailureCounts) -> String {
+        guard failures.total > 0 else { return "none" }
+        return [(failures.unavailable, "not answering"), (failures.failed, "server error"),
+                (failures.busy, "busy"), (failures.deadline, "out of time")]
+            .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
     }
 
     // MARK: Gateway

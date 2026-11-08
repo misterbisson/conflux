@@ -13,6 +13,14 @@ public protocol InferenceHost: AnyObject, Sendable {
     /// Runs one OpenAI chat completion request body and returns the runtime's
     /// response. Throws `HostError` when the runtime couldn't answer.
     func complete(_ body: Data, timeout: TimeInterval) async throws -> HostReply
+    /// For a host on another device, whose slots other gateways share: the
+    /// seconds it has had a free slot, by its own count, and when that count
+    /// was read. Nil for a host whose slots the scheduler holds itself.
+    var freeTime: (seconds: Double, at: Date)? { get async }
+}
+
+extension InferenceHost {
+    public var freeTime: (seconds: Double, at: Date)? { get async { nil } }
 }
 
 public enum HostAvailability: Sendable, Equatable {

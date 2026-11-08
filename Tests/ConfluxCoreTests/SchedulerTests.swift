@@ -31,6 +31,77 @@ import Testing
         #expect(await scheduler.snapshot().idleWithWorkSeconds < 0.05)
     }
 
+    @Test func countsPerHostAndByKind() async {
+        let good = FakeHost(id: "good", behavior: FakeHost.reply(after: 0.05))
+        let broken = FakeHost(id: "broken") { call in
+            if call == 1 { throw HostError.unavailable("connection refused") }
+            if call == 2 { throw HostError.busy("taken") }
+            throw HostError.failed(status: 500, message: "boom")
+        }
+        let scheduler = await Scheduler.with([broken, good])
+        for _ in 0..<3 {
+            await scheduler.refresh() // Back from "not answering".
+            let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(5), key: nil)
+            if case .completed = outcome {} else { Issue.record("\(outcome)") }
+        }
+        let snapshot = await scheduler.snapshot()
+        let hosts = Dictionary(uniqueKeysWithValues: snapshot.hosts.map { ($0.id, $0) })
+        #expect(hosts["broken"]?.failures == FailureCounts(unavailable: 1, failed: 1, busy: 1))
+        #expect(hosts["broken"]?.failed == 2)
+        #expect(hosts["broken"]?.completed == 0)
+        #expect(hosts["good"]?.completed == 3)
+        #expect(hosts["good"]?.perHour == 18)
+        #expect(hosts["good"]?.failures.total == 0)
+        #expect(snapshot.failures == FailureCounts(unavailable: 1, failed: 1, busy: 1))
+        #expect(snapshot.completed == 3)
+        #expect(snapshot.perHour == 18)
+    }
+
+    @Test func runningOutOfTimeIsntTheHostsFault() async {
+        let host = FakeHost(id: "h") { _ in
+            try await Task.sleep(for: .seconds(1.6))
+            throw HostError.unavailable("timed out")
+        }
+        let scheduler = await Scheduler.with([host])
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(2), key: nil)
+        if case .unavailable = outcome {} else { Issue.record("\(outcome)") }
+        let snapshot = await scheduler.snapshot()
+        #expect(snapshot.failures == FailureCounts(deadline: 1))
+        #expect(snapshot.hosts.first?.failures == FailureCounts(deadline: 1))
+        #expect(snapshot.failed == 0)
+    }
+
+    /// A host on another device reports its own free time. The part spent
+    /// while work for it waited here is idle with work.
+    @Test func countsAReportedFreeTimeWhileWorkWaits() async throws {
+        let host = FakeHost(id: "peer", behavior: FakeHost.reply(after: 1))
+        let start = Date()
+        host.report(freeSeconds: 10, at: start)
+        let scheduler = await Scheduler.with([host])
+        let running = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
+        try await Task.sleep(for: .milliseconds(50))
+        let waiting = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
+        try await Task.sleep(for: .milliseconds(450))
+        // In the half second since, the host says it had a free slot for a
+        // quarter of a second, all of it while work waited here.
+        host.report(freeSeconds: 10.25, at: start.addingTimeInterval(0.5))
+        await scheduler.refresh()
+        let idle = try #require(await scheduler.snapshot().hosts.first?.idleWithWorkSeconds)
+        #expect(idle > 0.15 && idle <= 0.25, "idle with work \(idle) s")
+        _ = await (running.value, waiting.value)
+
+        // Free time with nothing waiting isn't idle with work.
+        host.report(freeSeconds: 12, at: Date())
+        await scheduler.refresh()
+        let before = try #require(await scheduler.snapshot().hosts.first?.idleWithWorkSeconds)
+        try await Task.sleep(for: .milliseconds(300))
+        host.report(freeSeconds: 12.3, at: Date())
+        await scheduler.refresh()
+        let snapshot = await scheduler.snapshot()
+        #expect(snapshot.hosts.first?.idleWithWorkSeconds == before)
+        #expect(snapshot.idleWithWorkSeconds == before)
+    }
+
     @Test func answersBusyBeforeTheDeadline() async {
         let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 1.5))
         let scheduler = await Scheduler.with([host])

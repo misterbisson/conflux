@@ -67,6 +67,40 @@ public enum HostState: Sendable, Equatable {
     }
 }
 
+/// What went wrong with requests sent to hosts, by kind.
+public struct FailureCounts: Sendable, Equatable {
+    /// Nothing answered: refused, reset, timed out, or the host was lost.
+    public var unavailable = 0
+    /// The runtime answered with a server error.
+    public var failed = 0
+    /// The host had no free slot when the request reached it: another
+    /// gateway took it first. Not the host's fault.
+    public var busy = 0
+    /// The client's deadline passed while the request ran. Not the host's
+    /// fault either.
+    public var deadline = 0
+
+    public init(unavailable: Int = 0, failed: Int = 0, busy: Int = 0, deadline: Int = 0) {
+        self.unavailable = unavailable
+        self.failed = failed
+        self.busy = busy
+        self.deadline = deadline
+    }
+
+    /// The ones that count against a host: not answering, and server errors.
+    public var hostFaults: Int { unavailable + failed }
+    public var total: Int { unavailable + failed + busy + deadline }
+
+    mutating func record(_ error: HostError, outOfTime: Bool) {
+        switch error {
+        case _ where outOfTime: deadline += 1
+        case .busy: busy += 1
+        case .unavailable: unavailable += 1
+        case .failed: failed += 1
+        }
+    }
+}
+
 public struct HostSnapshot: Sendable, Equatable, Identifiable {
     public var id: String
     public var model: ModelInfo?
@@ -75,23 +109,63 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
     public var capacity: Int
     public var active: Int
     public var completed: Int
-    public var failed: Int
+    public var failures: FailureCounts
     /// Smoothed seconds per request, once there's history.
     public var typicalSeconds: Double?
+    /// Completions in the last ten minutes, scaled to an hour.
+    public var perHour: Double
+    /// Seconds this host had a free slot while work it could run waited at
+    /// this gateway. Should stay near zero.
+    public var idleWithWorkSeconds: Double
+    /// Seconds this host has had a free slot at all, by its own count. A
+    /// host reports it to peers' gateways, which can't see its slots.
+    public var freeSeconds: Double
+
+    public init(id: String, model: ModelInfo? = nil, state: HostState, slots: Int = 0, capacity: Int = 0,
+                active: Int = 0, completed: Int = 0, failures: FailureCounts = FailureCounts(),
+                typicalSeconds: Double? = nil, perHour: Double = 0, idleWithWorkSeconds: Double = 0,
+                freeSeconds: Double = 0) {
+        self.id = id
+        self.model = model
+        self.state = state
+        self.slots = slots
+        self.capacity = capacity
+        self.active = active
+        self.completed = completed
+        self.failures = failures
+        self.typicalSeconds = typicalSeconds
+        self.perHour = perHour
+        self.idleWithWorkSeconds = idleWithWorkSeconds
+        self.freeSeconds = freeSeconds
+    }
+
+    /// Requests that failed because of the host.
+    public var failed: Int { failures.hostFaults }
 }
 
 public struct SchedulerSnapshot: Sendable, Equatable {
     public var hosts: [HostSnapshot]
     public var queued: Int
+    /// Requests this gateway completed, on any host.
     public var completed: Int
-    public var failed: Int
+    /// What went wrong with requests this gateway sent to hosts. Most were
+    /// retried on another host.
+    public var failures: FailureCounts
+    /// Answers passed on from runtimes that refused a request (4xx).
+    public var rejected: Int
+    /// Answers of 429: no slot in time.
     public var busy: Int
+    /// Answers of 503: hosts failed and time ran out, or none was up.
     public var unavailable: Int
-    /// Completions in the last ten minutes, scaled to an hour.
+    /// This gateway's completions in the last ten minutes, scaled to an hour.
     public var perHour: Double
-    /// Time a host with a free slot spent idle while compatible work waited.
-    /// Should stay near zero.
+    /// The hosts' idle-with-work seconds, added up: seconds of a host with a
+    /// free slot sitting idle while work it could run waited here. Should
+    /// stay near zero.
     public var idleWithWorkSeconds: Double
+
+    /// Requests that failed because of a host.
+    public var failed: Int { failures.hostFaults }
 }
 
 /// Matches requests to hosts and keeps every slot busy while work waits.
@@ -110,8 +184,25 @@ public actor Scheduler {
         var limit: (slots: Int, reason: String?)?
         var active: [UUID: Date] = [:]
         var completed = 0
-        var failed = 0
+        var failures = FailureCounts()
         var typical: Double?
+        /// When requests completed, for throughput. Ten minutes are kept.
+        var recent: [Date] = []
+
+        // Idle-with-work accounting (see `account()`). Each `…Since` is set
+        // while its condition holds, and the time is added when it changes.
+        /// Seconds with a free slot, as this scheduler sees the host.
+        var freeTime: TimeInterval = 0
+        var freeSince: Date?
+        /// Seconds that work this host could run waited here.
+        var waitedTime: TimeInterval = 0
+        var waitedSince: Date?
+        /// Seconds both held, for a host whose slots this scheduler sees.
+        var idleTime: TimeInterval = 0
+        var idleSince: Date?
+        /// For a host on another device, which counts its own free time: the
+        /// last count it reported, and `waitedTime` when it arrived.
+        var reported: (free: Double, waited: TimeInterval, at: Date)?
 
         var capacity: Int {
             guard intent == .serving, availability == .available, model != nil else { return 0 }
@@ -164,10 +255,12 @@ public actor Scheduler {
     private var seen: [String: ModelInfo] = [:]
     private var inFlight: [String: Task<Outcome, Never>] = [:]
     private var finished: [String: (outcome: Outcome, at: Date)] = [:]
-    private var completedCount = 0, failedCount = 0, busyCount = 0, unavailableCount = 0
+    private var completedCount = 0, rejectedCount = 0, busyCount = 0, unavailableCount = 0
+    private var failures = FailureCounts()
     private var recent: [Date] = []
+    /// Every host's idle-with-work time, kept here too so it outlasts hosts
+    /// that leave.
     private var idleWithWork: TimeInterval = 0
-    private var idleSince: Date?
     private var refreshing: Task<Void, Never>?
 
     public init(config: SchedulerConfig = SchedulerConfig()) {
@@ -204,9 +297,11 @@ public actor Scheduler {
             guard let host = entries[id]?.host else { continue }
             let model = await host.model
             let availability = await host.availability
+            let reported = await host.freeTime
             entries[id]?.model = model
             entries[id]?.availability = availability
             if let model { seen[model.id] = model }
+            if let reported { note(reported, for: id) }
         }
         dispatch()
     }
@@ -298,14 +393,15 @@ public actor Scheduler {
                     recent.append(Date())
                     return .completed(reply, model: reply.model ?? model)
                 }
+                rejectedCount += 1
                 return .rejected(reply)
             case .failure(let error):
                 // Running out of the client's time isn't the host's fault.
                 let outOfTime = remaining().map { $0 <= 0.5 } ?? false
+                failures.record(error, outOfTime: outOfTime)
                 if outOfTime {
                     return unavailable(retryAfter: estimateWait(choice), "the deadline passed while the request was running")
                 }
-                if case .busy = error {} else { failedCount += 1 }
                 tried.insert(hostID)
                 let message: String = switch error {
                 case .unavailable(let why), .busy(let why): why
@@ -346,18 +442,20 @@ public actor Scheduler {
         entries[lease.host]?.active[lease.id] = nil
         switch result {
         case .success(let reply):
-            entries[lease.host]?.record(seconds: Date().timeIntervalSince(started))
-            if (200..<300).contains(reply.status) { entries[lease.host]?.completed += 1 }
+            let now = Date()
+            entries[lease.host]?.record(seconds: now.timeIntervalSince(started))
+            if (200..<300).contains(reply.status) {
+                entries[lease.host]?.completed += 1
+                entries[lease.host]?.recent.append(now)
+                if let first = entries[lease.host]?.recent.first, first < now.addingTimeInterval(-600) {
+                    entries[lease.host]?.recent.removeAll { $0 < now.addingTimeInterval(-600) }
+                }
+            }
         case .failure(let error):
             let outOfTime = remaining().map { $0 <= 0.5 } ?? false
-            switch error {
-            case _ where outOfTime, .busy:
-                break
-            case .unavailable(let why):
-                entries[lease.host]?.failed += 1
+            entries[lease.host]?.failures.record(error, outOfTime: outOfTime)
+            if case .unavailable(let why) = error, !outOfTime {
                 entries[lease.host]?.availability = .starting("not answering: \(why)")
-            case .failed:
-                entries[lease.host]?.failed += 1
             }
         }
         dispatch()
@@ -383,6 +481,7 @@ public actor Scheduler {
             return .busy(retryAfter: 1)
         }
         let lease = reserve(hostID)
+        account()
         switch await perform(body, lease: lease, host: entry.host, remaining: remaining) {
         case .success(let reply):
             return (200..<300).contains(reply.status) ? .completed(reply, model: model) : .rejected(reply)
@@ -404,14 +503,17 @@ public actor Scheduler {
     /// or nil if none does before `until`.
     private func acquire(choice: ModelChoice, excluding: Set<String>, until: Date,
                          remaining: @escaping () -> TimeInterval?) async -> Lease? {
-        if let id = pick(choice: choice, excluding: excluding, remaining: remaining()) { return reserve(id) }
+        if let id = pick(choice: choice, excluding: excluding, remaining: remaining()) {
+            defer { account() }
+            return reserve(id)
+        }
         let wait = until.timeIntervalSinceNow
         guard wait > 0 else { return nil }
         let id = UUID()
         return await withCheckedContinuation { continuation in
             waiting.append(Waiter(id: id, choice: choice, excluded: excluding, remaining: remaining,
                                   continuation: continuation))
-            noteIdle()
+            account()
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(wait))
                 await self?.expire(id)
@@ -428,18 +530,28 @@ public actor Scheduler {
     private func expire(_ id: UUID) {
         guard let index = waiting.firstIndex(where: { $0.id == id }) else { return }
         waiting.remove(at: index).continuation.resume(returning: nil)
-        noteIdle()
+        account()
     }
 
     /// The most preferred host with a free slot whose typical time fits.
     private func pick(choice: ModelChoice, excluding: Set<String>, remaining: TimeInterval?) -> String? {
         let candidates = order.compactMap { id -> (id: String, rank: Int, free: Int)? in
-            guard !excluding.contains(id), let entry = entries[id], entry.free > 0,
-                  let model = entry.model, let rank = choice.rank(model) else { return nil }
-            if let remaining, remaining <= (entry.typical ?? 0) { return nil }
+            guard let entry = entries[id], entry.free > 0,
+                  let rank = rank(entry, for: choice, excluding: excluding, remaining: remaining) else { return nil }
             return (id, rank, entry.free)
         }
         return candidates.min { ($0.rank, -$0.free) < ($1.rank, -$1.free) }?.id
+    }
+
+    /// How far down a request's preferences this host is, if the request
+    /// could run on it at all, free slot or not: its model is accepted, the
+    /// request hasn't failed there, and its typical time fits.
+    private func rank(_ entry: Entry, for choice: ModelChoice, excluding: Set<String>,
+                      remaining: TimeInterval?) -> Int? {
+        guard !excluding.contains(entry.host.id), let model = entry.model, let rank = choice.rank(model)
+        else { return nil }
+        if let remaining, remaining <= (entry.typical ?? 0) { return nil }
+        return rank
     }
 
     /// Hands free slots to waiting requests, oldest first.
@@ -455,7 +567,7 @@ public actor Scheduler {
                 index += 1
             }
         }
-        noteIdle()
+        account()
     }
 
     /// Seconds until a slot is likely to free up for this choice.
@@ -500,28 +612,73 @@ public actor Scheduler {
         recent.removeAll { $0 < Date().addingTimeInterval(-600) }
     }
 
-    /// Accumulates time when a request waits while some host could have
-    /// taken it.
-    private func noteIdle() {
+    /// Keeps each host's idle-with-work time: how long it had a free slot
+    /// while a request it could run waited here. Called whenever slots or
+    /// the queue change.
+    ///
+    /// For a host whose slots this scheduler holds, that's exact. A host on
+    /// another device may be free when this gateway thinks it's full, or
+    /// busy with other gateways' work, so it counts its own free time and
+    /// reports it (`note(_:for:)`).
+    private func account() {
         let now = Date()
-        if let since = idleSince { idleWithWork += now.timeIntervalSince(since) }
-        let idle = waiting.contains { waiter in
-            entries.values.contains { $0.free > 0 && !waiter.excluded.contains($0.host.id)
-                && ($0.model.map { waiter.choice.rank($0) != nil } ?? false) }
+        for id in order {
+            guard var entry = entries[id] else { continue }
+            if let since = entry.freeSince { entry.freeTime += now.timeIntervalSince(since) }
+            if let since = entry.waitedSince { entry.waitedTime += now.timeIntervalSince(since) }
+            if let since = entry.idleSince {
+                let idle = now.timeIntervalSince(since)
+                entry.idleTime += idle
+                idleWithWork += idle
+            }
+            let free = entry.free > 0
+            let waited = waiting.contains { rank(entry, for: $0.choice, excluding: $0.excluded,
+                                                 remaining: $0.remaining()) != nil }
+            entry.freeSince = free ? now : nil
+            entry.waitedSince = waited ? now : nil
+            entry.idleSince = free && waited && entry.reported == nil ? now : nil
+            entries[id] = entry
         }
-        idleSince = idle ? now : nil
+    }
+
+    /// Takes a free-time count from a host on another device, and counts the
+    /// part of it spent while work for that host waited here as idle with
+    /// work. Between two reports, the share is the fraction of the time
+    /// that work waited: exact when work waited throughout, as it does
+    /// while a mesh is saturated.
+    private func note(_ reported: (seconds: Double, at: Date), for id: String) {
+        account()
+        guard var entry = entries[id] else { return }
+        if let last = entry.reported {
+            guard reported.at > last.at else { return }
+            let span = reported.at.timeIntervalSince(last.at)
+            let free = reported.seconds - last.free
+            if free > 0, span > 0 { // A count that went down is a host that restarted.
+                let share = min(1, max(0, (entry.waitedTime - last.waited) / span))
+                let idle = min(free, span) * share
+                entry.idleTime += idle
+                idleWithWork += idle
+            }
+        }
+        entry.reported = (reported.seconds, entry.waitedTime, reported.at)
+        entry.idleSince = nil
+        entries[id] = entry
     }
 
     public func snapshot() -> SchedulerSnapshot {
+        account()
         let cutoff = Date().addingTimeInterval(-600)
         let hosts = order.compactMap { id -> HostSnapshot? in
             guard let e = entries[id] else { return nil }
             return HostSnapshot(id: id, model: e.model, state: e.state, slots: e.host.slots, capacity: e.capacity,
-                                active: e.active.count, completed: e.completed, failed: e.failed,
-                                typicalSeconds: e.typical)
+                                active: e.active.count, completed: e.completed, failures: e.failures,
+                                typicalSeconds: e.typical,
+                                perHour: Double(e.recent.filter { $0 > cutoff }.count) * 6,
+                                idleWithWorkSeconds: e.idleTime, freeSeconds: e.freeTime)
         }
         return SchedulerSnapshot(hosts: hosts, queued: waiting.count, completed: completedCount,
-                                 failed: failedCount, busy: busyCount, unavailable: unavailableCount,
+                                 failures: failures, rejected: rejectedCount, busy: busyCount,
+                                 unavailable: unavailableCount,
                                  perHour: Double(recent.filter { $0 > cutoff }.count) * 6,
                                  idleWithWorkSeconds: idleWithWork)
     }

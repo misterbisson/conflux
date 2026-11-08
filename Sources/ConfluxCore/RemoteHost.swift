@@ -25,6 +25,7 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
     private let session: URLSession
     private let lock = NSLock()
     private var status: HostStatus?
+    private var statusAt = Date.distantPast
     private var misses = 0
     private var answering = false
     private var polling: Task<Void, Never>?
@@ -61,6 +62,12 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             }
             if let problem = await link.problem { return .starting("can't reach the peer: \(problem)") }
             return .starting(misses > 0 ? "the peer isn't answering" : "connecting to the peer")
+        }
+    }
+
+    public var freeTime: (seconds: Double, at: Date)? {
+        get async {
+            lock.withLock { answering ? status?.freeSeconds.map { ($0, statusAt) } : nil }
         }
     }
 
@@ -110,6 +117,7 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             let status = try HostService.decoder.decode(HostStatus.self, from: data)
             lock.withLock {
                 self.status = status
+                statusAt = Date()
                 misses = 0
                 answering = true
             }

@@ -96,6 +96,23 @@ import Testing
         #expect(!Gateway.constantTimeEqual("abc", "abcd"))
     }
 
+    @Test func healthCountsForClientsWithTheToken() async {
+        let gateway = Gateway(scheduler: await Scheduler.with([FakeHost(id: "h")]), token: "t")
+        _ = await gateway.handle(request())
+        let anonymous = json(await gateway.handle(request("GET", "/health", headers: [])))
+        #expect(anonymous.keys.sorted() == ["status"])
+        let health = json(await gateway.handle(request("GET", "/health")))
+        let mesh = health["mesh"] as? [String: Any]
+        #expect(mesh?["completed"] as? Int == 1)
+        #expect(mesh?["idle_with_work_seconds"] as? Double == 0)
+        #expect((mesh?["failures"] as? [String: Int])?["unavailable"] == 0)
+        let host = (health["hosts"] as? [[String: Any]])?.first
+        #expect(host?["id"] as? String == "h")
+        #expect(host?["state"] as? String == "ready")
+        #expect(host?["completed"] as? Int == 1)
+        #expect(host?["model"] as? String == "model-a")
+    }
+
     @Test func responsesNameWhatRan() async {
         let gateway = Gateway(scheduler: await Scheduler.with([FakeHost(id: "h")]), token: "t")
         let body = json(await gateway.handle(request()))

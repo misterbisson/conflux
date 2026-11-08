@@ -18,7 +18,7 @@ The gateway serves a subset of the OpenAI API on loopback, at
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health` | Whether the gateway is up. 200 even when no host is available. |
+| `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time |
 | `GET /v1/models` | Every model currently served in the mesh, plus aliases |
 | `POST /v1/chat/completions` | One request, including image input |
 
