@@ -51,6 +51,11 @@ targets:
       # archived binaries import.
       - path: App/PrivacyInfo.xcprivacy
         buildPhase: resources
+      # The licences of what the app includes, shown in its About window.
+      # tools/notices/make-notices.py writes it, and tools/ci/check-app.sh
+      # checks it names the versions Package.swift pins.
+      - path: App/Credits.html
+        buildPhase: resources
     dependencies:
       - package: ConfluxPackage
         product: ConfluxCore
