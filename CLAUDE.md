@@ -6,11 +6,11 @@ conflux is a personal inference mesh for Apple devices. Start with
 
 ## Building
 
-A Swift package, macOS 15 or later, and iPadOS 18 for the iPad app. Its only
+A Swift package, macOS 27 or later, and iPadOS 27 for the iPad app: the
+first versions in which Apple's on-device model reads images. Its only
 dependencies are two prebuilt binaries, pinned by version and checksum in
-`Package.swift`: llama.cpp's xcframework and apple-iroh's. macOS 15 and
-iPadOS 18 are apple-iroh's floors. Code that only the Mac can run, such as
-starting `llama-server`, sits behind `#if os(macOS)`.
+`Package.swift`: llama.cpp's xcframework and apple-iroh's. Code that only the
+Mac can run, such as starting `llama-server`, sits behind `#if os(macOS)`.
 
 ```bash
 swift build

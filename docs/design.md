@@ -507,9 +507,9 @@ distribution.
 Later candidates, each behind the same host interface:
 
 - **Apple Foundation Models**: a system-provided model that takes text and
-  images, advertised as a capability rather than an artifact. It needs
-  macOS 26 or iPadOS 26 with Apple Intelligence turned on, so it's offered
-  only where the OS has it. The weights aren't chosen by conflux,
+  images, advertised as a capability rather than an artifact. It reads
+  images from macOS 27 and iPadOS 27, conflux's floors, and needs Apple
+  Intelligence turned on. The weights aren't chosen by conflux,
   can't be pinned, and change with OS updates. Its identity is the OS build.
 - **MLX**: a strong option on Apple Silicon, for artifacts that run only there.
 

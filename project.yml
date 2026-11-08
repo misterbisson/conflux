@@ -16,8 +16,10 @@ name: conflux
 options:
   bundleIdPrefix: com.caseybisson
   deploymentTarget:
-    macOS: "15.0"
-    iOS: "18.0"
+    # Apple's on-device model reads images from 27 (docs/plan.md, Phase 4).
+    # Package.swift says the same.
+    macOS: "27.0"
+    iOS: "27.0"
   createIntermediateGroups: true
 
 configFiles:

@@ -4,7 +4,9 @@ import PackageDescription
 
 let package = Package(
     name: "conflux",
-    platforms: [.macOS(.v15), .iOS(.v18)],
+    // macOS 27 and iPadOS 27: Apple's on-device model reads images from 27
+    // (docs/plan.md, Phase 4).
+    platforms: [.macOS("27.0"), .iOS("27.0")],
     products: [
         .executable(name: "conflux", targets: ["conflux"]),
         .executable(name: "conflux-bench", targets: ["conflux-bench"]),
