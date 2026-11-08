@@ -10,14 +10,21 @@ public final class HTTPServer: @unchecked Sendable {
     public typealias Handler = @Sendable (HTTPRequest) async -> HTTPResponse
 
     public let maxBodyBytes: Int
+    /// Accept only connections this process opened (`ProcessSockets`).
+    let onlyFromThisProcess: Bool
     private let handler: Handler
     private let queue = DispatchQueue(label: "conflux.http")
     private let lock = NSLock()
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
 
-    public init(maxBodyBytes: Int = 64 * 1024 * 1024, handler: @escaping Handler) {
+    public convenience init(maxBodyBytes: Int = 64 * 1024 * 1024, handler: @escaping Handler) {
+        self.init(maxBodyBytes: maxBodyBytes, onlyFromThisProcess: false, handler: handler)
+    }
+
+    init(maxBodyBytes: Int = 64 * 1024 * 1024, onlyFromThisProcess: Bool, handler: @escaping Handler) {
         self.maxBodyBytes = maxBodyBytes
+        self.onlyFromThisProcess = onlyFromThisProcess
         self.handler = handler
     }
 
@@ -60,6 +67,13 @@ public final class HTTPServer: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
+        if onlyFromThisProcess {
+            guard case .hostPort(_, let port) = connection.endpoint, ProcessSockets.ownsLocalPort(port.rawValue)
+            else {
+                connection.cancel()
+                return
+            }
+        }
         lock.withLock { connections[ObjectIdentifier(connection)] = connection }
         connection.stateUpdateHandler = { [weak self] state in
             switch state {

@@ -6,7 +6,7 @@ with llama.cpp. Other Macs and iPads join in later phases
 
 ## What you need
 
-- macOS 14 or later, on Apple Silicon.
+- macOS 15 or later, on Apple Silicon.
 - A GGUF model and, for a vision model, its multimodal projector (`mmproj`).
   [phase-0.md](phase-0.md) says how to choose one and how many slots it
   should get.
@@ -64,6 +64,52 @@ build, both runtimes give the same answers ([design.md](design.md#runtimes)).
 [clients.md](clients.md) has the full contract: deadlines, `Retry-After`,
 request IDs, and recording which model answered.
 
+## Peers: other Macs' models
+
+Macs that name each other as peers use each other's models over
+[iroh](design.md#transport-and-trust). A client of any of them sees every
+peer's model in `/v1/models`, and its requests go to whichever host is free
+and serves a model it accepts. Each response says which model ran.
+
+Each Mac has an endpoint ID, the public half of a key that never leaves it.
+Give each Mac the others' IDs:
+
+- **In the app:** **Mesh** shows this Mac's ID, with **Copy ID**. Paste
+  another Mac's ID in **Peer** and click **Add**, then **Start**.
+- **Without a window:**
+
+  ```bash
+  swift run -c release conflux id
+  ```
+
+  prints this Mac's ID, and `--peer` names another's, once per peer:
+
+  ```bash
+  swift run -c release conflux serve --model ... --peer 3f2a...
+  ```
+
+  A Mac that serves no model can still use its peers': `conflux serve --peer
+  3f2a...` with no `--model`.
+
+Both Macs have to list each other. Until then, each refuses the other, and the
+window counts the refused connections. A Mac with no peers starts no iroh
+endpoint and contacts nothing.
+
+The window shows each peer's state, its model, and whether the connection is
+direct or relayed, with its round trip. A peer that stops is shown as not
+answering within seconds, and its requests go elsewhere or get a 503 with
+`Retry-After`.
+
+To try it on one Mac, run two nodes with different identities and ports:
+
+```bash
+swift run -c release conflux serve --identity a --port 8091 --model ... --peer "$(swift run -c release conflux id --identity b)"
+```
+
+```bash
+swift run -c release conflux serve --identity b --port 8092 --peer "$(swift run -c release conflux id --identity a)"
+```
+
 ## What the states mean
 
 | State | Meaning |
@@ -103,6 +149,7 @@ the host serve anyway, and clients get the bad answers instead.
 | What | Where |
 |---|---|
 | Gateway token | `~/Library/Application Support/conflux/token` |
+| Device key, built from source | `~/Library/Application Support/conflux/identity/` (the app keeps it in the keychain) |
 | llama.cpp log | `~/Library/Logs/conflux/llama.log` |
 | `llama-server` log, with that runtime | `~/Library/Logs/conflux/llama-server.log` |
 | Model file hashes, cached | `~/Library/Caches/conflux/hashes.json` |

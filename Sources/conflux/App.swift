@@ -33,6 +33,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var port: UInt16?
     @Published private(set) var intent: OwnerIntent = .serving
     @Published var problem: String?
+    @Published private(set) var peers: [PeerStatus] = []
+    @Published private(set) var meshProblem: String?
+    @Published private(set) var refused = 0
+    /// This Mac's endpoint ID, for other devices' peer lists.
+    let endpointID: String?
 
     let node = ConfluxNode()
     private let access = ModelAccess()
@@ -46,9 +51,17 @@ final class AppModel: ObservableObject {
         } else {
             settings = NodeSettings()
         }
+        // Made and kept in the keychain the first time. Nothing is contacted
+        // until there are peers and the node starts.
+        endpointID = try? DeviceIdentity.load().endpointID
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                if let self { self.snapshot = await self.node.scheduler.snapshot() }
+                if let self {
+                    self.snapshot = await self.node.scheduler.snapshot()
+                    self.peers = self.node.peers
+                    self.meshProblem = self.node.meshProblem
+                    self.refused = self.node.refusedConnections
+                }
                 try? await Task.sleep(for: .seconds(1))
             }
         }
@@ -68,11 +81,30 @@ final class AppModel: ObservableObject {
         if let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 
-    var host: HostSnapshot? { snapshot?.hosts.first }
+    /// This Mac's own host.
+    var host: HostSnapshot? { snapshot?.hosts.first { !$0.id.hasPrefix("peer-") } }
+
+    func peerHost(_ peer: PeerStatus) -> HostSnapshot? { snapshot?.hosts.first { $0.id == peer.hostID } }
+
+    var canStart: Bool { !(settings.host?.model.isEmpty ?? true) || !settings.peers.isEmpty }
+
+    /// Adds another device's endpoint ID. Returns why not, if it can't.
+    func addPeer(_ text: String) -> String? {
+        let id = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard DeviceIdentity.isEndpointID(id) else {
+            return "An endpoint ID is 64 characters, 0-9 and a-f. Copy it from the other Mac's conflux window."
+        }
+        guard id != endpointID else { return "That's this Mac's own ID." }
+        if !settings.peers.contains(id) { settings.peers.append(id) }
+        return nil
+    }
+
+    func removePeer(_ id: String) { settings.peers.removeAll { $0 == id } }
 
     func start() {
         problem = nil
         var settings = settings
+        if settings.host?.model.isEmpty == true { settings.host = nil }
         if var host = settings.host {
             // In the sandbox, the model files open only through the bookmarks
             // made when they were chosen.

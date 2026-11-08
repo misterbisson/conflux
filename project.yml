@@ -16,7 +16,7 @@ name: conflux
 options:
   bundleIdPrefix: com.caseybisson
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "15.0"
   createIntermediateGroups: true
 
 configFiles:
@@ -86,8 +86,12 @@ targets:
       properties:
         # App Store Connect, TestFlight included, takes only sandboxed apps.
         com.apple.security.app-sandbox: true
-        # The gateway listens on loopback.
+        # The gateway listens on loopback, and so does the host service that
+        # peers reach over iroh.
         com.apple.security.network.server: true
+        # The mesh: iroh's connections to peers and relays, and the gateway's
+        # to the loopback ports iroh forwards to peers.
+        com.apple.security.network.client: true
         # Model files are the ones the user picks, kept across launches by
         # security-scoped bookmarks (Sources/conflux/ModelAccess.swift).
         com.apple.security.files.user-selected.read-only: true
@@ -110,6 +114,10 @@ targets:
         # - Sources/ConfluxCore/Gateway.swift: the gateway's bearer token is 32
         #   bytes from SecRandomCopyBytes, compared on each request. A secret,
         #   not a key: nothing is encrypted with it.
+        # - Sources/ConfluxCore/DeviceIdentity.swift: keeps this device's iroh
+        #   key in the keychain, and derives its public half, the endpoint ID,
+        #   through CryptoKit's Ed25519. A signing key's public half: nothing
+        #   is encrypted here.
         # - The gateway serves plain HTTP on loopback (HTTPServer.swift), and
         #   LlamaServerHost talks plain HTTP to llama-server on loopback. No TLS.
         # - llama.framework holds no cryptography.

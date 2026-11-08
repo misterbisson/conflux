@@ -124,6 +124,7 @@ public actor Scheduler {
             case .offline: return .offline
             case .failed(let why): return .failed(why)
             case .starting(let why): return .starting(why)
+            case .paused(let why): return .paused(why)
             case .available: break
             }
             switch intent {
@@ -290,58 +291,107 @@ public actor Scheduler {
                 tried.insert(hostID)
                 continue
             }
-            let started = Date()
-
-            let timeout = remaining() ?? config.maxExecution
-            let result: Result<HostReply, HostError>
-            if timeout <= 0 {
-                result = .failure(.unavailable("no time left before the deadline"))
-            } else {
-                do {
-                    result = .success(try await entry.host.complete(body, timeout: timeout))
-                } catch let error as HostError {
-                    result = .failure(error)
-                } catch {
-                    result = .failure(.unavailable(error.localizedDescription))
-                }
-            }
-
-            entries[hostID]?.active[lease.id] = nil
-            switch result {
+            switch await perform(body, lease: lease, host: entry.host, remaining: remaining) {
             case .success(let reply):
-                entries[hostID]?.record(seconds: Date().timeIntervalSince(started))
-                dispatch()
                 if (200..<300).contains(reply.status) {
-                    entries[hostID]?.completed += 1
                     completedCount += 1
                     recent.append(Date())
-                    return .completed(reply, model: model)
+                    return .completed(reply, model: reply.model ?? model)
                 }
                 return .rejected(reply)
             case .failure(let error):
                 // Running out of the client's time isn't the host's fault.
                 let outOfTime = remaining().map { $0 <= 0.5 } ?? false
                 if outOfTime {
-                    dispatch()
                     return unavailable(retryAfter: estimateWait(choice), "the deadline passed while the request was running")
                 }
-                entries[hostID]?.failed += 1
-                failedCount += 1
-                if case .unavailable(let why) = error {
-                    entries[hostID]?.availability = .starting("not answering: \(why)")
-                }
-                dispatch()
+                if case .busy = error {} else { failedCount += 1 }
                 tried.insert(hostID)
                 let message: String = switch error {
-                case .unavailable(let why): why
+                case .unavailable(let why), .busy(let why): why
                 case .failed(let status, let why): "runtime answered \(status): \(why)"
                 }
                 let others = entries.values.contains { $0.model.map { choice.rank($0) != nil } ?? false
                     && !tried.contains($0.host.id) && $0.capacity > 0 }
                 if !others || (remaining().map { $0 <= 0 } ?? false) {
+                    if case .busy = error {
+                        busyCount += 1
+                        return .busy(retryAfter: estimateWait(choice))
+                    }
                     return unavailable(retryAfter: 5, message)
                 }
             }
+        }
+    }
+
+    /// Runs a request on the host holding `lease`, and keeps that host's
+    /// record: its slot, its typical time, what it completed and failed.
+    private func perform(_ body: Data, lease: Lease, host: any InferenceHost,
+                         remaining: () -> TimeInterval?) async -> Result<HostReply, HostError> {
+        let started = Date()
+        let timeout = remaining() ?? config.maxExecution
+        let result: Result<HostReply, HostError>
+        if timeout <= 0 {
+            result = .failure(.unavailable("no time left before the deadline"))
+        } else {
+            do {
+                result = .success(try await host.complete(body, timeout: timeout))
+            } catch let error as HostError {
+                result = .failure(error)
+            } catch {
+                result = .failure(.unavailable(error.localizedDescription))
+            }
+        }
+
+        entries[lease.host]?.active[lease.id] = nil
+        switch result {
+        case .success(let reply):
+            entries[lease.host]?.record(seconds: Date().timeIntervalSince(started))
+            if (200..<300).contains(reply.status) { entries[lease.host]?.completed += 1 }
+        case .failure(let error):
+            let outOfTime = remaining().map { $0 <= 0.5 } ?? false
+            switch error {
+            case _ where outOfTime, .busy:
+                break
+            case .unavailable(let why):
+                entries[lease.host]?.failed += 1
+                entries[lease.host]?.availability = .starting("not answering: \(why)")
+            case .failed:
+                entries[lease.host]?.failed += 1
+            }
+        }
+        dispatch()
+        return result
+    }
+
+    /// Runs a request from another device's gateway on one of this node's
+    /// own hosts, now or not at all: no queue, since that gateway holds the
+    /// queue and can try another host. Admission is this host's: a request
+    /// gets a slot only if one is free, whoever's gateway it came from.
+    public func run(_ body: Data, onHost hostID: String, deadline: Date?) async -> Outcome {
+        func remaining() -> TimeInterval? { deadline.map { $0.timeIntervalSinceNow - config.margin } }
+        guard let entry = entries[hostID], let model = entry.model else {
+            return .unavailable(retryAfter: 30, message: "this device isn't serving a model")
+        }
+        guard entry.free > 0 else {
+            if entry.capacity == 0 {
+                return .unavailable(retryAfter: 30, message: entry.state.detail ?? "this device isn't taking work")
+            }
+            return .busy(retryAfter: estimateWait(ModelChoice(options: [.exact(model.id)])))
+        }
+        if let remaining = remaining(), remaining <= (entry.typical ?? 0) {
+            return .busy(retryAfter: 1)
+        }
+        let lease = reserve(hostID)
+        switch await perform(body, lease: lease, host: entry.host, remaining: remaining) {
+        case .success(let reply):
+            return (200..<300).contains(reply.status) ? .completed(reply, model: model) : .rejected(reply)
+        case .failure(.busy):
+            return .busy(retryAfter: 1)
+        case .failure(.unavailable(let why)):
+            return .unavailable(retryAfter: 5, message: why)
+        case .failure(.failed(let status, let why)):
+            return .unavailable(retryAfter: 5, message: "runtime answered \(status): \(why)")
         }
     }
 

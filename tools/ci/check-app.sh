@@ -176,7 +176,10 @@ check "export-compliance note names every source file that uses cryptography" \
 
 bundled=""
 for binary in "${binaries[@]}"; do
-	if strings -a "$binary" | grep -qiE 'ring_core_0_|ring-0\.1[0-9]|rustls|quinn-proto|OpenSSL [0-9]|BoringSSL|mbed ?TLS|libsodium'; then
+	# Not `strings | grep -q`: grep -q stops at the first match, strings dies
+	# of SIGPIPE, and pipefail turns the match into a miss.
+	if grep -qiE 'ring_core_0_|ring-0\.1[0-9]|rustls|quinn-proto|OpenSSL [0-9]|BoringSSL|mbed ?TLS|libsodium' \
+		< <(strings -a "$binary"); then
 		bundled+=" $(basename "$binary")"
 	fi
 done
@@ -200,6 +203,8 @@ check "sandboxed" "the App Sandbox entitlement is missing; App Store Connect ref
 	same "$(entitlement com.apple.security.app-sandbox)" true
 check "may listen (the gateway)" "com.apple.security.network.server is missing, so the gateway can't listen" \
 	same "$(entitlement com.apple.security.network.server)" true
+check "may connect (the mesh)" "com.apple.security.network.client is missing, so the app can't reach peers" \
+	same "$(entitlement com.apple.security.network.client)" true
 check "no get-task-allow" "the Release build claims get-task-allow, which App Store Connect refuses" \
 	absent "$(entitlement com.apple.security.get-task-allow)"
 

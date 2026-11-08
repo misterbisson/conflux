@@ -1,8 +1,7 @@
 import Foundation
 
-/// Something that runs chat completions for one model: in Phase 1, a
-/// supervised `llama-server` on this Mac. Hosts on other devices, reached over
-/// iroh, implement the same protocol later.
+/// Something that runs chat completions for one model: this Mac's own
+/// runtime, or another device's host reached over iroh (`RemoteHost`).
 public protocol InferenceHost: AnyObject, Sendable {
     var id: String { get }
     /// Nil until the host has loaded its model and knows what it serves.
@@ -23,6 +22,9 @@ public enum HostAvailability: Sendable, Equatable {
     /// Can't take work until something changes: a failed self-check, a
     /// runtime that keeps exiting.
     case failed(String)
+    /// Up, but taking no work: its owner paused or drained it, or resource
+    /// policy did. Reported by hosts on other devices.
+    case paused(String)
     /// Gone.
     case offline
 }
@@ -31,10 +33,14 @@ public enum HostAvailability: Sendable, Equatable {
 public struct HostReply: Sendable, Equatable {
     public var status: Int
     public var body: Data
+    /// What ran, when the host says. A host on another device does, since its
+    /// model can change between the gateway's last look and the answer.
+    public var model: ModelInfo?
 
-    public init(status: Int, body: Data) {
+    public init(status: Int, body: Data, model: ModelInfo? = nil) {
         self.status = status
         self.body = body
+        self.model = model
     }
 }
 
@@ -45,4 +51,8 @@ public enum HostError: Error, Equatable {
     /// The runtime answered with a server error. The request may go to
     /// another host.
     case failed(status: Int, message: String)
+    /// The host is up but has no free slot: another gateway took it first.
+    /// The request goes to another host, and this one isn't counted as
+    /// failing.
+    case busy(String)
 }
