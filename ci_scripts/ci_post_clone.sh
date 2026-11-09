@@ -115,13 +115,7 @@ tools="$(mktemp -d)"
 trap 'rm -rf "$tools"' EXIT
 url="https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
 say "fetching XcodeGen $XCODEGEN_VERSION"
-# GitHub's release downloads go down for minutes at a time: v0.4.1's first
-# build got six 504s in 35 seconds and failed both actions, and the same URL
-# worked ten minutes later. So retry for up to ten minutes, with curl's own
-# backoff, doubling from a second, rather than a few seconds apart.
-curl -fsSL --connect-timeout 30 --retry 12 --retry-all-errors --retry-max-time 600 \
-	-o "$tools/xcodegen.zip" "$url" ||
-	fail "couldn't fetch XcodeGen from $url after ten minutes of retrying. If GitHub is down (www.githubstatus.com), rebuild once it's back."
+curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$tools/xcodegen.zip" "$url"
 got="$(shasum -a 256 "$tools/xcodegen.zip" | awk '{ print $1 }')"
 [ "$got" = "$XCODEGEN_SHA256" ] ||
 	fail "XcodeGen checksum mismatch: expected $XCODEGEN_SHA256, got $got, from $url"
@@ -135,8 +129,8 @@ say "generating conflux.xcodeproj"
 # `conflux` is the Mac app's scheme and `conflux-ipad` the iPad app's, and
 # Xcode Cloud's workflow archives each. It finds them only as shared schemes,
 # so this looks for the files. Not `xcodebuild -list`: that resolves the
-# package, downloading its binaries, and when GitHub's release downloads fail
-# it lists no schemes, and the failure read as a missing scheme.
+# package, downloading its binaries, so a failed download reads as a missing
+# scheme.
 [ -d conflux.xcodeproj ] || fail "conflux.xcodeproj wasn't created"
 for scheme in conflux conflux-ipad; do
 	[ -f "conflux.xcodeproj/xcshareddata/xcschemes/$scheme.xcscheme" ] ||
@@ -159,18 +153,6 @@ if on_xcode_cloud && [ -n "${CI_XCODE_SCHEME:-}" ] && [ -n "${CI_PRODUCT_PLATFOR
 		fail "this $CI_PRODUCT_PLATFORM action builds the $CI_XCODE_SCHEME scheme; set the workflow's $CI_PRODUCT_PLATFORM action to the $want scheme (docs/releasing.md)"
 	fi
 	say "archiving the $CI_XCODE_SCHEME scheme for $CI_PRODUCT_PLATFORM"
-fi
-
-# --- the package's binaries ---------------------------------------------------
-# Xcode Cloud resolves packages after this hook, once, and its download of the
-# binary targets from GitHub's release downloads has no retry. Resolve them
-# here first, with retries, into the derived data its build uses, so a short
-# outage doesn't fail the release. It finds them there and doesn't fetch again.
-if on_xcode_cloud && [ -n "${CI_DERIVED_DATA_PATH:-}" ] && [ -n "${CI_XCODE_SCHEME:-}" ]; then
-	say "fetching the package's binaries"
-	tools/ci/retry.sh xcodebuild -resolvePackageDependencies -project conflux.xcodeproj \
-		-scheme "$CI_XCODE_SCHEME" -derivedDataPath "$CI_DERIVED_DATA_PATH" -quiet ||
-		fail "couldn't fetch the package's binaries after retrying. If GitHub is down (www.githubstatus.com), rebuild once it's back."
 fi
 
 say "done"
