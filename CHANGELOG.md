@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0](https://github.com/misterbisson/conflux/compare/v0.3.0...v0.4.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* conflux now needs macOS 27 or iPadOS 27. It no longer installs on macOS 15 to 26 or iPadOS 18 to 26.
+
+### Features
+
+* serve Apple's on-device model alongside the model file, and send what it declines elsewhere ([#31](https://github.com/misterbisson/conflux/issues/31)) ([3ca1aa3](https://github.com/misterbisson/conflux/commit/3ca1aa3569aec77f86c5b829999f81eaa672bc40))
+
+
+### Build System
+
+* require macOS 27 and iPadOS 27, the first to read images with Apple's on-device model ([#30](https://github.com/misterbisson/conflux/issues/30)) ([6a3d829](https://github.com/misterbisson/conflux/commit/6a3d8294e2d20bf514a300bd2454e7bf577402a8))
+
 ## [0.3.0](https://github.com/misterbisson/conflux/compare/v0.2.0...v0.3.0) (2026-11-08)
 
 
