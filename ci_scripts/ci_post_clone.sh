@@ -127,13 +127,34 @@ say "generating conflux.xcodeproj"
 # --- check what the build needs, by name --------------------------------------
 # XcodeGen can succeed and still write a project the build can't use. Read the
 # Schemes section only: the Targets section lists `conflux` too, so matching
-# anywhere would pass without a scheme.
+# anywhere would pass without a scheme. `conflux` is the Mac app's scheme and
+# `conflux-ipad` the iPad app's, and Xcode Cloud's workflow archives each.
 [ -d conflux.xcodeproj ] || fail "conflux.xcodeproj wasn't created"
-xcodebuild -project conflux.xcodeproj -list 2>/dev/null |
-	awk '/^[[:space:]]*Schemes:/ { s = 1; next } s && NF { print $1 }' |
-	grep -qx conflux ||
-	fail "the conflux scheme is missing"
-[ -f conflux.xcodeproj/xcshareddata/xcschemes/conflux.xcscheme ] ||
-	fail "the conflux scheme isn't shared, so Xcode Cloud can't see it"
+schemes="$(xcodebuild -project conflux.xcodeproj -list 2>/dev/null |
+	awk '/^[[:space:]]*Schemes:/ { s = 1; next } s && NF { print $1 }')"
+for scheme in conflux conflux-ipad; do
+	printf '%s\n' "$schemes" | grep -qx "$scheme" ||
+		fail "the $scheme scheme is missing"
+	[ -f "conflux.xcodeproj/xcshareddata/xcschemes/$scheme.xcscheme" ] ||
+		fail "the $scheme scheme isn't shared, so Xcode Cloud can't see it"
+done
+
+# --- the workflow's scheme fits its platform ----------------------------------
+# Each scheme builds one target for one platform. An iOS archive action given
+# the Mac app's scheme fails after this hook, with a list of every simulator
+# Xcode Cloud has and "Unable to find a destination matching the provided
+# destination specifier: { generic:1, platform:iOS }", which doesn't say the
+# scheme is the problem. This does. Neither value is a secret.
+if on_xcode_cloud && [ -n "${CI_XCODE_SCHEME:-}" ] && [ -n "${CI_PRODUCT_PLATFORM:-}" ]; then
+	case "$CI_PRODUCT_PLATFORM" in
+	macOS) want=conflux ;;
+	iOS | iPadOS) want=conflux-ipad ;;
+	*) want="" ;;
+	esac
+	if [ -n "$want" ] && [ "$CI_XCODE_SCHEME" != "$want" ]; then
+		fail "this $CI_PRODUCT_PLATFORM action builds the $CI_XCODE_SCHEME scheme; set the workflow's $CI_PRODUCT_PLATFORM action to the $want scheme (docs/releasing.md)"
+	fi
+	say "archiving the $CI_XCODE_SCHEME scheme for $CI_PRODUCT_PLATFORM"
+fi
 
 say "done"

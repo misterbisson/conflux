@@ -21,7 +21,7 @@ needs to be: Xcode Cloud manages the certificates and profiles itself.
 |---|---|
 | [`project.yml`](../project.yml) | The app's two targets, for [XcodeGen](https://github.com/yonaskolb/XcodeGen): `conflux`, the Mac app, compiles `Sources/conflux`, and `conflux-ipad`, the same app for iPadOS with the same bundle ID, compiles `Sources/conflux-ipad`. Both use the package's `ConfluxCore` library. |
 | [`App/`](../App) | The entitlements, the icon, the privacy manifest, and the signing settings, without a Team ID. |
-| [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post_clone.sh) | Fetches the starter model and generates `conflux.xcodeproj`. Xcode Cloud runs it by name after cloning; GitHub's CI runs it too. |
+| [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post_clone.sh) | Fetches the starter model and generates `conflux.xcodeproj`. Xcode Cloud runs it by name after cloning, once for each action, and it fails an action whose scheme doesn't fit its platform; GitHub's CI runs it too. |
 | [`tools/ci/fetch-starter-model.sh`](../tools/ci/fetch-starter-model.sh) | Fetches the starter model both apps ship, SmolVLM-256M-Instruct, pinned by revision and checksum, into the ignored `App/StarterModel`. `check-app.sh` and `build-ipad.sh` check each app holds exactly those files. |
 | [`.xcode-version`](../.xcode-version) | The Xcode that Xcode Cloud builds releases with, so GitHub can use the same one. |
 | [`tools/ci/build-app.sh`](../tools/ci/build-app.sh) | Archives the app signed ad hoc, checks it, and runs it in the sandbox. |
@@ -166,11 +166,19 @@ here. It's done once. No step needs a Team ID, key or token in the repository.
    - **Start conditions:** one, **Tag Changes**, for tags matching `v*`. Delete
      the default **Branch Changes** condition, and never add **Pull Request
      Changes** (see below).
-   - **Actions:** one, **Archive - macOS**, scheme `conflux`, with
-     **Distribution Preparation** set to **TestFlight (Internal Testing
-     Only)**.
-   - **Post-actions:** **TestFlight Internal Testing - macOS**, with that
-     archive, to the group from step 3.
+   - **Actions:** one for each platform, each with **Distribution
+     Preparation** set to **TestFlight (Internal Testing Only)**:
+     - **Archive - macOS**: platform macOS, scheme `conflux`, Build For
+       **Any Mac**.
+     - **Archive - iOS**: platform iOS, scheme **`conflux-ipad`**. Not
+       `conflux`: that scheme builds only the Mac app, and an iOS archive of
+       it fails with "Unable to find a destination matching the provided
+       destination specifier: { generic:1, platform:iOS }", followed by every
+       simulator Xcode Cloud has. The post-clone hook stops such an
+       action first, with a message naming the scheme to use.
+   - **Post-actions:** one for each archive, to the group from step 3:
+     **TestFlight Internal Testing - macOS** with Archive - macOS, and
+     **TestFlight Internal Testing - iOS** with Archive - iOS.
    - **Environment variables:** none. The team comes from Xcode Cloud: the
      post-clone hook writes `CI_TEAM_ID` into `App/Signing.local.xcconfig`
      when it holds a Team ID, and otherwise leaves signing to Xcode Cloud's
@@ -320,8 +328,10 @@ against it. It isn't legal advice for anyone else's use of conflux.
 
 - **The iPad app on TestFlight.** It shares the Mac app's bundle ID, so App
   Store Connect counts it as the same app once iOS is added as a platform to
-  that app's record, and Xcode Cloud's workflow needs an archive action for
-  the `conflux-ipad` scheme, for iOS. Neither is set up. Until they are, the
-  iPad app runs from Xcode, and releases are Mac only.
+  that app's record. The workflow has its archive action (step 5), but no iOS
+  build has reached TestFlight yet. Its two memory entitlements, Increased
+  Memory Limit and Extended Virtual Addressing, are App ID capabilities,
+  unlike the Mac app's keychain groups: if the iOS archive fails on its
+  profile, enable them on the App ID from step 1.
 
 - **The icon** is a generated placeholder.
