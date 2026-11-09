@@ -110,6 +110,14 @@ the build log**, because the log shows success.
 To release a version release-please wouldn't choose, end a pull request's
 description with a line of its own, `Release-As: x.y.z`.
 
+That includes a release for a change only Xcode Cloud can test. A change to
+`ci_scripts/` or the build scripts is `ci:` or `build:`, which doesn't release
+by itself, and Xcode Cloud builds only tags. Rebuilding an existing tag runs
+that tag's scripts, not `main`'s. So such a change first runs on Xcode Cloud
+with the next release, unless its pull request, or the next one, asks for one
+with `Release-As`. Add the line before merging: release-please reads the
+merged commit, and editing the description afterwards changes nothing.
+
 To change what a release says, edit the release pull request by hand: its
 `CHANGELOG.md`, and the same section of its description, which becomes the
 GitHub release's notes. release-please rewrites both after every merge to
