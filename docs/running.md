@@ -217,12 +217,13 @@ first version isn't a host yet. It's a memory probe: it checks whether a
 model fits on the iPad, and records the memory that took, to decide which
 models iPads can serve ([plan.md](plan.md), Phase 3).
 
-**Installing it.** From Xcode for now: it isn't on TestFlight yet
-([releasing.md](releasing.md#not-done-yet)). With your Team ID in
-`App/Signing.local.xcconfig` ([releasing.md](releasing.md#building-the-app-on-a-mac)),
-generate the project, open it, choose the `conflux-ipad` scheme and your iPad,
-and run. Xcode's automatic signing adds the app's two memory capabilities,
-the increased memory limit and extended virtual addressing, to its app ID the
+**Installing it.** From TestFlight, like the Mac app
+([releasing.md](releasing.md)): testers in the TestFlight group get both. Or
+build it: with your Team ID in `App/Signing.local.xcconfig`
+([releasing.md](releasing.md#building-the-app-on-a-mac)), generate the
+project, open it, choose the `conflux-ipad` scheme and your iPad, and run.
+Xcode's automatic signing adds the app's two memory capabilities, the
+increased memory limit and extended virtual addressing, to its app ID the
 first time.
 
 **The starter model** is listed first, so the probe can check something

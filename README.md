@@ -22,8 +22,9 @@ model that's too large for any single device.
 
 ## Status
 
-Phase 2, several Macs, is under way. The Mac app is built by Xcode Cloud and
-distributed through TestFlight, which the iCloud Keychain trust model needs.
+Phase 2, several Macs, is under way. The Mac app, and the iPad's memory probe, are
+built by Xcode Cloud and distributed through TestFlight, which the iCloud
+Keychain trust model needs.
 Macs signed in to the same Apple Account find each other through iCloud
 Keychain and use each other's models over iroh; peers can also be added by
 hand. Hosts pull work as slots free, fast hosts take one request ahead, and

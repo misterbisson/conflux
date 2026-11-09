@@ -1,15 +1,17 @@
 # Releasing
 
-The Mac app reaches testers through TestFlight. **GitHub checks, Xcode Cloud
-ships:**
+The Mac and iPad apps reach testers through TestFlight. **GitHub checks, Xcode
+Cloud ships:**
 
 - **GitHub Actions** runs on every pull request. It builds and tests the
   package, and it does everything Xcode Cloud does to make a release short of
   signing it: generates the project with the same hook, archives Release with
   the same Xcode, and checks the app for what App Store Connect requires.
-- **Xcode Cloud** runs when a `v*` tag is pushed. It archives the app, signs it
-  with the team's certificate, and uploads it to TestFlight for internal
-  testers. It runs no tests; GitHub already has.
+- **Xcode Cloud** runs when a `v*` tag is pushed. It archives the Mac app and
+  the iPad app, signs them with the team's certificate, and uploads them to
+  TestFlight for internal testers. It runs no tests; GitHub already has. Both
+  are one app in App Store Connect, since they share a bundle ID, and 0.4.0 was
+  the first release with both.
 
 The repository is public, so most of what follows is about keeping secrets out
 of it. Nothing that signs the app is in the repository or in GitHub, and nothing
@@ -332,11 +334,5 @@ compliance call, recorded here so a change to what the app contains is checked
 against it. It isn't legal advice for anyone else's use of conflux.
 
 ## Not done yet
-
-- **The iPad app on TestFlight.** It shares the Mac app's bundle ID, so App
-  Store Connect counts it as the same app once iOS is added as a platform to
-  that app's record. The workflow has its archive action (step 5), and the
-  App ID needs the two capabilities from step 1, but no iOS build has reached
-  TestFlight yet.
 
 - **The icon** is a generated placeholder.
