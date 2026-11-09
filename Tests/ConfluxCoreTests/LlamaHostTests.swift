@@ -179,6 +179,44 @@ struct LlamaHostIntegrationTests {
         #expect(try await host.complete(Data("{}".utf8), timeout: 10).status == 400)
     }
 
+    /// llama.cpp accepts each grammar the converter makes, and the answer
+    /// follows it. A schema it can't enforce goes to another host.
+    @Test func answersInTheRequestedShape() async throws {
+        let host = try await started()
+        defer { host.stop() }
+        let schemas = [
+            #"{"type":"object","properties":{"mood":{"enum":["happy","sad"]},"count":{"type":"integer"}},"required":["mood","count"],"additionalProperties":false}"#,
+            #"{"type":"array","items":{"type":"string","maxLength":6},"minItems":1,"maxItems":2}"#,
+            #"{"type":"object","properties":{"a key \"q\"":{"type":["boolean","null"]},"é":{"const":{"x":[1,2.5]}}},"required":["é"]}"#,
+            ##"{"$defs":{"leaf":{"type":"object","properties":{"kids":{"type":"array","items":{"$ref":"#/$defs/leaf"},"maxItems":1}},"required":["kids"]}},"$ref":"#/$defs/leaf"}"##,
+            #"{"type":"array","prefixItems":[{"type":"number"},{"anyOf":[{"type":"null"},{"type":"string","maxLength":0}]}]}"#,
+        ]
+        for schema in schemas {
+            let format = #","max_tokens":200,"response_format":{"type":"json_schema","json_schema":{"name":"t","schema":\#(schema)}}"#
+            let (status, object) = try await ask(host, format)
+            #expect(status == 200, "\(schema): \(object)")
+            let choice = (object["choices"] as? [[String: Any]])?.first
+            #expect(choice?["finish_reason"] as? String == "stop", "\(schema)")
+            let text = (choice?["message"] as? [String: Any])?["content"] as? String ?? ""
+            #expect((try? JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed)) != nil,
+                    "\(schema) gave \(text.debugDescription)")
+        }
+        // Open-ended: this model writes stories into any string it may, so
+        // the answer runs out of tokens, but it starts as an object.
+        for format in [#"{"type":"json_object"}"#,
+                       #"{"type":"json_schema","json_schema":{"schema":{"additionalProperties":{"type":"integer"}}}}"#] {
+            let (status, object) = try await ask(host, #","max_tokens":20,"response_format":\#(format)"#)
+            let text = ((object["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String
+            #expect(status == 200, "\(format): \(object)")
+            #expect(text?.hasPrefix("{") == true, "\(format) gave \(text ?? "")")
+        }
+
+        let pattern = #","response_format":{"type":"json_schema","json_schema":{"schema":{"type":"string","pattern":"a+"}}}"#
+        let body = #"{"messages":[{"role":"user","content":"Hi"}]"# + pattern + "}"
+        let declined = try await host.complete(Data(body.utf8), timeout: 10)
+        #expect(declined.status == 400 && declined.retryElsewhere)
+    }
+
     @Test func slotsRunTogether() async throws {
         let host = try await started(slots: 2)
         async let first = ask(host, #","max_tokens":16"#)
