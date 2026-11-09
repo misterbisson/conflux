@@ -131,18 +131,16 @@ say "generating conflux.xcodeproj"
 "$tools/xcodegen/bin/xcodegen" generate --spec project.yml --quiet
 
 # --- check what the build needs, by name --------------------------------------
-# XcodeGen can succeed and still write a project the build can't use. Read the
-# Schemes section only: the Targets section lists `conflux` too, so matching
-# anywhere would pass without a scheme. `conflux` is the Mac app's scheme and
-# `conflux-ipad` the iPad app's, and Xcode Cloud's workflow archives each.
+# XcodeGen can succeed and still write a project the build can't use.
+# `conflux` is the Mac app's scheme and `conflux-ipad` the iPad app's, and
+# Xcode Cloud's workflow archives each. It finds them only as shared schemes,
+# so this looks for the files. Not `xcodebuild -list`: that resolves the
+# package, downloading its binaries, and when GitHub's release downloads fail
+# it lists no schemes, and the failure read as a missing scheme.
 [ -d conflux.xcodeproj ] || fail "conflux.xcodeproj wasn't created"
-schemes="$(xcodebuild -project conflux.xcodeproj -list 2>/dev/null |
-	awk '/^[[:space:]]*Schemes:/ { s = 1; next } s && NF { print $1 }')"
 for scheme in conflux conflux-ipad; do
-	printf '%s\n' "$schemes" | grep -qx "$scheme" ||
-		fail "the $scheme scheme is missing"
 	[ -f "conflux.xcodeproj/xcshareddata/xcschemes/$scheme.xcscheme" ] ||
-		fail "the $scheme scheme isn't shared, so Xcode Cloud can't see it"
+		fail "the $scheme scheme is missing, or isn't shared, so Xcode Cloud can't see it"
 done
 
 # --- the workflow's scheme fits its platform ----------------------------------
@@ -161,6 +159,18 @@ if on_xcode_cloud && [ -n "${CI_XCODE_SCHEME:-}" ] && [ -n "${CI_PRODUCT_PLATFOR
 		fail "this $CI_PRODUCT_PLATFORM action builds the $CI_XCODE_SCHEME scheme; set the workflow's $CI_PRODUCT_PLATFORM action to the $want scheme (docs/releasing.md)"
 	fi
 	say "archiving the $CI_XCODE_SCHEME scheme for $CI_PRODUCT_PLATFORM"
+fi
+
+# --- the package's binaries ---------------------------------------------------
+# Xcode Cloud resolves packages after this hook, once, and its download of the
+# binary targets from GitHub's release downloads has no retry. Resolve them
+# here first, with retries, into the derived data its build uses, so a short
+# outage doesn't fail the release. It finds them there and doesn't fetch again.
+if on_xcode_cloud && [ -n "${CI_DERIVED_DATA_PATH:-}" ] && [ -n "${CI_XCODE_SCHEME:-}" ]; then
+	say "fetching the package's binaries"
+	tools/ci/retry.sh xcodebuild -resolvePackageDependencies -project conflux.xcodeproj \
+		-scheme "$CI_XCODE_SCHEME" -derivedDataPath "$CI_DERIVED_DATA_PATH" -quiet ||
+		fail "couldn't fetch the package's binaries after retrying. If GitHub is down (www.githubstatus.com), rebuild once it's back."
 fi
 
 say "done"

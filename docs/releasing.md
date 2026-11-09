@@ -26,6 +26,7 @@ needs to be: Xcode Cloud manages the certificates and profiles itself.
 | [`.xcode-version`](../.xcode-version) | The Xcode that Xcode Cloud builds releases with, so GitHub can use the same one. |
 | [`tools/ci/build-app.sh`](../tools/ci/build-app.sh) | Archives the app signed ad hoc, checks it, and runs it in the sandbox. |
 | [`tools/ci/build-ipad.sh`](../tools/ci/build-ipad.sh) | Builds the iPad app for devices, unsigned, and checks its bundle ID, version and what it ships. The pinned llama.cpp framework has no iOS Simulator slice, so nothing runs. |
+| [`tools/ci/retry.sh`](../tools/ci/retry.sh) | Runs a command again while it fails, for about eight minutes. The package's binaries come from GitHub's release downloads, which fail for minutes at a time, so the post-clone hook, the build scripts and CI fetch them through it before building. |
 | [`tools/ci/check-app.sh`](../tools/ci/check-app.sh) | The checks: version, bundle ID, export compliance and its basis, category, a 512pt @2x icon, a privacy manifest that covers what the binaries import, the hardened runtime, the entitlements, and the embedded frameworks' versions. |
 | [`tools/icon/make-icon.swift`](../tools/icon/make-icon.swift) | Draws the icon. It's a placeholder. |
 | [`App/Credits.html`](../App/Credits.html) | The licences of the code and the starter model the app includes, shown in its About window. [`tools/notices/make-notices.py`](../tools/notices/make-notices.py) writes it; `check-app.sh` fails when it names other versions than `Package.swift` and `fetch-starter-model.sh` pin. |

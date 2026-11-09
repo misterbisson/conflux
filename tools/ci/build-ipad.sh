@@ -14,6 +14,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
+# The package's binaries, first and with retries, as build-app.sh fetches them.
+tools/ci/retry.sh xcodebuild -resolvePackageDependencies \
+	-project conflux.xcodeproj -scheme conflux-ipad -derivedDataPath build/DerivedData-ipad -quiet
+
 xcodebuild build \
 	-project conflux.xcodeproj \
 	-scheme conflux-ipad \

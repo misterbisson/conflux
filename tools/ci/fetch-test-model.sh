@@ -16,7 +16,7 @@ path="$dir/$(basename "$file")"
 mkdir -p "$dir"
 
 if [ ! -f "$path" ] || ! echo "$sha256  $path" | shasum -a 256 -c --status; then
-  curl -fsSL --retry 3 -o "$path.part" "https://huggingface.co/ggml-org/models/resolve/$revision/$file"
+  curl -fsSL --connect-timeout 30 --retry 12 --retry-all-errors --retry-max-time 600 -o "$path.part" "https://huggingface.co/ggml-org/models/resolve/$revision/$file"
   echo "$sha256  $path.part" | shasum -a 256 -c --status || { echo "checksum mismatch for $file" >&2; exit 1; }
   mv "$path.part" "$path"
 fi
