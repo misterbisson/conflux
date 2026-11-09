@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/misterbisson/conflux/compare/v0.4.0...v0.4.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* follow response_format's JSON schema when the app runs the model ([#35](https://github.com/misterbisson/conflux/issues/35)) ([cf2e8e8](https://github.com/misterbisson/conflux/commit/cf2e8e89bc26ee1677f4d292f77607ad61436d2b))
+
 ## [0.4.0](https://github.com/misterbisson/conflux/compare/v0.3.0...v0.4.0) (2026-11-08)
 
 
