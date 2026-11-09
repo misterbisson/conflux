@@ -205,13 +205,17 @@ struct Peer {
     /// the gateway's scheduler tries another host instead of counting a
     /// failure.
     @Test func aFullPeerSaysBusy() async throws {
-        let peer = try await Peer(behavior: FakeHost.reply(after: 1))
+        // The first request holds the slot until the second is refused,
+        // however slow the runner.
+        let gate = Gate()
+        let peer = try await Peer(behavior: gate.reply())
         defer { peer.server.stop() }
-        async let first = peer.remote.complete(Data("{}".utf8), timeout: 10)
-        while await peer.scheduler.snapshot().hosts.first?.active == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        async let first = peer.remote.complete(Data("{}".utf8), timeout: 30)
+        #expect(await eventually { await peer.scheduler.snapshot().hosts.first?.active == 1 })
         await #expect(throws: HostError.busy("the peer has no free slot")) {
             try await peer.remote.complete(Data("{}".utf8), timeout: 10)
         }
+        await gate.release()
         #expect(try await first.status == 200)
     }
 
