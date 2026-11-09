@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.2](https://github.com/misterbisson/conflux/compare/v0.4.1...v0.4.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* remove the long download retries added during GitHub's outage ([#42](https://github.com/misterbisson/conflux/issues/42)) ([490e2f2](https://github.com/misterbisson/conflux/commit/490e2f27a2a78cd49e833d915f1d619a3beb1338))
+
+
+### Documentation
+
+* say how a change only Xcode Cloud can test gets released ([#40](https://github.com/misterbisson/conflux/issues/40)) ([bbce5ba](https://github.com/misterbisson/conflux/commit/bbce5ba8a5b2f2b8f1060a0717e2170d9546db5b))
+
 ## [0.4.1](https://github.com/misterbisson/conflux/compare/v0.4.0...v0.4.1) (2026-11-09)
 
 
