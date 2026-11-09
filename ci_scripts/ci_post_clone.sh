@@ -115,7 +115,13 @@ tools="$(mktemp -d)"
 trap 'rm -rf "$tools"' EXIT
 url="https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
 say "fetching XcodeGen $XCODEGEN_VERSION"
-curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$tools/xcodegen.zip" "$url"
+# GitHub's release downloads go down for minutes at a time: v0.4.1's first
+# build got six 504s in 35 seconds and failed both actions, and the same URL
+# worked ten minutes later. So retry for up to ten minutes, with curl's own
+# backoff, doubling from a second, rather than a few seconds apart.
+curl -fsSL --connect-timeout 30 --retry 12 --retry-all-errors --retry-max-time 600 \
+	-o "$tools/xcodegen.zip" "$url" ||
+	fail "couldn't fetch XcodeGen from $url after ten minutes of retrying. If GitHub is down (www.githubstatus.com), rebuild once it's back."
 got="$(shasum -a 256 "$tools/xcodegen.zip" | awk '{ print $1 }')"
 [ "$got" = "$XCODEGEN_SHA256" ] ||
 	fail "XcodeGen checksum mismatch: expected $XCODEGEN_SHA256, got $got, from $url"
