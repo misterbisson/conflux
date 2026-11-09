@@ -492,6 +492,13 @@ checksum, and runs models inside the app.
   template, and images placed where llama.cpp would place them. Responses
   carry llama-server's `usage` and `timings`. With the same build, model and
   request at temperature 0, both runtimes give identical answers.
+- `response_format` becomes a grammar for llama.cpp's grammar sampler. The
+  conversion from JSON Schema isn't in the xcframework, so conflux
+  reimplements llama.cpp's, rule for rule, except that it refuses `pattern`.
+  llama-server also lets the model write whitespace or a fenced code block
+  around the JSON, and strips them from the answer; the in-process host makes
+  the model start with the JSON, so the two runtimes' structured answers can
+  differ.
 - What it costs: a crash inside llama.cpp takes the app down with it, and a
   context per slot doesn't batch across slots the way llama-server's
   continuous batching does. Phase 0 found extra slots add little on a base M

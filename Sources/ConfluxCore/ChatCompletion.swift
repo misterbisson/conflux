@@ -21,6 +21,8 @@ struct ChatCompletionRequest: Equatable {
     var minP = 0.05
     var seed: UInt32?
     var stop: [String] = []
+    /// GBNF the answer must match, from the request's response_format.
+    var grammar: String?
 
     /// A request the runtime can't run. The client's fault: 400.
     struct Invalid: Error, Equatable {

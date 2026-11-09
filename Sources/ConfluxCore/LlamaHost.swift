@@ -128,15 +128,25 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
     }
 
     private func run(_ body: Data, deadline: Date, on engine: LlamaEngine) async throws -> HostReply {
-        let request: ChatCompletionRequest
+        var request: ChatCompletionRequest
         do {
             request = try ChatCompletionRequest.parse(body, marker: engine.marker)
         } catch {
             return HostReply(status: 400, body: ChatCompletionResult.error(error.message))
         }
+        do {
+            request.grammar = try ResponseFormat.grammar(for: body)
+        } catch .invalid(let message) {
+            return HostReply(status: 400, body: ChatCompletionResult.error(message))
+        } catch .unsupported(let message) {
+            // llama-server, on another device or the command line, might.
+            return HostReply(status: 400, body: ChatCompletionResult.error(message, code: "unsupported_by_model"),
+                             retryElsewhere: true)
+        }
         if !request.images.isEmpty && !engine.acceptsImages {
             return HostReply(status: 400, body: ChatCompletionResult.error("this model doesn't accept images"))
         }
+        let ready = request
         guard let slot = engine.acquire() else { throw HostError.unavailable("every slot is busy") }
         defer { engine.release(slot) }
         // Cancelling the task stops generation at the next token: a hedged
@@ -147,7 +157,7 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
                 try await withCheckedThrowingContinuation { continuation in
                     slot.queue.async {
                         continuation.resume(with: Result {
-                            try engine.generate(request, in: slot, deadline: deadline, stop: stop)
+                            try engine.generate(ready, in: slot, deadline: deadline, stop: stop)
                         })
                     }
                 }
@@ -341,7 +351,7 @@ final class LlamaEngine: @unchecked Sendable {
         }
         let promptMs = Date().timeIntervalSince(promptStart) * 1000
 
-        let sampler = makeSampler(request)
+        let sampler = try makeSampler(request)
         defer { llama_sampler_free(sampler) }
         let generateStart = Date()
         var output: [UInt8] = []
@@ -467,8 +477,18 @@ final class LlamaEngine: @unchecked Sendable {
     }
 
     /// llama-server's order: top-k, top-p, min-p, temperature, then a draw.
-    private func makeSampler(_ request: ChatCompletionRequest) -> UnsafeMutablePointer<llama_sampler> {
+    private func makeSampler(_ request: ChatCompletionRequest) throws(Failure) -> UnsafeMutablePointer<llama_sampler> {
         let chain = llama_sampler_chain_init(llama_sampler_chain_default_params())!
+        if let grammar = request.grammar {
+            // First, so the other samplers choose only among tokens the
+            // grammar allows. Once the answer is complete, it allows only
+            // the end of the turn.
+            guard let constrained = llama_sampler_init_grammar(vocab, grammar, "root") else {
+                llama_sampler_free(chain)
+                throw .failed("llama.cpp couldn't read the grammar made from response_format; see the log")
+            }
+            llama_sampler_chain_add(chain, constrained)
+        }
         if request.temperature <= 0 {
             llama_sampler_chain_add(chain, llama_sampler_init_greedy())
         } else {

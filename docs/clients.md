@@ -23,7 +23,8 @@ The gateway serves a subset of the OpenAI API on loopback, at
 | `POST /v1/chat/completions` | One request, including image input |
 
 Requests and responses follow the OpenAI schema, including `response_format`
-for structured output and image parts as `data:` URLs.
+for structured output ([Ask for a schema](#ask-for-a-schema)) and image parts
+as `data:` URLs.
 
 **Streaming (`"stream": true`) isn't supported yet**, and is refused with
 `400` and code `stream_unsupported`. Throughput workloads don't need it, and
@@ -140,6 +141,32 @@ that way, the gateway tries another host serving a model the request
 accepts, so accepting more than one model avoids the refusal. With nowhere
 else to go, the client gets `400` with `error.code` set to `content_filter`
 or `context_length_exceeded`, as OpenAI's API names them.
+
+### Ask for a schema
+
+A client that parses the answer should send its JSON Schema as
+`response_format`, `{"type": "json_schema", "json_schema": {"schema": …}}`.
+Hosts that run models with llama.cpp then constrain the model to the schema
+as it writes, so the answer parses and matches, whatever the model's size.
+Asked in words alone, a small model writes JSON of its own shape, or doesn't
+stop. `{"type": "json_object"}` asks for any JSON object.
+
+- **Give it room.** A constrained answer can still run out of `max_tokens`,
+  with `finish_reason` set to `length`, and then it isn't complete JSON.
+- **Order the properties.** The model writes them in the schema's order,
+  required ones first, so put what it should work out before what depends on
+  it.
+- **Use what's enforced:** `type`, `properties`, `required`,
+  `additionalProperties`, `items`, `prefixItems`, `minItems`, `maxItems`,
+  `minLength`, `maxLength`, `enum`, `const`, `anyOf`, `oneOf`, `allOf`,
+  `$ref` within the schema, an integer's `minimum` and `maximum`, and the
+  `date`, `time`, `date-time` and `uuid` formats. A number's bounds and other
+  formats are left to the model, as llama.cpp leaves them.
+- **`pattern` needs `llama-server`.** Hosts in the app don't enforce it yet,
+  and neither does Apple's model, which takes no schema yet. Either declines
+  with `400` and `error.code` set to `unsupported_by_model`, and the gateway
+  tries another host serving a model the request accepts, such as one
+  running `conflux serve --runtime llama-server`.
 
 ### Send images at the size the model needs
 
