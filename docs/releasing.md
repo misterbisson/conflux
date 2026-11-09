@@ -134,12 +134,19 @@ here. It's done once. No step needs a Team ID, key or token in the repository.
 
 1. **The bundle ID.** On developer.apple.com, under **Certificates,
    Identifiers & Profiles > Identifiers**, register an explicit App ID for
-   `com.caseybisson.conflux`, with no capabilities. The keychain access groups
-   in the entitlements, for the [device directory](design.md#trust), aren't a
-   capability there: the team's provisioning profiles allow any group with
-   the team's prefix. They do need a profile, so a build signed by the team
-   gets one (Xcode Cloud's, or Xcode's automatic signing on a desk), and an ad
-   hoc build leaves them out (`tools/ci/build-app.sh`).
+   `com.caseybisson.conflux`, with two capabilities, for the iPad app:
+   **Increased Memory Limit** and **Extended Virtual Addressing**, which match
+   its entitlements in `project.yml`. Xcode Cloud's automatic signing can't
+   turn them on for an App ID registered by hand. Without them, the iOS
+   archive builds and then its export fails with "Automatic signing cannot
+   update bundle identifier" and "No profiles for 'com.caseybisson.conflux'
+   were found". The Mac app doesn't claim them, so its profile is unaffected.
+   The keychain access groups in the entitlements, for the
+   [device directory](design.md#trust), aren't a capability there: the team's
+   provisioning profiles allow any group with the team's prefix. They do need
+   a profile, so a build signed by the team gets one (Xcode Cloud's, or
+   Xcode's automatic signing on a desk), and an ad hoc build leaves them out
+   (`tools/ci/build-app.sh`).
 2. **The app record.** In App Store Connect, create a macOS app with that
    bundle ID. Its name there is "Conflux Inference Mesh"; plain "Conflux" is
    taken. The name under the icon stays "conflux", from `project.yml`.
@@ -328,10 +335,8 @@ against it. It isn't legal advice for anyone else's use of conflux.
 
 - **The iPad app on TestFlight.** It shares the Mac app's bundle ID, so App
   Store Connect counts it as the same app once iOS is added as a platform to
-  that app's record. The workflow has its archive action (step 5), but no iOS
-  build has reached TestFlight yet. Its two memory entitlements, Increased
-  Memory Limit and Extended Virtual Addressing, are App ID capabilities,
-  unlike the Mac app's keychain groups: if the iOS archive fails on its
-  profile, enable them on the App ID from step 1.
+  that app's record. The workflow has its archive action (step 5), and the
+  App ID needs the two capabilities from step 1, but no iOS build has reached
+  TestFlight yet.
 
 - **The icon** is a generated placeholder.
