@@ -19,9 +19,7 @@ fi
 asset="actionlint_${version}_linux_amd64.tar.gz"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-# Retried for up to five minutes: GitHub's release downloads go down for
-# minutes at a time, and the checks job has ten.
-curl -fsSL --connect-timeout 30 --retry 12 --retry-all-errors --retry-max-time 300 -o "$work/$asset" "https://github.com/rhysd/actionlint/releases/download/v${version}/${asset}"
+curl -fsSL -o "$work/$asset" "https://github.com/rhysd/actionlint/releases/download/v${version}/${asset}"
 echo "$sha256_linux_amd64  $work/$asset" | sha256sum -c --quiet -
 tar -xzf "$work/$asset" -C "$work" actionlint
 "$work/actionlint" -color

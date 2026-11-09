@@ -26,12 +26,6 @@ entitlements=build/adhoc.entitlements
 cp App/conflux.entitlements "$entitlements"
 /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$entitlements"
 
-# The package's two binaries come from GitHub's release downloads, which go down
-# for minutes at a time. Fetch them first, with retries, so an outage doesn't
-# fail the archive.
-tools/ci/retry.sh xcodebuild -resolvePackageDependencies \
-	-project conflux.xcodeproj -scheme conflux -derivedDataPath build/DerivedData -quiet
-
 xcodebuild archive \
 	-project conflux.xcodeproj \
 	-scheme conflux \

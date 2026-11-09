@@ -39,10 +39,7 @@ for entry in "${files[@]}"; do
 	if [ -f "$path" ] && echo "$sha256  $path" | shasum -a 256 -c --status; then
 		continue
 	fi
-	# Retried for up to ten minutes, with curl's backoff, so a short outage
-	# doesn't fail a release (ci_scripts/ci_post_clone.sh says the same for
-	# XcodeGen).
-	curl -fsSL --connect-timeout 30 --retry 12 --retry-all-errors --retry-max-time 600 -o "$path.part" \
+	curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$path.part" \
 		"https://huggingface.co/$repository/resolve/$revision/$name"
 	if ! echo "$sha256  $path.part" | shasum -a 256 -c --status; then
 		rm -f "$path.part"

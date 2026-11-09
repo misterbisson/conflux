@@ -47,10 +47,6 @@ jobs:
         run: tools/ci/select-xcode.sh
       - name: Toolchain
         run: swift --version
-      # The binary targets come from GitHub's release downloads, which go down
-      # for minutes at a time. Fetch them first, with retries.
-      - name: Fetch packages
-        run: tools/ci/retry.sh swift package resolve
       - name: Build
         run: swift build
       - name: Fetch the test model
