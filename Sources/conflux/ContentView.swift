@@ -118,6 +118,9 @@ struct ContentView: View {
             }
             Text("Slots come from measuring this Mac with its model. See docs/phase-0.md.")
                 .font(.caption).foregroundStyle(.secondary)
+            if model.running {
+                Text("Stop conflux to change these.").font(.caption).foregroundStyle(.secondary)
+            }
         }
         .disabled(model.running)
     }
@@ -153,6 +156,9 @@ struct ContentView: View {
                 some content and takes only short requests; those go to another host when there is one.
                 """)
                 .font(.caption).foregroundStyle(.secondary)
+            if model.running {
+                Text("Stop conflux to change these.").font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -212,21 +218,26 @@ struct ContentView: View {
             ForEach(model.trusted) { peer in
                 peerRow(peer)
             }
-            if !model.running {
-                HStack {
-                    TextField("Peer", text: $newPeer, prompt: Text("another Mac's ID"))
-                        .font(.body.monospaced())
-                        .onSubmit(addPeer)
-                    Button("Add", action: addPeer).disabled(newPeer.isEmpty)
-                }
-                if let peerProblem {
-                    Text(peerProblem).font(.caption).foregroundStyle(.red)
-                }
+            HStack {
+                TextField("Peer", text: $newPeer, prompt: Text("another Mac's ID"))
+                    .font(.body.monospaced())
+                    .onSubmit(addPeer)
+                Button("Add", action: addPeer).disabled(newPeer.isEmpty)
+            }
+            .disabled(model.running)
+            if !model.running, let peerProblem {
+                Text(peerProblem).font(.caption).foregroundStyle(.red)
             }
             if model.refused > 0 {
                 LabeledContent("Refused", value: "\(model.refused) connections from devices that aren't peers")
             }
             Text(meshCaption).font(.caption).foregroundStyle(.secondary)
+            if model.running {
+                Text(model.directory != nil
+                     ? "Stop conflux to change iCloud Keychain or the peers added by hand."
+                     : "Stop conflux to change the peers added by hand.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .confirmationDialog("Forget \(forgetting?.name ?? "this Mac")?",
                             isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
@@ -267,8 +278,9 @@ struct ContentView: View {
                     .foregroundStyle(peer.name == nil ? .primary : .secondary).help(id)
                 Text(host?.state.label ?? (model.running ? "Not started" : "Peer"))
                 Spacer()
-                if peer.addedByHand && !model.running {
+                if peer.addedByHand {
                     Button("Remove") { model.removePeer(id) }
+                        .disabled(model.running)
                 }
                 if peer.listed {
                     Button("Forget…") { forgetting = peer }
@@ -388,6 +400,9 @@ struct ContentView: View {
             } else {
                 Text("Any process on this Mac can use the gateway without a token.")
                     .font(.caption).foregroundStyle(.orange)
+            }
+            if model.running {
+                Text("Stop conflux to change the port or the token setting.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
