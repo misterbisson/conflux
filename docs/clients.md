@@ -151,6 +151,13 @@ as it writes, so the answer parses and matches, whatever the model's size.
 Asked in words alone, a small model writes JSON of its own shape, or doesn't
 stop. `{"type": "json_object"}` asks for any JSON object.
 
+- **List what you need in `required`.** A property that isn't listed is
+  optional, and the model may leave it out. Small models often leave out
+  every one: asked for an object with nothing required, Gemma 3 4B answers
+  `{}`, with `llama-server` too. `"strict": true` doesn't change that:
+  conflux, like llama.cpp, ignores it.
+- **Don't stop on what JSON contains.** A `stop` string still cuts the
+  answer, so `"\n"` or `"}"` leaves JSON that doesn't parse.
 - **Give it room.** A constrained answer can still run out of `max_tokens`,
   with `finish_reason` set to `length`, and then it isn't complete JSON.
 - **Order the properties.** The model writes them in the schema's order,
