@@ -12,6 +12,7 @@ struct ContentView: View {
             meshSection
             monitoringSection
             gatewaySection
+            aboutSection
         }
         .formStyle(.grouped)
         .padding(.bottom, 8)
@@ -387,6 +388,19 @@ struct ContentView: View {
             } else {
                 Text("Any process on this Mac can use the gateway without a token.")
                     .font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    // MARK: About
+
+    @ViewBuilder var aboutSection: some View {
+        Section("About") {
+            LabeledContent("Version") {
+                Text(AppVersion.current).textSelection(.enabled)
+            }
+            LabeledContent("Acknowledgements") {
+                Button("Show…") { NSApplication.shared.orderFrontStandardAboutPanel(nil) }
             }
         }
     }

@@ -1,3 +1,4 @@
+import ConfluxCore
 import SwiftUI
 import WebKit
 
@@ -20,7 +21,10 @@ struct ProbeView: View {
                 device
                 choice
                 results
-                Section {
+                Section("About") {
+                    LabeledContent("Version") {
+                        Text(AppVersion.current).textSelection(.enabled)
+                    }
                     NavigationLink("Acknowledgements") { CreditsView().navigationTitle("Acknowledgements") }
                 }
             }
