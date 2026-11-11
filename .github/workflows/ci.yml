@@ -53,6 +53,10 @@ jobs:
         run: echo "CONFLUX_TEST_MODEL=$(tools/ci/fetch-test-model.sh)" >> "$GITHUB_ENV"
       - name: Test
         run: swift test
+      # The app ships optimized, and the optimizer can change where actor
+      # code runs: some isolation bugs show only in this build.
+      - name: Test, optimized
+        run: swift test -c release -Xswiftc -enable-testing
       - name: Release build
         run: swift build -c release
 
