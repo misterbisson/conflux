@@ -104,10 +104,16 @@ struct ContentView: View {
                 }
             }
             Stepper("Slots: \(host.slots)", value: binding(\.slots), in: 1...32)
-            Stepper("Context per slot: \(host.contextPerSlot)", value: binding(\.contextPerSlot),
-                    in: 1024...65536, step: 1024)
-            Stepper("Largest image side: \(host.maxImageDimension) px", value: binding(\.maxImageDimension),
-                    in: 256...4096, step: 128)
+            Picker("Context per slot", selection: binding(\.contextPerSlot)) {
+                ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: host.contextPerSlot), id: \.self) {
+                    Text("\($0.formatted()) tokens").tag($0)
+                }
+            }
+            Picker("Largest image side", selection: binding(\.maxImageDimension)) {
+                ForEach(ModelConfig.choices(ModelConfig.imageSides, including: host.maxImageDimension), id: \.self) {
+                    Text("\($0.formatted()) px").tag($0)
+                }
+            }
             Toggle("Check the model reads its input before serving", isOn: binding(\.selfCheck))
             if model.settings.host?.projector != nil {
                 TextField("Fewest tokens per image", value: binding(\.imageMinTokens), format: .number.grouping(.never),
