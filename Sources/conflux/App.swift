@@ -111,6 +111,13 @@ final class AppModel: ObservableObject {
 
     func peerHost(_ peer: PeerStatus) -> HostSnapshot? { snapshot?.hosts.first { $0.id == peer.hostID } }
 
+    /// The name a peer's host goes by: the trusted peer's name, when it has
+    /// one. Nil for this Mac's hosts, and for peers without a name.
+    func peerName(of host: HostSnapshot) -> String? {
+        guard let endpointID = peers.first(where: { $0.hostID == host.id })?.endpointID else { return nil }
+        return trusted.first { $0.endpointID == endpointID }?.name
+    }
+
     /// The model the app ships, served until the person chooses one. Built
     /// from source, there's none.
     let starter = StarterModel.files()

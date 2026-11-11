@@ -333,8 +333,13 @@ struct ContentView: View {
     func monitoringRow(_ host: HostSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Text(host.id.hasPrefix("peer-") ? host.id.dropFirst("peer-".count) + "…" : "This Mac")
-                    .font(host.id.hasPrefix("peer-") ? .body.monospaced() : .body)
+                if let name = model.peerName(of: host) {
+                    Text(name).lineLimit(1).truncationMode(.middle)
+                } else if host.id.hasPrefix("peer-") {
+                    Text(host.id.dropFirst("peer-".count) + "…").font(.body.monospaced())
+                } else {
+                    Text("This Mac")
+                }
                 Spacer()
                 Text("\(Int(host.perHour.rounded())) per hour").monospacedDigit()
             }
