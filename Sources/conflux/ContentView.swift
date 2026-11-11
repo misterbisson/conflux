@@ -51,21 +51,63 @@ struct ContentView: View {
         }
     }
 
+    /// Requests running and waiting when Stop was clicked, while it asks.
+    @State private var stopping: (running: Int, waiting: Int)?
+
     @ViewBuilder var controls: some View {
         if model.running {
             if model.intent == .serving {
                 Button("Drain") { model.setIntent(.draining) }
                     .help("Finish what's running and take nothing new")
                 Button("Pause") { model.setIntent(.paused) }
+                    .help("Take nothing new on this Mac's models until you resume")
             } else {
                 Button("Resume") { model.setIntent(.serving) }
+                    .help("Take new requests on this Mac's models again")
             }
-            Button("Stop") { model.stop() }
+            Button("Stop", action: askToStop)
+                .help("Stop the gateway and this Mac's models, and leave the mesh. Requests running or waiting are cut off.")
+                .padding(.leading, 12)
+                .confirmationDialog("Stop conflux?",
+                                    isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
+                                    presenting: stopping) { _ in
+                    Button("Stop", role: .destructive) { model.stop() }
+                    if model.intent == .serving {
+                        Button("Drain") { model.setIntent(.draining) }
+                    }
+                } message: { work in
+                    Text(stopWarning(running: work.running, waiting: work.waiting))
+                }
         } else {
             Button("Start") { model.start() }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!model.canStart)
         }
+    }
+
+    /// Stops at once when no request is running or waiting at this gateway,
+    /// on any host. Otherwise it asks first.
+    func askToStop() {
+        let running = model.snapshot?.hosts.reduce(0) { $0 + $1.active } ?? 0
+        let waiting = model.snapshot?.queued ?? 0
+        if running + waiting == 0 {
+            model.stop()
+        } else {
+            stopping = (running, waiting)
+        }
+    }
+
+    func stopWarning(running: Int, waiting: Int) -> String {
+        let work = switch (running, waiting) {
+        case (_, 0): "\(running) \(running == 1 ? "request is" : "requests are") running."
+        case (0, _): "\(waiting) \(waiting == 1 ? "request is" : "requests are") waiting."
+        default: "\(running) \(running == 1 ? "request is" : "requests are") running and \(waiting) \(waiting == 1 ? "is" : "are") waiting."
+        }
+        let cut = " Stopping cuts \(running + waiting == 1 ? "it" : "them") off."
+        let drain = model.intent == .serving
+            ? " Drain instead to let this Mac's models finish what they're running and take nothing new."
+            : ""
+        return work + cut + drain
     }
 
     var stateLabel: String {
