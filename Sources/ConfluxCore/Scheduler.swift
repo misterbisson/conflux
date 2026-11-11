@@ -697,11 +697,16 @@ public actor Scheduler {
         // Work waiting here means the tail of the batch is over: hedged
         // copies give their slots back.
         if pinned == nil { shedHedges() }
-        return await withTaskCancellationHandler {
+        // Isolated to this actor by name. The default overload is
+        // nonisolated(nonsending), and optimized, it can return here off the
+        // actor once `park` has waited: the request then runs on unguarded
+        // state, and the next continuation's isolation check aborts the app.
+        // SchedulerTests catch it only when built optimized.
+        return await withTaskCancellationHandler(operation: {
             await park(id, choice: choice, excluding: excluding, pinned: pinned, for: wait, remaining: remaining)
-        } onCancel: {
+        }, onCancel: {
             Task { await self.expire(id) }
-        }
+        }, isolation: self)
     }
 
     private func park(_ id: UUID, choice: ModelChoice, excluding: Set<String>, pinned: String?,
