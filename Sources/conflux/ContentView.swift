@@ -117,9 +117,9 @@ struct ContentView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Text("""
-                A slot is a request this Mac runs at once, and each slot gets its own share of memory for context. \
-                More slots don't always add speed, and if the Mac runs short of memory and swaps to disk, use fewer \
-                slots or less context.
+                Slots are how many requests this Mac runs at once, and each one takes memory for its context. \
+                More slots don't always mean more speed. If the Mac runs short of memory and swaps to disk, use \
+                fewer slots or less context.
                 """)
                 .font(.caption).foregroundStyle(.secondary)
         }
