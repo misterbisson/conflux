@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/misterbisson/conflux/compare/v0.4.2...v0.4.3) (2026-11-11)
+
+
+### Bug Fixes
+
+* stop the app crashing when a request waits for a slot ([#43](https://github.com/misterbisson/conflux/issues/43)) ([56f4a29](https://github.com/misterbisson/conflux/commit/56f4a29df8b9189771672e21db6c3467844cd677))
+
 ## [0.4.2](https://github.com/misterbisson/conflux/compare/v0.4.1...v0.4.2) (2026-11-09)
 
 
