@@ -30,7 +30,7 @@ settings:
   base:
     # release-please updates this line. Xcode Cloud numbers the builds, so
     # CURRENT_PROJECT_VERSION stays 1.
-    MARKETING_VERSION: "0.4.2" # x-release-please-version
+    MARKETING_VERSION: "0.4.3" # x-release-please-version
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "6.0"
   configs:
