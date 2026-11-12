@@ -243,7 +243,7 @@ struct ContentView: View {
                     HStack {
                         Text(DeviceIdentity.short(id) + "…").font(.body.monospaced())
                             .help(id)
-                        Button("Copy ID") { model.copy(id) }
+                        CopyButton(title: "Copy ID") { model.copy(id); return true }
                     }
                 }
             }
@@ -417,6 +417,8 @@ struct ContentView: View {
 
     // MARK: Gateway
 
+    @State private var tokenProblem: String?
+
     @ViewBuilder var gatewaySection: some View {
         Section("Gateway") {
             LabeledContent("Port") {
@@ -429,7 +431,7 @@ struct ContentView: View {
                 LabeledContent("Endpoint") {
                     HStack {
                         Text(url).font(.body.monospaced()).textSelection(.enabled)
-                        Button("Copy") { model.copy(url) }
+                        CopyButton(title: "Copy") { model.copy(url); return true }
                     }
                 }
             }
@@ -438,15 +440,28 @@ struct ContentView: View {
             if model.settings.requireToken {
                 LabeledContent("Token") {
                     HStack {
-                        Button("Copy") { if let token = model.token { model.copy(token) } }
+                        CopyButton(title: "Copy", copy: copyToken)
                         Button("New token") { model.rotateToken() }
                     }
+                }
+                if let tokenProblem {
+                    Text(tokenProblem).font(.caption).foregroundStyle(.red)
                 }
             } else {
                 Text("Any process on this Mac can use the gateway without a token.")
                     .font(.caption).foregroundStyle(.orange)
             }
         }
+    }
+
+    private func copyToken() -> Bool {
+        guard let token = model.token else {
+            tokenProblem = "Couldn't read the token."
+            return false
+        }
+        tokenProblem = nil
+        model.copy(token)
+        return true
     }
 
     // MARK: About
@@ -459,6 +474,36 @@ struct ContentView: View {
             LabeledContent("Acknowledgements") {
                 Button("Show…") { NSApplication.shared.orderFrontStandardAboutPanel(nil) }
             }
+        }
+    }
+}
+
+/// A button that copies something and says "Copied" for a moment after it has.
+struct CopyButton: View {
+    let title: String
+    /// Copies, and says whether it did.
+    let copy: () -> Bool
+
+    @State private var copied = false
+    @State private var copies = 0
+
+    var body: some View {
+        Button {
+            copied = copy()
+            copies += 1
+        } label: {
+            // Both labels take up room, so the button keeps its width.
+            ZStack {
+                Text(title).opacity(copied ? 0 : 1)
+                Text("Copied").opacity(copied ? 1 : 0)
+            }
+        }
+        .accessibilityLabel(copied ? "Copied" : title)
+        // Each copy restarts the wait; leaving the window cancels it.
+        .task(id: copies) {
+            guard copied else { return }
+            do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
+            copied = false
         }
     }
 }
