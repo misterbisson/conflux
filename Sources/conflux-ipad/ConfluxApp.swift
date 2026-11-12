@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// conflux on iPadOS. Its first version is a memory probe; it becomes a
-/// host in a later one (docs/plan.md, Phase 3).
+/// conflux on iPadOS: a host that serves its model to the Macs' gateways,
+/// and a memory probe that checks whether a model fits (docs/plan.md,
+/// Phase 3).
 @main
 struct ConfluxApp: App {
     var body: some Scene {

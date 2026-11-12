@@ -150,7 +150,14 @@ iPad plugged in, on a stand, running overnight. The app:
 - keeps the screen awake (`isIdleTimerDisabled`) while serving;
 - requests the `com.apple.developer.kernel.increased-memory-limit` entitlement;
 - withdraws from the mesh when it leaves the foreground, and finishes or gives
-  up its in-flight work.
+  up its in-flight work;
+- serves only while charging, unless its owner says otherwise;
+- runs no gateway, and uses no other device's host: it serves its own;
+- listens for peers on a Unix socket in its container rather than a
+  loopback port. A Mac's host service checks that a loopback connection came
+  from conflux itself; iPadOS has no way to ask, and a socket in the
+  container is out of other apps' reach. apple-iroh's
+  `apple_iroh_expose_unix` carries peers' streams there.
 
 ## Model identity
 

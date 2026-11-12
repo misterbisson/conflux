@@ -179,10 +179,9 @@ targets:
 
   # The same app on iPadOS: one bundle ID, so one App Store Connect record
   # and one TestFlight track for both platforms, and one keychain access
-  # group. An iPad is a host only (docs/plan.md, Phase 3). Its first version
-  # is a memory probe: it loads a model copied into its Documents folder,
-  # runs the self-check, and records the memory that took
-  # (Sources/conflux-ipad).
+  # group. An iPad is a host only (docs/plan.md, Phase 3): it serves a model
+  # copied into its Documents folder to the Macs' gateways, and its memory
+  # probe checks whether a model fits (Sources/conflux-ipad).
   conflux-ipad:
     type: application
     platform: iOS
@@ -212,6 +211,13 @@ targets:
         # Xcode Cloud set, as the Mac app's are.
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # The team's prefix, which signing fills in, so the app can name the
+        # device directory's keychain group: iPadOS has no API to read an
+        # app's entitlements (Sources/ConfluxCore/DeviceDirectory.swift).
+        ConfluxAppIdentifierPrefix: $(AppIdentifierPrefix)
+        # iroh connects straight to the Macs on the same network when it can,
+        # rather than through a relay, and iPadOS asks first.
+        NSLocalNetworkUsageDescription: conflux connects directly to your Macs on this network, to serve them its model.
     entitlements:
       path: App/conflux-ipad.entitlements
       properties:
@@ -221,6 +227,13 @@ targets:
         # A larger address space, so llama.cpp can map a model file of
         # several gigabytes.
         com.apple.developer.kernel.extended-virtual-addressing: true
+        # The keychain, as on the Mac: the app's own group first, where the
+        # device's secret key stays, ThisDeviceOnly; then the device
+        # directory every build of the app shares, synced by iCloud Keychain.
+        # The prefix is the team's, filled in when Xcode signs.
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)
+          - $(AppIdentifierPrefix)com.caseybisson.conflux.devices
     settings:
       base:
         PRODUCT_NAME: conflux

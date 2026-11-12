@@ -143,9 +143,10 @@ What Phase 2 showed about the iPad:
   processes, and the check that a loopback connection came from this
   process, because iPadOS has no libproc.
 - Without that check, another app on the iPad could reach the host service
-  and get around the gateway's token. So on iPadOS the host service refuses
-  every connection until [apple-iroh change 4](#apple-iroh-changes) lands,
-  and that change blocks iPad hosts.
+  and get around the gateway's token. So on iPadOS the host service listens
+  on a Unix socket in the app's container instead, which other apps can't
+  reach, and [apple-iroh change 4](#apple-iroh-changes) carries peers'
+  streams there.
 - The pinned llama.cpp framework has no iOS Simulator slice. CI builds the
   iPad app for devices, and models are tested on a real iPad.
 
@@ -159,17 +160,22 @@ In order:
    Phase 0's last question, and whether the rest of this phase is worth
    doing. *Built*, and from 0.4.0 delivered through TestFlight with the Mac
    app. On the M1 iPad Pro the starter model loaded in 12 s, took 0.3 GB and
-   passed. Still to run: a 4B vision model there, such as Qwen3-VL-4B or
-   Gemma 3 4B, and the M4 iPad Air. Those results decide step 2.
-2. **apple-iroh change 4**, released with changes 1–3 and 5, and adopted by
-   conflux on both platforms.
+   passed. The iPad Air (iPad15,6) also has 8 GB, not 12. Still to run: a 4B
+   vision model, such as Qwen3-VL-4B or Gemma 3 4B, on each.
+2. **apple-iroh change 4**, the host side: *built* in apple-iroh 0.10.0 as
+   `apple_iroh_expose_unix`, released ahead of the other changes because it
+   was the one blocking iPads. The forwarding side, below, is still open.
 3. **The iPad host**: serving in the foreground with the screen kept awake,
    by default only while charging. When the app leaves the foreground it
    stops taking work and finishes what's running, and gateways send work
    elsewhere. It also needs the device directory on iPadOS, and models copied
-   in from a Mac with Finder or the Files app.
+   in from a Mac with Finder or the Files app. *Built*: a node with no
+   gateway, which trusts the Macs in the directory and serves them over the
+   socket ([running.md](running.md#on-an-ipad)). Not yet run on an iPad
+   with a Mac using it.
 4. **A host screen** meant to be read from across a room: state, model,
-   throughput, temperature and charging.
+   throughput, temperature and charging. *Built*, at the top of the iPad
+   app.
 5. **An overnight run** in a mesh with the Macs.
 
 **Done when:** a plugged-in iPad runs a full night in a mesh, and its
@@ -254,9 +260,9 @@ shaped like clients'.
 ## apple-iroh changes
 
 conflux needs four changes in
-[apple-iroh](https://github.com/misterbisson/apple-iroh). Change 4 blocks
-Phase 3's iPad hosts. The others make the mesh better, and nothing waits on
-them, so they can go in the same release.
+[apple-iroh](https://github.com/misterbisson/apple-iroh). Change 4's
+exposing side blocked Phase 3's iPad hosts, and is done. The rest make the
+mesh better, and nothing waits on them.
 apple-iroh has other users, so each change is additive, keeps today's behavior
 as the default, and has to be useful beyond conflux.
 
@@ -278,7 +284,9 @@ as the default, and has to be useful beyond conflux.
    loopback port `apple_iroh_forward` opens accepts any local process, which can
    then reach the peer's host without the gateway's token. An option to accept
    only connections from this process, or to forward a Unix socket instead,
-   would close that. conflux's host side already checks.
+   would close that. The exposing side is done: apple-iroh 0.10.0 can expose
+   a Unix socket rather than a loopback port, which iPads use. The
+   forwarding side, on the Macs' gateways, is still open.
 
 One more would help, though nothing waits on it:
 

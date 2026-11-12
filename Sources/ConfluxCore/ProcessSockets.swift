@@ -8,10 +8,10 @@ import Darwin
 /// has no token, so it accepts a connection only when this process holds the
 /// socket at the other end.
 ///
-/// iPadOS has no libproc, so there this answers no to every connection: the
-/// host service refuses them all, and an iPad can't serve peers until
-/// apple-iroh can hand this process its streams without a port other apps
-/// can reach (docs/plan.md, *apple-iroh changes*, 4).
+/// iPadOS has no libproc, so there this answers no to every connection. The
+/// host service listens on a Unix socket in the app's container instead,
+/// which other apps can't reach, and apple-iroh carries peers' streams there
+/// (`ConfluxNode.hostSocket`).
 enum ProcessSockets {
     /// True if this process has a TCP socket bound to `port` on its side.
     static func ownsLocalPort(_ port: UInt16) -> Bool {

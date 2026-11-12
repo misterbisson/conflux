@@ -21,6 +21,7 @@ enum Iroh {
             case APPLE_IROH_ERR_CLOSED: "the connection closed"
             case APPLE_IROH_ERR_STREAM: "a stream failed"
             case APPLE_IROH_ERR_PORT: "couldn't bind a loopback port"
+            case APPLE_IROH_ERR_PATH: "not a usable socket path"
             default: "error \(code)"
             }
             return "\(call): \(what)"
@@ -89,6 +90,12 @@ enum Iroh {
     /// The one loopback port remotes' forwards reach. Zero exposes nothing.
     static func expose(_ port: UInt16) throws(Failure) {
         try check(apple_iroh_expose(Int32(port)), "expose")
+    }
+
+    /// The one Unix socket remotes' forwards reach, instead of a port: out of
+    /// other apps' reach in this app's container.
+    static func expose(socket path: String) throws(Failure) {
+        try check(apple_iroh_expose_unix(path), "expose")
     }
 
     static func stop() { apple_iroh_stop() }

@@ -18,8 +18,12 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ConfluxAppIdentifierPrefix</key>
+	<string>$(AppIdentifierPrefix)</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>conflux connects directly to your Macs on this network, to serve them its model.</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 </dict>
