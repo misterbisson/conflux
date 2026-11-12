@@ -38,9 +38,11 @@ care about, and a go or no-go on the expected gain.
 On that device, extra slots barely help. Smaller images are much faster, but
 the model measured reads them badly, so for it resolution isn't a free
 lever. Still to measure: the M1 and M4 Pro MacBook Pros (16 and 48 GB), as
-part of Phase 2's mesh measurements, and the M1 iPad Pro (8 GB) and M4 iPad
-Air (likely 12 GB), whose memory ceilings the iPad build's memory probe
-measures (Phase 3, step 1).
+part of Phase 2's mesh measurements, and the iPads' memory ceilings, which
+the iPad build's memory probe measures (Phase 3, step 1). On the M1 iPad Pro
+(8 GB) it has run only the starter model so far, which left 7.7 GB of the
+8 GB iPadOS allowed. The 4B models clients use, and the M4 iPad Air (likely
+12 GB), are next.
 
 ## Phase 1: One Mac, gateway and host
 
@@ -58,6 +60,11 @@ run it is in [running.md](running.md).
   ([design.md](design.md#runtimes)). Both runtimes remain.
 - A simple window: the model served, state, active and completed requests,
   throughput. Also `conflux serve`, the same thing without a window.
+- Structured output, which clients that parse answers depend on. *Built*:
+  `llama-server` follows `response_format` itself, and the in-process runtime
+  turns it into the same grammar ([design.md](design.md#runtimes)). Both
+  constrain the model alike, though `llama-server` wraps the answer
+  differently, so they can return different valid JSON.
 
 Left for later phases: streaming responses, and hedging, which needs a
 second host and came in Phase 2.
@@ -112,10 +119,14 @@ separate processes.
 
 1. A mesh benchmark in `tools/bench/`: the mesh's throughput against the sum
    of each host's own, idle-with-work time, and a run that loses a host
-   partway, checking every request got exactly one result.
+   partway, checking every request got exactly one result. Its requests
+   should look like clients' ([below](#what-use-has-shown)): images with a
+   schema to answer in, under a deadline.
 2. Running it on three Macs of different classes: M1 (16 GB), M2 (24 GB) and
    M4 Pro (48 GB), then closing a lid mid-run.
-3. Trust syncing through iCloud Keychain, in the TestFlight build of 0.2.0.
+3. Trust syncing through iCloud Keychain, in a TestFlight build: two Macs on
+   one Apple Account finding each other with no peer added by hand. Not
+   confirmed yet.
 
 None of the [apple-iroh changes](#apple-iroh-changes) blocks these.
 
@@ -146,7 +157,10 @@ In order:
    killed while loading. Run with the increased-memory-limit entitlement on
    the M1 iPad Pro (8 GB) and the M4 iPad Air (likely 12 GB), it answers
    Phase 0's last question, and whether the rest of this phase is worth
-   doing.
+   doing. *Built*, and from 0.4.0 delivered through TestFlight with the Mac
+   app. On the M1 iPad Pro the starter model loaded in 12 s, took 0.3 GB and
+   passed. Still to run: a 4B vision model there, such as Qwen3-VL-4B or
+   Gemma 3 4B, and the M4 iPad Air. Those results decide step 2.
 2. **apple-iroh change 4**, released with changes 1–3 and 5, and adopted by
    conflux on both platforms.
 3. **The iPad host**: serving in the foreground with the screen kept awake,
@@ -211,6 +225,32 @@ contribution is measured against the effort of keeping it there.
 - Meshes across Apple Accounts, if wanted.
 - A native client library over the same contract, if clients ask for one.
 
+## What use has shown
+
+A client running real work through the app found more in a few days than
+the benchmarks had. The measurements so far send one prompt
+with no schema and an easy deadline, so the next ones should send work
+shaped like clients'.
+
+- **Clients depend on structured output.** The in-process runtime ignored
+  `response_format` until 0.4.1, so a small model answered in a shape of its
+  own, or in a code fence, and no answer parsed.
+- **A schema has to require what the client needs.** A property that isn't
+  required is optional, and a small model may leave out every one: with
+  nothing required, Gemma 3 4B answers `{}`, under `llama-server` too.
+  [clients.md](clients.md#ask-for-a-schema) says so.
+- **Some bugs appear only in optimized builds.** The app aborted as soon as
+  a request waited for a slot, until 0.4.3, from a Swift concurrency check
+  that only Release builds trip. CI now runs the tests optimized as well as
+  in debug.
+- **Each model family needs its own settings**, and the self-check finds
+  most of them before serving. Qwen-VL models read badly with fewer than
+  1,024 image tokens. Apple's model declines some content and takes 4,096
+  tokens. The starter model proves the plumbing, not the answers.
+- **A request that names a model no host serves fails**, by design.
+  Clients that accept `any`, or a preference list, keep working as hosts
+  come and go.
+
 ## apple-iroh changes
 
 conflux needs four changes in
@@ -256,10 +296,10 @@ never have to match.
 The repository is public, so GitHub's macOS runners are free. CI runs on every
 pull request, with the Xcode that Xcode Cloud releases with:
 
-- build and test the package: scheduling, admission, the contract's status
-  codes and headers, the in-process runtime against a tiny model, device
-  identity, the allow list and the device directory, and the host protocol
-  between processes;
+- build and test the package, in debug and optimized: scheduling, admission,
+  the contract's status codes and headers, the in-process runtime against a
+  tiny model, structured output, device identity, the allow list and the
+  device directory, and the host protocol between processes;
 - archive the Mac app as Xcode Cloud does, signed ad hoc, check it for what App
   Store Connect requires, and run it in the sandbox;
 - build the iPad app for devices (Phase 3), since the pinned llama.cpp
