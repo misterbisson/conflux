@@ -122,7 +122,11 @@ struct ContentView: View {
                 Text("Some models read small images badly with fewer tokens. Qwen-VL models want 1024.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text("Slots come from measuring this Mac with its model. See docs/phase-0.md.")
+            Text("""
+                Slots are how many requests this Mac runs at once, and each one takes memory for its context. \
+                More slots don't always mean more speed. If the Mac runs short of memory and swaps to disk, use \
+                fewer slots or less context.
+                """)
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(model.running)
