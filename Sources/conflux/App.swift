@@ -12,8 +12,13 @@ struct ConfluxApp: App {
         // This makes it an ordinary app with a Dock icon and a window in front.
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate()
+        // One control panel, so one window: no tabs to open a second.
+        NSWindow.allowsAutomaticWindowTabbing = false
     }
 
+    // A window group, not a `Window`: an app whose only scene is a `Window`
+    // quits when it closes, which would stop the gateway. This one keeps
+    // serving, and the Dock icon brings the window back.
     var body: some Scene {
         WindowGroup("conflux") {
             ContentView()
@@ -21,6 +26,10 @@ struct ConfluxApp: App {
                 .frame(minWidth: 520, minHeight: 640)
         }
         .windowResizability(.contentSize)
+        .commands {
+            // No File › New Window: a second window would be a copy of this one.
+            CommandGroup(replacing: .newItem) {}
+        }
     }
 }
 
