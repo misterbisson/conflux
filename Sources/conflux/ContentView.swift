@@ -147,10 +147,16 @@ struct ContentView: View {
                 }
             }
             Stepper("Slots: \(host.slots)", value: binding(\.slots), in: 1...32)
-            Stepper("Context per slot: \(host.contextPerSlot)", value: binding(\.contextPerSlot),
-                    in: 1024...65536, step: 1024)
-            Stepper("Largest image side: \(host.maxImageDimension) px", value: binding(\.maxImageDimension),
-                    in: 256...4096, step: 128)
+            Picker("Context per slot", selection: binding(\.contextPerSlot)) {
+                ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: host.contextPerSlot), id: \.self) {
+                    Text("\($0.formatted()) tokens").tag($0)
+                }
+            }
+            Picker("Largest image side", selection: binding(\.maxImageDimension)) {
+                ForEach(ModelConfig.choices(ModelConfig.imageSides, including: host.maxImageDimension), id: \.self) {
+                    Text("\($0.formatted()) px").tag($0)
+                }
+            }
             Toggle("Check the model reads its input before serving", isOn: binding(\.selfCheck))
             if model.settings.host?.projector != nil {
                 TextField("Fewest tokens per image", value: binding(\.imageMinTokens), format: .number.grouping(.never),
@@ -158,7 +164,11 @@ struct ContentView: View {
                 Text("Some models read small images badly with fewer tokens. Qwen-VL models want 1024.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text("Slots come from measuring this Mac with its model. See docs/phase-0.md.")
+            Text("""
+                Slots are how many requests this Mac runs at once, and each one takes memory for its context. \
+                More slots don't always mean more speed. If the Mac runs short of memory and swaps to disk, use \
+                fewer slots or less context.
+                """)
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(model.running)
@@ -375,8 +385,13 @@ struct ContentView: View {
     func monitoringRow(_ host: HostSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Text(host.id.hasPrefix("peer-") ? host.id.dropFirst("peer-".count) + "…" : "This Mac")
-                    .font(host.id.hasPrefix("peer-") ? .body.monospaced() : .body)
+                if let name = model.peerName(of: host) {
+                    Text(name).lineLimit(1).truncationMode(.middle)
+                } else if host.id.hasPrefix("peer-") {
+                    Text(host.id.dropFirst("peer-".count) + "…").font(.body.monospaced())
+                } else {
+                    Text("This Mac")
+                }
                 Spacer()
                 Text("\(Int(host.perHour.rounded())) per hour").monospacedDigit()
             }
