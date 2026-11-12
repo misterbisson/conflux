@@ -341,6 +341,28 @@ struct Peer {
     }
 }
 
+/// Runs curl, with a 3-second limit, and returns what it wrote. It waits
+/// without holding a thread: blocked in `waitUntilExit()`, a test can starve
+/// the few threads a CI runner has, so the server curl is calling never
+/// answers.
+private func curl(_ arguments: [String]) async throws -> Data {
+    let curl = Process()
+    curl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+    curl.arguments = ["-s", "-m", "3"] + arguments
+    let output = Pipe()
+    curl.standardOutput = output
+    try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
+        curl.terminationHandler = { _ in done.resume() }
+        do {
+            try curl.run()
+        } catch {
+            curl.terminationHandler = nil
+            done.resume(throwing: error)
+        }
+    }
+    return output.fileHandleForReading.readDataToEndOfFile()
+}
+
 @Suite struct HostServiceTests {
     /// The host service has no token, so it takes connections only from this
     /// process, where apple-iroh opens them.
@@ -348,15 +370,9 @@ struct Peer {
         let peer = try await Peer()
         defer { peer.server.stop() }
         let base = try await peer.remote.link.url()
-        let curl = Process()
-        curl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        curl.arguments = ["-s", "-m", "3", "-o", "/dev/null", "-w", "%{http_code}",
-                          base.appending(path: HostProtocol.statusPath).absoluteString]
-        let output = Pipe()
-        curl.standardOutput = output
-        try curl.run()
-        curl.waitUntilExit()
-        let code = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let code = String(decoding: try await curl(["-o", "/dev/null", "-w", "%{http_code}",
+                                                    base.appending(path: HostProtocol.statusPath).absoluteString]),
+                          as: UTF8.self)
         #expect(code == "000")
         // This process still gets in.
         #expect(await peer.remote.availability == .available)
@@ -372,15 +388,8 @@ struct Peer {
         // A file left by an earlier run is replaced.
         FileManager.default.createFile(atPath: path, contents: Data())
         try await server.start(socket: path)
-        let curl = Process()
-        curl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        curl.arguments = ["-s", "-m", "3", "--unix-socket", path, "http://host\(HostProtocol.statusPath)"]
-        let output = Pipe()
-        curl.standardOutput = output
-        try curl.run()
-        curl.waitUntilExit()
-        let status = try HostService.decoder.decode(HostStatus.self,
-                                                    from: output.fileHandleForReading.readDataToEndOfFile())
+        let status = try HostService.decoder.decode(
+            HostStatus.self, from: try await curl(["--unix-socket", path, "http://host\(HostProtocol.statusPath)"]))
         #expect(status.availability == "available")
         server.stop()
         #expect(!FileManager.default.fileExists(atPath: path))
