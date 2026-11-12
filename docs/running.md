@@ -9,7 +9,8 @@ join the mesh as hosts later in Phase 3 ([plan.md](plan.md)).
 
 - macOS 27 or later, on Apple Silicon.
 - A GGUF model and, for a vision model, its multimodal projector (`mmproj`).
-  [phase-0.md](phase-0.md) says how to choose one and how many slots it
+  The [README](../README.md#models) suggests some and says where to get
+  them. [phase-0.md](phase-0.md) says how to choose one and how many slots it
   should get. To try conflux first, the app has one: see
   [the starter model](#the-starter-model).
 

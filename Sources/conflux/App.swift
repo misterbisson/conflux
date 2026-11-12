@@ -12,8 +12,13 @@ struct ConfluxApp: App {
         // This makes it an ordinary app with a Dock icon and a window in front.
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate()
+        // One control panel, so one window: no tabs to open a second.
+        NSWindow.allowsAutomaticWindowTabbing = false
     }
 
+    // A window group, not a `Window`: an app whose only scene is a `Window`
+    // quits when it closes, which would stop the gateway. This one keeps
+    // serving, and the Dock icon brings the window back.
     var body: some Scene {
         WindowGroup("conflux") {
             ContentView()
@@ -21,6 +26,10 @@ struct ConfluxApp: App {
                 .frame(minWidth: 520, minHeight: 640)
         }
         .windowResizability(.contentSize)
+        .commands {
+            // No File › New Window: a second window would be a copy of this one.
+            CommandGroup(replacing: .newItem) {}
+        }
     }
 }
 
@@ -110,6 +119,13 @@ final class AppModel: ObservableObject {
     var appleHost: HostSnapshot? { snapshot?.hosts.first { $0.id == ConfluxNode.appleHostID } }
 
     func peerHost(_ peer: PeerStatus) -> HostSnapshot? { snapshot?.hosts.first { $0.id == peer.hostID } }
+
+    /// The name a peer's host goes by: the trusted peer's name, when it has
+    /// one. Nil for this Mac's hosts, and for peers without a name.
+    func peerName(of host: HostSnapshot) -> String? {
+        guard let endpointID = peers.first(where: { $0.hostID == host.id })?.endpointID else { return nil }
+        return trusted.first { $0.endpointID == endpointID }?.name
+    }
 
     /// The model the app ships, served until the person chooses one. Built
     /// from source, there's none.
