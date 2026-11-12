@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/misterbisson/conflux/compare/v0.5.0...v0.6.0) (2026-11-12)
+
+
+### Features
+
+* **ipad:** serve the iPad's model to the Macs' gateways ([#57](https://github.com/misterbisson/conflux/issues/57)) ([2acd678](https://github.com/misterbisson/conflux/commit/2acd678bf2492edc735996b65d7069b2ee646c94))
+
 ## [0.5.0](https://github.com/misterbisson/conflux/compare/v0.4.3...v0.5.0) (2026-11-12)
 
 
