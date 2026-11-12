@@ -147,7 +147,7 @@ targets:
         #   endpoint ID, a public key, with a name and a date, as a keychain
         #   item iCloud Keychain syncs between the user's devices. Storage
         #   through the operating system's keychain: nothing is encrypted here.
-        # - apple-iroh v0.9.0: iroh's connections between the user's own
+        # - apple-iroh v0.10.0: iroh's connections between the user's own
         #   devices, and to its relays, are QUIC with TLS 1.3, and each device's
         #   identity is an Ed25519 key. The cryptography is compiled into the
         #   app, not the operating system's: rustls with ring, which implement
