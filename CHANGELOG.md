@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/misterbisson/conflux/compare/v0.4.3...v0.5.0) (2026-11-12)
+
+
+### Features
+
+* show the app's version and build in its window ([#45](https://github.com/misterbisson/conflux/issues/45)) ([340bf40](https://github.com/misterbisson/conflux/commit/340bf40753ecb952c06539219a2ef5238a8ba405))
+
+
+### Bug Fixes
+
+* ask before stopping while requests are running ([#51](https://github.com/misterbisson/conflux/issues/51)) ([1b1f38e](https://github.com/misterbisson/conflux/commit/1b1f38e5898b6e78e62660964de36e8801c45971))
+* choose context and image sizes from a list instead of stepping ([#47](https://github.com/misterbisson/conflux/issues/47)) ([6daba6a](https://github.com/misterbisson/conflux/commit/6daba6a34d624592663aa33651af90cfa25c0f93))
+* explain slots in the app instead of pointing at a repository file ([#49](https://github.com/misterbisson/conflux/issues/49)) ([1568d3a](https://github.com/misterbisson/conflux/commit/1568d3a09c458ae0006b9ffae5b29b5c77040fb8))
+* name peers the same way in Monitoring as in Mesh ([#50](https://github.com/misterbisson/conflux/issues/50)) ([0c472fb](https://github.com/misterbisson/conflux/commit/0c472fb46a3a2fef544a926e7c1bb4873e558cf2))
+* open one conflux window, not several ([#48](https://github.com/misterbisson/conflux/issues/48)) ([83f7cab](https://github.com/misterbisson/conflux/commit/83f7cabb9e8d2fe41175788d0c1452e6ce8f9ee8))
+* say why settings are locked while conflux runs ([#53](https://github.com/misterbisson/conflux/issues/53)) ([0043b38](https://github.com/misterbisson/conflux/commit/0043b38df46988b4038ab541bb77d1ddcc877dfa))
+* show when a Copy button has copied ([#52](https://github.com/misterbisson/conflux/issues/52)) ([bccd111](https://github.com/misterbisson/conflux/commit/bccd111c911bcfcc169be2bc9ae8a8b530cfd86e))
+
 ## [0.4.3](https://github.com/misterbisson/conflux/compare/v0.4.2...v0.4.3) (2026-11-11)
 
 
