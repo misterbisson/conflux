@@ -78,3 +78,17 @@ public struct ModelConfig: Sendable, Equatable, Codable {
 
     var capabilities: Set<ModelInfo.Capability> { projector == nil ? [.text] : [.text, .vision] }
 }
+
+extension ModelConfig {
+    /// Context sizes, in tokens, the app offers for each slot.
+    public static let contextSizes = [1024, 2048, 4096, 8192, 16384, 32768, 65536]
+    /// Longest image sides, in pixels, the app offers.
+    public static let imageSides = [256, 512, 768, 1024, 1536, 2048, 3072, 4096]
+
+    /// The sizes to offer, in order, with `current` among them when it isn't
+    /// one already, so a value saved some other way still shows and stays
+    /// chosen.
+    public static func choices(_ sizes: [Int], including current: Int) -> [Int] {
+        sizes.contains(current) ? sizes : (sizes + [current]).sorted()
+    }
+}
