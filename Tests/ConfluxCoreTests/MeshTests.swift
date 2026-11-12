@@ -61,6 +61,7 @@ struct Peer {
         let settings = try JSONDecoder().decode(NodeSettings.self, from: Data(old.utf8))
         #expect(settings.peers.isEmpty)
         #expect(settings.host == nil)
+        #expect(settings.gateway)
     }
 }
 
@@ -125,6 +126,29 @@ struct Peer {
 
         await node.stop()
         #expect(node.trustedPeers.isEmpty)
+    }
+
+    /// An iPad runs no gateway, and uses no peer's host: it only serves its
+    /// own. Its peers are still trusted, so their gateways can reach it.
+    @Test func aHostOnlyNodeRunsNoGateway() async throws {
+        let me = DeviceIdentity.ephemeral()
+        let mac = DeviceIdentity.ephemeral().endpointID
+        let directory = MemoryDeviceDirectory([ListedDevice(endpointID: mac, name: "Mac")])
+        let node = ConfluxNode()
+        let port = try await node.start(NodeSettings(port: 0, requireToken: false, gateway: false), identity: me,
+                                        directory: directory)
+        #expect(port == 0)
+        #expect(node.port == nil)
+        #expect(node.meshProblem == nil)
+        #expect(node.peers.map(\.endpointID) == [mac])
+        #expect(node.peers.first?.hostID == "")
+        #expect(await node.scheduler.snapshot().hosts.isEmpty)
+
+        // Reading the directory again keeps the mesh it has.
+        await node.refreshPeers()
+        #expect(node.peers.map(\.endpointID) == [mac])
+        #expect(await node.scheduler.snapshot().hosts.isEmpty)
+        await node.stop()
     }
 
     /// Hand-added and listed together, each once.
@@ -317,6 +341,28 @@ struct Peer {
     }
 }
 
+/// Runs curl, with a 3-second limit, and returns what it wrote. It waits
+/// without holding a thread: blocked in `waitUntilExit()`, a test can starve
+/// the few threads a CI runner has, so the server curl is calling never
+/// answers.
+private func curl(_ arguments: [String]) async throws -> Data {
+    let curl = Process()
+    curl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+    curl.arguments = ["-s", "-m", "3"] + arguments
+    let output = Pipe()
+    curl.standardOutput = output
+    try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
+        curl.terminationHandler = { _ in done.resume() }
+        do {
+            try curl.run()
+        } catch {
+            curl.terminationHandler = nil
+            done.resume(throwing: error)
+        }
+    }
+    return output.fileHandleForReading.readDataToEndOfFile()
+}
+
 @Suite struct HostServiceTests {
     /// The host service has no token, so it takes connections only from this
     /// process, where apple-iroh opens them.
@@ -324,18 +370,29 @@ struct Peer {
         let peer = try await Peer()
         defer { peer.server.stop() }
         let base = try await peer.remote.link.url()
-        let curl = Process()
-        curl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        curl.arguments = ["-s", "-m", "3", "-o", "/dev/null", "-w", "%{http_code}",
-                          base.appending(path: HostProtocol.statusPath).absoluteString]
-        let output = Pipe()
-        curl.standardOutput = output
-        try curl.run()
-        curl.waitUntilExit()
-        let code = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let code = String(decoding: try await curl(["-o", "/dev/null", "-w", "%{http_code}",
+                                                    base.appending(path: HostProtocol.statusPath).absoluteString]),
+                          as: UTF8.self)
         #expect(code == "000")
         // This process still gets in.
         #expect(await peer.remote.availability == .available)
+    }
+
+    /// On iPadOS the host service listens on a Unix socket in the app's
+    /// container, and anything that reaches the socket gets in.
+    @Test func answersOverAUnixSocket() async throws {
+        let scheduler = await Scheduler.with([FakeHost(id: "local")])
+        let service = HostService(scheduler: scheduler, hostID: "local")
+        let server = HTTPServer(onlyFromThisProcess: false) { request in await service.handle(request) }
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("conflux-test-\(getpid()).sock")
+        // A file left by an earlier run is replaced.
+        FileManager.default.createFile(atPath: path, contents: Data())
+        try await server.start(socket: path)
+        let status = try HostService.decoder.decode(
+            HostStatus.self, from: try await curl(["--unix-socket", path, "http://host\(HostProtocol.statusPath)"]))
+        #expect(status.availability == "available")
+        server.stop()
+        #expect(!FileManager.default.fileExists(atPath: path))
     }
 
     @Test func runOnHostDoesntQueue() async throws {

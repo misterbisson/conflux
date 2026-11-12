@@ -81,6 +81,17 @@ struct IdentityStore {
         }
     }
 
+    /// The keychain access group the key is kept in: the app's own, named
+    /// `<team prefix>.<bundle ID>`. Nil when it isn't in the keychain.
+    var accessGroup: String? {
+        var result: CFTypeRef?
+        var search = query
+        search[kSecReturnAttributes as String] = true
+        guard SecItemCopyMatching(search as CFDictionary, &result) == errSecSuccess,
+              let attributes = result as? [String: Any] else { return nil }
+        return attributes[kSecAttrAccessGroup as String] as? String
+    }
+
     func write(_ key: Data) throws {
         var item = query
         item[kSecValueData as String] = key

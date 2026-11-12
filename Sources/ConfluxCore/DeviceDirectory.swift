@@ -133,9 +133,7 @@ public struct KeychainDeviceDirectory: DeviceDirectory {
 
     /// The directory, when this process may use it: a signed app with the
     /// shared access group. Nil built from source or signed ad hoc, where
-    /// peers are added by hand. Nil on iPadOS for now: it has no SecTask to
-    /// read entitlements with, and the iPad host that will need the
-    /// directory isn't built yet.
+    /// peers are added by hand.
     public static func forThisApp() -> KeychainDeviceDirectory? {
         #if os(macOS)
         guard let task = SecTaskCreateFromSelf(nil),
@@ -147,8 +145,34 @@ public struct KeychainDeviceDirectory: DeviceDirectory {
         else { return nil }
         return KeychainDeviceDirectory(accessGroup: group)
         #else
-        return nil
+        // iPadOS has no SecTask to read entitlements with. The team's prefix
+        // comes from the Info.plist, where signing fills it in, or else from
+        // the group the device's own key is kept in, `<prefix>.<bundle ID>`.
+        // Then the keychain says whether the app may use the directory's.
+        guard let prefix = Self.teamPrefix else { return nil }
+        let directory = KeychainDeviceDirectory(accessGroup: prefix + Self.group)
+        var search = directory.query
+        search[kSecMatchLimit as String] = kSecMatchLimitOne
+        return SecItemCopyMatching(search as CFDictionary, nil) == errSecMissingEntitlement ? nil : directory
         #endif
+    }
+
+    /// The Info.plist key that holds the team's prefix on iPadOS, written
+    /// `$(AppIdentifierPrefix)` in project.yml.
+    public static let prefixKey = "ConfluxAppIdentifierPrefix"
+
+    /// The team's prefix, with its trailing dot, on iPadOS.
+    static var teamPrefix: String? {
+        if let prefix = Bundle.main.object(forInfoDictionaryKey: prefixKey) as? String,
+           prefix.hasSuffix("."), !prefix.contains("$"), prefix.count > 1 {
+            return prefix
+        }
+        guard let bundleID = Bundle.main.bundleIdentifier,
+              let group = IdentityStore(label: "default").accessGroup,
+              group.hasSuffix("." + bundleID)
+        else { return nil }
+        let prefix = String(group.dropLast(bundleID.count))
+        return prefix.count > 1 ? prefix : nil
     }
 
     init(accessGroup: String) { self.accessGroup = accessGroup }

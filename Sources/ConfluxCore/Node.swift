@@ -1,6 +1,6 @@
 import Foundation
 
-/// Everything one Mac runs, as saved between launches.
+/// Everything one device runs, as saved between launches.
 public struct NodeSettings: Sendable, Equatable, Codable {
     /// The model this Mac serves, or nil to serve none.
     public var host: ModelConfig?
@@ -23,10 +23,14 @@ public struct NodeSettings: Sendable, Equatable, Codable {
     public var listedID: String?
     /// Apple's on-device model, served alongside `host`'s.
     public var appleModel: AppleModelSettings
+    /// Whether this device runs a gateway for clients. An iPad doesn't: it
+    /// serves its model to the Macs' gateways, and uses nobody's host
+    /// (docs/plan.md, Phase 3).
+    public var gateway: Bool
 
     public init(host: ModelConfig? = nil, port: UInt16 = 8090, requireToken: Bool = true, peers: [String] = [],
                 iCloudKeychain: Bool = true, listedID: String? = nil,
-                appleModel: AppleModelSettings = AppleModelSettings()) {
+                appleModel: AppleModelSettings = AppleModelSettings(), gateway: Bool = true) {
         self.host = host
         self.port = port
         self.requireToken = requireToken
@@ -34,6 +38,7 @@ public struct NodeSettings: Sendable, Equatable, Codable {
         self.iCloudKeychain = iCloudKeychain
         self.listedID = listedID
         self.appleModel = appleModel
+        self.gateway = gateway
     }
 
     // Settings saved before a field existed still load.
@@ -46,6 +51,7 @@ public struct NodeSettings: Sendable, Equatable, Codable {
         iCloudKeychain = try values.decodeIfPresent(Bool.self, forKey: .iCloudKeychain) ?? true
         listedID = try values.decodeIfPresent(String.self, forKey: .listedID)
         appleModel = try values.decodeIfPresent(AppleModelSettings.self, forKey: .appleModel) ?? AppleModelSettings()
+        gateway = try values.decodeIfPresent(Bool.self, forKey: .gateway) ?? true
     }
 }
 
@@ -103,7 +109,8 @@ public struct PeerStatus: Sendable, Equatable, Identifiable {
     public var path: PeerPath
 }
 
-/// A Mac's gateway and its own host, started and stopped together.
+/// A device's gateway and its own hosts, started and stopped together. On an
+/// iPad, its hosts alone.
 public final class ConfluxNode: @unchecked Sendable {
     public let scheduler: Scheduler
     private let lock = NSLock()
@@ -125,6 +132,9 @@ public final class ConfluxNode: @unchecked Sendable {
     private var directoryFailure: String?
     private var trusted: [TrustedPeer] = []
     private var watching: (task: Task<Void, Never>, ticker: Task<Void, Never>, wake: AsyncStream<Void>.Continuation)?
+    /// Whether this node uses peers' hosts: only with a gateway to send them
+    /// work.
+    private var usesPeers = true
     /// How often a running node reads the directory. The keychain sends no
     /// notice of changes, so it asks.
     static let directoryInterval: Duration = .seconds(10)
@@ -141,8 +151,8 @@ public final class ConfluxNode: @unchecked Sendable {
 
     /// Starts the gateway first, so clients get answers ("starting") while the
     /// model loads, then the host, then the mesh if there are peers. Returns
-    /// the gateway's port. A mesh that can't start leaves the gateway and
-    /// host running, and says why in `meshProblem`.
+    /// the gateway's port, or 0 without a gateway. A mesh that can't start
+    /// leaves the gateway and host running, and says why in `meshProblem`.
     ///
     /// Peers are the hand-added ones and, with a `directory` and
     /// `settings.iCloudKeychain`, every other device listed there. The
@@ -152,14 +162,18 @@ public final class ConfluxNode: @unchecked Sendable {
                       directory: (any DeviceDirectory)? = nil,
                       tokenURL: URL = TokenStore.defaultURL) async throws -> UInt16 {
         await stop()
-        let token = settings.requireToken ? try TokenStore.token(at: tokenURL) : nil
-        let gateway = Gateway(scheduler: scheduler, token: token)
-        let server = HTTPServer { request in await gateway.handle(request) }
-        let port = try await server.start(port: settings.port)
-        lock.withLock {
-            self.server = server
-            boundPort = port
+        var port: UInt16 = 0
+        if settings.gateway {
+            let token = settings.requireToken ? try TokenStore.token(at: tokenURL) : nil
+            let gateway = Gateway(scheduler: scheduler, token: token)
+            let server = HTTPServer { request in await gateway.handle(request) }
+            port = try await server.start(port: settings.port)
+            lock.withLock {
+                self.server = server
+                boundPort = port
+            }
         }
+        lock.withLock { usesPeers = settings.gateway }
         await scheduler.startRefreshing()
 
         if let config = settings.host {
@@ -240,18 +254,19 @@ public final class ConfluxNode: @unchecked Sendable {
     /// ID off its allow list or close one peer's connection.
     private func apply(_ trusted: [TrustedPeer], identity: DeviceIdentity) async {
         let wanted = trusted.map(\.endpointID)
-        let (mesh, current) = lock.withLock { () -> (Mesh?, Set<String>) in
+        let (mesh, usesPeers) = lock.withLock { () -> (Mesh?, Bool) in
             self.trusted = trusted
-            return (self.mesh, Set(remotes.map(\.endpointID)))
+            return (self.mesh, self.usesPeers)
         }
+        let current = Set(mesh?.peers ?? [])
         guard Set(wanted) != current || (mesh == nil && !wanted.isEmpty) else { return }
         do {
             if let mesh, current.isSubset(of: wanted) {
                 let added = wanted.filter { !current.contains($0) }
                 try mesh.allow(added)
-                let joined = added.compactMap { peer in
+                let joined = usesPeers ? added.compactMap { peer in
                     mesh.link(to: peer).map { RemoteHost(endpointID: peer, link: $0) }
-                }
+                } : []
                 lock.withLock { remotes += joined }
                 for remote in joined {
                     remote.start()
@@ -286,15 +301,33 @@ public final class ConfluxNode: @unchecked Sendable {
     public func refreshSoon() { lock.withLock { watching?.wake }?.yield() }
 
     private func startMesh(peers: [String], identity: DeviceIdentity) async throws {
-        // This Mac's host, for peers' gateways. Served without a host too,
-        // so peers hear "serves no model" rather than nothing. Peers see one
-        // host per device for now: the model file's, or else Apple's model.
+        // This device's host, for peers' gateways. Served without a host
+        // too, so peers hear "serves no model" rather than nothing. Peers see
+        // one host per device for now: the model file's, or else Apple's
+        // model.
         let handler = HostService(scheduler: scheduler, hostID: localHosts.first?.id)
-        let service = HTTPServer(onlyFromThisProcess: true) { request in await handler.handle(request) }
-        let exposed = try await service.start(port: 0)
+        let service: HTTPServer
+        let exposure: Mesh.Exposure
+        if let path = Self.hostSocket {
+            service = HTTPServer(onlyFromThisProcess: false) { request in await handler.handle(request) }
+            try await service.start(socket: path)
+            exposure = .socket(path)
+        } else {
+            service = HTTPServer(onlyFromThisProcess: true) { request in await handler.handle(request) }
+            exposure = .port(try await service.start(port: 0))
+        }
         lock.withLock { self.service = service }
-        let mesh = try Mesh(identity: identity, peers: peers, exposing: exposed)
-        let remotes = peers.compactMap { peer in mesh.link(to: peer).map { RemoteHost(endpointID: peer, link: $0) } }
+        let mesh: Mesh
+        do {
+            mesh = try Mesh(identity: identity, peers: peers, exposing: exposure)
+        } catch {
+            service.stop()
+            lock.withLock { self.service = nil }
+            throw error
+        }
+        let remotes = lock.withLock { usesPeers } ? peers.compactMap { peer in
+            mesh.link(to: peer).map { RemoteHost(endpointID: peer, link: $0) }
+        } : []
         lock.withLock {
             self.mesh = mesh
             self.remotes = remotes
@@ -303,6 +336,23 @@ public final class ConfluxNode: @unchecked Sendable {
             remote.start()
             await scheduler.add(remote)
         }
+    }
+
+    /// The Unix socket peers' streams reach the host service through, or nil
+    /// for a loopback port.
+    ///
+    /// On a Mac, a loopback port, and the host service takes connections only
+    /// from this process (`ProcessSockets`). iPadOS can't say which process
+    /// connected, so there a socket in the app's container, which other apps
+    /// can't reach. `CONFLUX_HOST_SOCKET=1` uses the socket on a Mac too, to
+    /// test that path.
+    static var hostSocket: String? {
+        #if os(macOS)
+        guard ProcessInfo.processInfo.environment["CONFLUX_HOST_SOCKET"] == "1" else { return nil }
+        #endif
+        // Short: a socket's path holds at most 103 bytes. One per process,
+        // so two on one Mac don't collide.
+        return (NSTemporaryDirectory() as NSString).appendingPathComponent("conflux-\(getpid()).sock")
     }
 
     /// Why the mesh isn't running, when there are peers and it should be.
@@ -314,11 +364,15 @@ public final class ConfluxNode: @unchecked Sendable {
     /// The devices the mesh trusts now, and why.
     public var trustedPeers: [TrustedPeer] { lock.withLock { trusted } }
 
-    /// Each peer, and how its connection is carried.
+    /// Each peer, and how its connection is carried. A peer's `hostID` is
+    /// empty on a node that doesn't use peers' hosts.
     public var peers: [PeerStatus] {
         let (mesh, remotes) = lock.withLock { (self.mesh, self.remotes) }
         guard let mesh else { return [] }
-        return remotes.map { PeerStatus(endpointID: $0.endpointID, hostID: $0.id, path: mesh.path(to: $0.endpointID)) }
+        return mesh.peers.map { peer in
+            PeerStatus(endpointID: peer, hostID: remotes.first { $0.endpointID == peer }?.id ?? "",
+                       path: mesh.path(to: peer))
+        }
     }
 
     /// Devices that tried to connect and weren't peers.
@@ -363,6 +417,7 @@ public final class ConfluxNode: @unchecked Sendable {
             meshFailure = nil
             identity = nil
             manual = []
+            usesPeers = true
             directory = nil
             listed = []
             directoryFailure = nil

@@ -22,7 +22,8 @@ model that's too large for any single device.
 
 ## Status
 
-Phase 2, several Macs, is under way. The Mac app, and the iPad's memory probe, are
+Phase 2, several Macs, is under way, and Phase 3's iPad host is built: an
+iPad serves its model to the Macs' gateways. The Mac and iPad apps are
 built by Xcode Cloud and distributed through TestFlight, which the iCloud
 Keychain trust model needs.
 Macs signed in to the same Apple Account find each other through iCloud

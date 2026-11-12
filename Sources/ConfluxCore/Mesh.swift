@@ -19,10 +19,18 @@ final class Mesh: @unchecked Sendable {
     private static let running = NSLock()
     nonisolated(unsafe) private static var started = false
 
+    /// Where peers' streams reach this device's host service.
+    enum Exposure: Equatable {
+        /// A loopback port, which any process here can also reach.
+        case port(UInt16)
+        /// A Unix socket in this app's container, which only this app can.
+        case socket(String)
+    }
+
     /// Starts the endpoint under this device's key, allows `peers` in, and
-    /// exposes `port`, the host service, to them. One mesh per process:
-    /// apple-iroh keeps its endpoint in a global.
-    init(identity: DeviceIdentity, peers: [String], exposing port: UInt16?) throws {
+    /// exposes the host service to them. One mesh per process: apple-iroh
+    /// keeps its endpoint in a global.
+    init(identity: DeviceIdentity, peers: [String], exposing exposure: Exposure?) throws {
         try Self.running.withLock {
             guard !Self.started else { throw MeshError.alreadyRunning }
             try Iroh.start(secretKey: identity.secretKey)
@@ -30,7 +38,11 @@ final class Mesh: @unchecked Sendable {
                 guard Iroh.endpointID == identity.endpointID else { throw MeshError.identityMismatch }
                 Iroh.allowNone()
                 for peer in peers { try Iroh.allow(peer) }
-                if let port { try Iroh.expose(port) }
+                switch exposure {
+                case .port(let port)?: try Iroh.expose(port)
+                case .socket(let path)?: try Iroh.expose(socket: path)
+                case nil: break
+                }
             } catch {
                 Iroh.stop()
                 throw error

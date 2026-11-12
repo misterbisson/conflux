@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import Network
 
-/// A small HTTP/1.1 server that listens on loopback only.
+/// A small HTTP/1.1 server that listens on loopback, or on a Unix socket.
 ///
 /// It handles one request at a time per connection, with keep-alive, and as
 /// many connections at once as clients open. It's enough for an
@@ -16,6 +16,7 @@ public final class HTTPServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "conflux.http")
     private let lock = NSLock()
     private var listener: NWListener?
+    private var socketPath: String?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
 
     public convenience init(maxBodyBytes: Int = 64 * 1024 * 1024, handler: @escaping Handler) {
@@ -35,14 +36,31 @@ public final class HTTPServer: @unchecked Sendable {
         parameters.allowLocalEndpointReuse = true
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port) ?? .any)
         let listener = try NWListener(using: parameters)
-        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+        return try await listen(listener) { $0.port?.rawValue ?? port }
+    }
 
-        let bound: UInt16 = try await withCheckedThrowingContinuation { continuation in
+    /// Starts listening on a Unix socket at `path`, replacing a socket left
+    /// there by an earlier run. Any process that can reach the path can
+    /// connect: in an app's own container, that's this app alone, which is
+    /// why the host service listens here on iPadOS, where it can't ask which
+    /// process connected (`ProcessSockets`).
+    func start(socket path: String) async throws {
+        try? FileManager.default.removeItem(atPath: path)
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .unix(path: path)
+        let listener = try NWListener(using: parameters)
+        _ = try await listen(listener) { _ in 0 }
+        lock.withLock { socketPath = path }
+    }
+
+    private func listen(_ listener: NWListener, bound: @escaping @Sendable (NWListener) -> UInt16) async throws -> UInt16 {
+        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+        let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
             let once = Once()
             listener.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    once.run { continuation.resume(returning: listener.port?.rawValue ?? port) }
+                    once.run { continuation.resume(returning: bound(listener)) }
                 case .failed(let error):
                     once.run { continuation.resume(throwing: error) }
                 case .cancelled:
@@ -54,16 +72,17 @@ public final class HTTPServer: @unchecked Sendable {
             listener.start(queue: queue)
         }
         lock.withLock { self.listener = listener }
-        return bound
+        return port
     }
 
     public func stop() {
-        let (listener, connections) = lock.withLock {
-            defer { self.listener = nil; self.connections = [:] }
-            return (self.listener, Array(self.connections.values))
+        let (listener, connections, path) = lock.withLock {
+            defer { self.listener = nil; self.connections = [:]; socketPath = nil }
+            return (self.listener, Array(self.connections.values), socketPath)
         }
         listener?.cancel()
         connections.forEach { $0.cancel() }
+        if let path { try? FileManager.default.removeItem(atPath: path) }
     }
 
     private func accept(_ connection: NWConnection) {

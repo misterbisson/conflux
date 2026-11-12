@@ -213,10 +213,11 @@ the host serve anyway, and clients get the bad answers instead.
 
 ## On an iPad
 
-The iPad app is the same app as the Mac's, built for iPadOS 27 or later. Its
-first version isn't a host yet. It's a memory probe: it checks whether a
-model fits on the iPad, and records the memory that took, to decide which
-models iPads can serve ([plan.md](plan.md), Phase 3).
+The iPad app is the same app as the Mac's, built for iPadOS 27 or later. An
+iPad is a host only: it serves its model to your Macs' gateways over iroh,
+and runs no gateway, so clients never talk to it directly. It also has a
+memory probe, which checks whether a model fits and records the memory that
+took ([plan.md](plan.md), Phase 3).
 
 **Installing it.** From TestFlight, like the Mac app
 ([releasing.md](releasing.md)): testers in the TestFlight group get both. Or
@@ -227,16 +228,44 @@ Xcode's automatic signing adds the app's two memory capabilities, the
 increased memory limit and extended virtual addressing, to its app ID the
 first time.
 
-**The starter model** is listed first, so the probe can check something
-before any model is copied in.
+**The starter model** is listed first, so there's something to serve or
+check before any model is copied in.
 
 **Copying models in.** Connect the iPad to the Mac, select it in Finder, open
 the **Files** tab, and drag the GGUF files onto conflux. The Files app shows
 the same folder, under **On My iPad**. A vision model's projector goes
 alongside it, with `mmproj` in its file name, as llama.cpp names them.
 
+**Serving.** Choose the model, its projector, the slots and the context, and
+press **Serve this model to my Macs**. The top of the screen says what the
+iPad is doing, in type big enough to read across a room: its state, the slots
+in use, requests completed, its rate per hour, how many Macs are connected,
+and its temperature and power.
+
+- **Which Macs.** With **Find my Macs through iCloud Keychain** on, the iPad
+  lists itself in iCloud Keychain's device list, and trusts the Macs listed
+  there, as Macs trust each other ([Peers](#peers-other-macs-models)). The
+  Macs find it and send it work, as they do another Mac. A build not signed
+  for the team has no device list: copy the iPad's ID into each Mac's peers,
+  and each Mac's ID into the iPad's.
+- **Only in the foreground.** iPadOS suspends an app in the background, so
+  when conflux leaves the foreground it finishes what's running and takes
+  nothing new, and the Macs send their work elsewhere. It keeps the screen
+  awake while it serves.
+- **Only while charging**, by default. Unplugged, it pauses, until it's
+  plugged in again or **Serve on battery** is on.
+- **The first time**, iPadOS asks whether conflux may find devices on the
+  local network. Allowing it lets iroh connect to the Macs directly rather
+  than through a relay.
+
+How other apps are kept out: on a Mac, the host service listens on a
+loopback port and takes connections only from conflux itself. iPadOS can't
+say which app connected, so on an iPad it listens on a Unix socket in
+conflux's own container, which other apps can't reach, and apple-iroh
+carries the Macs' requests there.
+
 **Checking a model.** Choose the model, its projector, the slots and the
-context, and press **Check this model**. conflux loads it, runs the
+context, and press **Check whether it fits**. conflux loads it, runs the
 self-check, and times one request, keeping the screen awake meanwhile. Keep
 it in the foreground. A model too big for the iPad makes iPadOS end the app,
 and the next launch records it as *killed*.

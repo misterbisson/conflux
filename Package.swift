@@ -29,8 +29,8 @@ let package = Package(
         // checksum, like llama.
         .binaryTarget(
             name: "AppleIroh",
-            url: "https://github.com/misterbisson/apple-iroh/releases/download/v0.9.0/AppleIroh.xcframework.zip",
-            checksum: "9ec6264f23f20ea204a10c8c8fdd708406a66cc9f7e5476fa6d95a9aedf6ed2b"
+            url: "https://github.com/misterbisson/apple-iroh/releases/download/v0.10.0/AppleIroh.xcframework.zip",
+            checksum: "15381c3650f98ab95cd3e2efcf552701be87cc2117ca46ace7566dc117bb346c"
         ),
 
         // The gateway, the scheduler, the hosts that run models, and the mesh.
