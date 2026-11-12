@@ -51,21 +51,63 @@ struct ContentView: View {
         }
     }
 
+    /// Requests running and waiting when Stop was clicked, while it asks.
+    @State private var stopping: (running: Int, waiting: Int)?
+
     @ViewBuilder var controls: some View {
         if model.running {
             if model.intent == .serving {
                 Button("Drain") { model.setIntent(.draining) }
                     .help("Finish what's running and take nothing new")
                 Button("Pause") { model.setIntent(.paused) }
+                    .help("Take nothing new on this Mac's models until you resume")
             } else {
                 Button("Resume") { model.setIntent(.serving) }
+                    .help("Take new requests on this Mac's models again")
             }
-            Button("Stop") { model.stop() }
+            Button("Stop", action: askToStop)
+                .help("Stop the gateway and this Mac's models, and leave the mesh. Requests running or waiting are cut off.")
+                .padding(.leading, 12)
+                .confirmationDialog("Stop conflux?",
+                                    isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
+                                    presenting: stopping) { _ in
+                    Button("Stop", role: .destructive) { model.stop() }
+                    if model.intent == .serving {
+                        Button("Drain") { model.setIntent(.draining) }
+                    }
+                } message: { work in
+                    Text(stopWarning(running: work.running, waiting: work.waiting))
+                }
         } else {
             Button("Start") { model.start() }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!model.canStart)
         }
+    }
+
+    /// Stops at once when no request is running or waiting at this gateway,
+    /// on any host. Otherwise it asks first.
+    func askToStop() {
+        let running = model.snapshot?.hosts.reduce(0) { $0 + $1.active } ?? 0
+        let waiting = model.snapshot?.queued ?? 0
+        if running + waiting == 0 {
+            model.stop()
+        } else {
+            stopping = (running, waiting)
+        }
+    }
+
+    func stopWarning(running: Int, waiting: Int) -> String {
+        let work = switch (running, waiting) {
+        case (_, 0): "\(running) \(running == 1 ? "request is" : "requests are") running."
+        case (0, _): "\(waiting) \(waiting == 1 ? "request is" : "requests are") waiting."
+        default: "\(running) \(running == 1 ? "request is" : "requests are") running and \(waiting) \(waiting == 1 ? "is" : "are") waiting."
+        }
+        let cut = " Stopping cuts \(running + waiting == 1 ? "it" : "them") off."
+        let drain = model.intent == .serving
+            ? " Drain instead to let this Mac's models finish what they're running and take nothing new."
+            : ""
+        return work + cut + drain
     }
 
     var stateLabel: String {
@@ -207,7 +249,7 @@ struct ContentView: View {
                     HStack {
                         Text(DeviceIdentity.short(id) + "…").font(.body.monospaced())
                             .help(id)
-                        Button("Copy ID") { model.copy(id) }
+                        CopyButton(title: "Copy ID") { model.copy(id); return true }
                     }
                 }
             }
@@ -387,6 +429,8 @@ struct ContentView: View {
 
     // MARK: Gateway
 
+    @State private var tokenProblem: String?
+
     @ViewBuilder var gatewaySection: some View {
         Section("Gateway") {
             LabeledContent("Port") {
@@ -399,7 +443,7 @@ struct ContentView: View {
                 LabeledContent("Endpoint") {
                     HStack {
                         Text(url).font(.body.monospaced()).textSelection(.enabled)
-                        Button("Copy") { model.copy(url) }
+                        CopyButton(title: "Copy") { model.copy(url); return true }
                     }
                 }
             }
@@ -408,9 +452,12 @@ struct ContentView: View {
             if model.settings.requireToken {
                 LabeledContent("Token") {
                     HStack {
-                        Button("Copy") { if let token = model.token { model.copy(token) } }
+                        CopyButton(title: "Copy", copy: copyToken)
                         Button("New token") { model.rotateToken() }
                     }
+                }
+                if let tokenProblem {
+                    Text(tokenProblem).font(.caption).foregroundStyle(.red)
                 }
             } else {
                 Text("Any process on this Mac can use the gateway without a token.")
@@ -420,6 +467,16 @@ struct ContentView: View {
                 Text("Stop conflux to change the port or the token setting.").font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func copyToken() -> Bool {
+        guard let token = model.token else {
+            tokenProblem = "Couldn't read the token."
+            return false
+        }
+        tokenProblem = nil
+        model.copy(token)
+        return true
     }
 
     // MARK: About
@@ -432,6 +489,36 @@ struct ContentView: View {
             LabeledContent("Acknowledgements") {
                 Button("Show…") { NSApplication.shared.orderFrontStandardAboutPanel(nil) }
             }
+        }
+    }
+}
+
+/// A button that copies something and says "Copied" for a moment after it has.
+struct CopyButton: View {
+    let title: String
+    /// Copies, and says whether it did.
+    let copy: () -> Bool
+
+    @State private var copied = false
+    @State private var copies = 0
+
+    var body: some View {
+        Button {
+            copied = copy()
+            copies += 1
+        } label: {
+            // Both labels take up room, so the button keeps its width.
+            ZStack {
+                Text(title).opacity(copied ? 0 : 1)
+                Text("Copied").opacity(copied ? 1 : 0)
+            }
+        }
+        .accessibilityLabel(copied ? "Copied" : title)
+        // Each copy restarts the wait; leaving the window cancels it.
+        .task(id: copies) {
+            guard copied else { return }
+            do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
+            copied = false
         }
     }
 }
