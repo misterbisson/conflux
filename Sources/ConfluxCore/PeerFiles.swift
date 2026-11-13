@@ -164,7 +164,8 @@ public struct PeerFiles: Sendable {
         let manager = FileManager.default
         try manager.createDirectory(at: partial.deletingLastPathComponent(), withIntermediateDirectories: true)
         try manager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        var (hasher, have) = try Self.resume(partial, for: file)
+        // Hashing what's there can take seconds, for gigabytes.
+        var (hasher, have) = try await Blocking.run { try Self.resume(partial, for: file) }
         progress(PullProgress(received: have, total: file.size))
         if have < file.size {
             let base = try await url()

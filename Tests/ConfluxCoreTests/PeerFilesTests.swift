@@ -5,20 +5,29 @@ import Security
 import Testing
 @testable import ConfluxCore
 
-/// A file of random bytes, generated for the test: never a model's weights.
-private func generatedFile(_ size: Int, named name: String = "model.gguf") throws -> URL {
-    let directory = FileManager.default.temporaryDirectory.appending(path: "conflux-files-\(UUID())")
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    var bytes = Data(count: size)
-    let status = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, size, $0.baseAddress!) }
-    #expect(status == errSecSuccess)
-    let url = directory.appending(path: name)
-    try bytes.write(to: url)
-    return url
+/// Runs file and socket work off Swift's cooperative pool. Tests run in
+/// parallel on its few threads, and work that blocks one holds up every
+/// other test's tasks, the servers they talk to included.
+private func blocking<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await Blocking.run(work)
 }
 
-private func sha256(_ url: URL) throws -> String {
-    SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
+/// A file of random bytes, generated for the test: never a model's weights.
+private func generatedFile(_ size: Int, named name: String = "model.gguf") async throws -> URL {
+    try await blocking {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "conflux-files-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var bytes = Data(count: size)
+        let status = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, size, $0.baseAddress!) }
+        guard status == errSecSuccess else { throw POSIXError(.EIO) }
+        let url = directory.appending(path: name)
+        try bytes.write(to: url)
+        return url
+    }
+}
+
+private func sha256(_ url: URL) async throws -> String {
+    try await blocking { SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined() }
 }
 
 private func size(_ url: URL) -> Int64 {
@@ -130,7 +139,7 @@ private final class FileHost: @unchecked Sendable {
 @Suite struct FileStreamingTests {
     /// The whole file and a range of it, through the server, byte for byte.
     @Test func streamsAFile() async throws {
-        let file = try generatedFile(12 << 20 + 12_345)
+        let file = try await generatedFile(12 << 20 + 12_345)
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let total = size(file)
         let server = HTTPServer { request in
@@ -143,13 +152,13 @@ private final class FileHost: @unchecked Sendable {
 
         let (whole, response) = try await session.data(from: url)
         #expect((response as? HTTPURLResponse)?.statusCode == 200)
-        #expect(whole == (try Data(contentsOf: file)))
+        #expect(whole == (try await blocking { try Data(contentsOf: file) }))
 
         var request = URLRequest(url: url)
         request.setValue("bytes=5000000-5999999", forHTTPHeaderField: "Range")
         let (part, partResponse) = try await session.data(for: request)
         #expect((partResponse as? HTTPURLResponse)?.statusCode == 206)
-        #expect(part == (try Data(contentsOf: file)).subdata(in: 5_000_000..<6_000_000))
+        #expect(part == (try await blocking { try Data(contentsOf: file) }).subdata(in: 5_000_000..<6_000_000))
 
         // The connection is still good for another request.
         let (again, _) = try await session.data(from: url)
@@ -159,7 +168,7 @@ private final class FileHost: @unchecked Sendable {
     /// A client that reads nothing holds the server to what the sockets
     /// buffer, not the file; one that closes stops it.
     @Test func neverHoldsTheWholeFile() async throws {
-        let file = try generatedFile(64 << 20)
+        let file = try await generatedFile(64 << 20)
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let total = size(file)
         let server = HTTPServer { request in
@@ -168,24 +177,30 @@ private final class FileHost: @unchecked Sendable {
         let port = try await server.start(port: 0)
         defer { server.stop() }
 
-        let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        #expect(socket >= 0)
-        var small: Int32 = 64 << 10
-        setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &small, socklen_t(MemoryLayout<Int32>.size))
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = port.bigEndian
-        address.sin_addr.s_addr = inet_addr("127.0.0.1")
-        let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        // A plain socket, which blocks: off the cooperative pool, where the
+        // server's own tasks run.
+        let (socket, first) = try await blocking { () -> (Int32, Int) in
+            let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+            guard socket >= 0 else { return (socket, -1) }
+            var small: Int32 = 64 << 10
+            setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &small, socklen_t(MemoryLayout<Int32>.size))
+            var address = sockaddr_in()
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = port.bigEndian
+            address.sin_addr.s_addr = inet_addr("127.0.0.1")
+            let connected = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
             }
+            guard connected == 0 else { return (socket, -1) }
+            let request = Array("GET /file HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8)
+            guard write(socket, request, request.count) == request.count else { return (socket, -1) }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            return (socket, read(socket, &buffer, buffer.count))
         }
-        #expect(connected == 0)
-        let request = Array("GET /file HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8)
-        #expect(write(socket, request, request.count) == request.count)
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        #expect(read(socket, &buffer, buffer.count) > 0)
+        #expect(socket >= 0)
+        #expect(first > 0)
 
         // Reading nothing more, the server stops reading the file.
         try await Task.sleep(for: .milliseconds(500))
@@ -208,8 +223,8 @@ private final class FileHost: @unchecked Sendable {
     /// The list names the files, with sizes and SHA-256, and the model they
     /// serve as.
     @Test func listsWhatItServes() async throws {
-        let model = try generatedFile(3 << 20, named: "Tiny-Model-Q8_0.gguf")
-        let projector = try generatedFile(1 << 20, named: "mmproj-Tiny-Model-Q8_0.gguf")
+        let model = try await generatedFile(3 << 20, named: "Tiny-Model-Q8_0.gguf")
+        let projector = try await generatedFile(1 << 20, named: "mmproj-Tiny-Model-Q8_0.gguf")
         defer {
             try? FileManager.default.removeItem(at: model.deletingLastPathComponent())
             try? FileManager.default.removeItem(at: projector.deletingLastPathComponent())
@@ -220,9 +235,9 @@ private final class FileHost: @unchecked Sendable {
         defer { host.server.stop() }
         let list = try await host.files.list()
         #expect(list.model == PeerFile(role: .model, name: "Tiny-Model-Q8_0.gguf", size: 3 << 20,
-                                       sha256: try sha256(model)))
+                                       sha256: try await sha256(model)))
         #expect(list.projector == PeerFile(role: .projector, name: "mmproj-Tiny-Model-Q8_0.gguf", size: 1 << 20,
-                                           sha256: try sha256(projector)))
+                                           sha256: try await sha256(projector)))
         #expect(list.size == 4 << 20)
         let served = await fake.model
         #expect(list.modelID == served?.id)
@@ -231,7 +246,7 @@ private final class FileHost: @unchecked Sendable {
 
     /// Nothing but its own files, by role: no path from a request.
     @Test func refusesAnythingElse() async throws {
-        let model = try generatedFile(1 << 20)
+        let model = try await generatedFile(1 << 20)
         defer { try? FileManager.default.removeItem(at: model.deletingLastPathComponent()) }
         let host = try await FileHost(files: [.model: model.path])
         defer { host.server.stop() }
@@ -285,7 +300,7 @@ private final class FileHost: @unchecked Sendable {
     }
 
     @Test func pullsAndVerifies() async throws {
-        let model = try generatedFile(5 << 20 + 7)
+        let model = try await generatedFile(5 << 20 + 7)
         let into = try directory()
         defer {
             try? FileManager.default.removeItem(at: model.deletingLastPathComponent())
@@ -298,7 +313,7 @@ private final class FileHost: @unchecked Sendable {
         let destination = into.appending(path: file.name), partial = into.appending(path: file.name + ".partial")
         let last = Last()
         try await host.files.pull(file, to: destination, partial: partial) { last.set($0) }
-        #expect(try sha256(destination) == file.sha256)
+        #expect(try await sha256(destination) == file.sha256)
         #expect(!FileManager.default.fileExists(atPath: partial.path))
         #expect(last.value?.received == file.size)
         #expect(last.value?.fraction == 1)
@@ -308,7 +323,7 @@ private final class FileHost: @unchecked Sendable {
     /// The connection is cut partway: the partial file stays, and the next
     /// pull asks for the rest.
     @Test func resumesAfterACut() async throws {
-        let model = try generatedFile(48 << 20)
+        let model = try await generatedFile(32 << 20)
         let into = try directory()
         defer {
             try? FileManager.default.removeItem(at: model.deletingLastPathComponent())
@@ -331,13 +346,13 @@ private final class FileHost: @unchecked Sendable {
 
         try await host.restart()
         try await host.files.pull(file, to: destination, partial: partial)
-        #expect(try sha256(destination) == file.sha256)
+        #expect(try await sha256(destination) == file.sha256)
         #expect(host.ranges == [nil, "bytes=\(kept)-"])
     }
 
     /// Stopped by cancelling, the same.
     @Test func resumesAfterStopping() async throws {
-        let model = try generatedFile(48 << 20)
+        let model = try await generatedFile(32 << 20)
         let into = try directory()
         defer {
             try? FileManager.default.removeItem(at: model.deletingLastPathComponent())
@@ -363,7 +378,7 @@ private final class FileHost: @unchecked Sendable {
         #expect(kept > 0 && kept < file.size, "kept \(kept) of \(file.size)")
 
         try await files.pull(file, to: destination, partial: partial)
-        #expect(try sha256(destination) == file.sha256)
+        #expect(try await sha256(destination) == file.sha256)
         #expect(host.ranges.last == "bytes=\(kept)-")
     }
 
@@ -372,7 +387,7 @@ private final class FileHost: @unchecked Sendable {
     /// listed, and throws the partial away. Listing again pulls the new one
     /// from the start.
     @Test func aChangedFileStartsOver() async throws {
-        let model = try generatedFile(4 << 20)
+        let model = try await generatedFile(4 << 20)
         let into = try directory()
         defer {
             try? FileManager.default.removeItem(at: model.deletingLastPathComponent())
@@ -387,7 +402,7 @@ private final class FileHost: @unchecked Sendable {
         try PeerFiles.mark(partial, as: old.sha256)
 
         // The host's file changes: other bytes, and a later modification.
-        var replacement = try Data(contentsOf: try generatedFile(4 << 20))
+        var replacement = try Data(contentsOf: try await generatedFile(4 << 20))
         replacement[0] ^= 0xff
         try replacement.write(to: model)
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: model.path)
@@ -401,13 +416,13 @@ private final class FileHost: @unchecked Sendable {
         let new = try #require(try await host.files.list().model)
         #expect(new.sha256 != old.sha256)
         try await host.files.pull(new, to: destination, partial: partial)
-        #expect(try sha256(destination) == new.sha256)
+        #expect(try await sha256(destination) == new.sha256)
         #expect(host.ranges.last == .some(nil))
     }
 
     /// A partial file left from another version is not resumed.
     @Test func aPartialOfAnotherVersionIsDiscarded() async throws {
-        let model = try generatedFile(2 << 20)
+        let model = try await generatedFile(2 << 20)
         let into = try directory()
         defer {
             try? FileManager.default.removeItem(at: model.deletingLastPathComponent())
@@ -420,13 +435,13 @@ private final class FileHost: @unchecked Sendable {
         try Data(repeating: 7, count: 1000).write(to: partial)
         try PeerFiles.mark(partial, as: String(repeating: "0", count: 64))
         try await host.files.pull(file, to: destination, partial: partial)
-        #expect(try sha256(destination) == file.sha256)
+        #expect(try await sha256(destination) == file.sha256)
         #expect(host.ranges == [nil])
     }
 
     /// A listing that doesn't match the bytes: the copy is thrown away.
     @Test func aWrongHashIsRefused() async throws {
-        let model = try generatedFile(1 << 20)
+        let model = try await generatedFile(1 << 20)
         let into = try directory()
         defer {
             try? FileManager.default.removeItem(at: model.deletingLastPathComponent())

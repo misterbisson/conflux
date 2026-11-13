@@ -194,22 +194,23 @@ public final class HTTPServer: @unchecked Sendable {
     /// Sends a file body a chunk at a time. Each chunk is read only once the
     /// connection has taken the one before, so a slow client, or iroh's flow
     /// control behind it, holds the server to about one chunk in memory.
-    /// Reads happen on this task, never on the queue the server's
-    /// connections share. Returns whether every byte went: false when the
+    /// Reads happen on a dispatch queue, never on the queue the server's
+    /// connections share or on Swift's cooperative pool. Returns whether every byte went: false when the
     /// client closed the connection, a send failed, or the file ran short.
     private func stream(_ file: HTTPResponse.FileBody, on connection: NWConnection, inbox: Inbox) async -> Bool {
-        guard let handle = FileHandle(forReadingAtPath: file.path) else { return false }
-        defer { try? handle.close() }
-        do {
+        let opened = try? await Blocking.run { () -> FileHandle in
+            let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: file.path))
             try handle.seek(toOffset: UInt64(max(0, file.offset)))
-        } catch {
-            return false
+            return handle
         }
+        guard let handle = opened else { return false }
+        defer { try? handle.close() }
         var left = file.length
         while left > 0 {
             guard !inbox.isClosed, !Task.isCancelled else { return false }
             let count = Int(min(Int64(Self.fileChunk), left))
-            guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else { return false }
+            guard let chunk = try? await Blocking.run({ try handle.read(upToCount: count) }) ?? nil, !chunk.isEmpty
+            else { return false }
             lock.withLock { readFromFiles += Int64(chunk.count) }
             left -= Int64(chunk.count)
             guard await send(chunk, on: connection) else { return false }
@@ -314,6 +315,20 @@ final class Inbox: @unchecked Sendable {
         }
         waiter?.resume(returning: handing)
         closing?()
+    }
+}
+
+/// Runs blocking work, such as reading or hashing a file, on a dispatch
+/// queue rather than on Swift's cooperative pool. The pool has a thread or
+/// so per core, and every task shares them: work that blocks one holds up
+/// every request, timer and test waiting for a turn.
+enum Blocking {
+    static func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(with: Result { try work() })
+            }
+        }
     }
 }
 
