@@ -1,3 +1,4 @@
+import ConfluxCore
 import Foundation
 import Observation
 import Synchronization
@@ -18,7 +19,9 @@ extension UTType {
 /// panel (Sources/conflux/ModelAccess.swift). Access is held for as long as
 /// the file is listed: llama.cpp maps the file, and reads it while serving.
 /// A bookmark that doesn't resolve, as when its drive isn't connected, is
-/// kept and tried again, until the person removes it.
+/// kept and tried again, until the person removes it. One whose drive is
+/// there and whose file isn't is said to be missing (InPlaceFile), and is
+/// kept the same way.
 ///
 /// A file in iCloud Drive is copied into Documents instead, because iCloud can
 /// evict a file's local copy, which isn't safe under a loaded model. So is a
@@ -39,14 +42,18 @@ final class ModelFiles {
     var inPlace: [URL] { kept.compactMap { $0.available ? $0.url : nil } }
 
     /// A file used in place that conflux can't reach now: on a drive that
-    /// isn't connected, or moved or deleted. It's kept, and tried again.
+    /// isn't connected, or missing, deleted or moved. It's kept, and tried
+    /// again.
     struct Unavailable: Identifiable {
         let id: UUID
         let name: String
+        /// Its drive is there and it isn't. Otherwise, as far as can be
+        /// told, its drive isn't connected.
+        let missing: Bool
     }
 
     var unavailable: [Unavailable] {
-        kept.filter { !$0.available }.map { Unavailable(id: $0.id, name: $0.name) }
+        kept.filter { !$0.available }.map { Unavailable(id: $0.id, name: $0.name, missing: $0.missing) }
     }
 
     private struct Kept {
@@ -58,6 +65,9 @@ final class ModelFiles {
         /// Where the bookmark resolved, while it does.
         var url: URL?
         var accessing = false
+        /// Whether, when it was last tried, its volume was there and it
+        /// wasn't (InPlaceFile). Not saved: it's tried again at launch.
+        var missing = false
 
         var available: Bool { url.map { FileManager.default.isReadableFile(atPath: $0.path) } ?? false }
 
@@ -101,17 +111,29 @@ final class ModelFiles {
             if let url = kept[index].url, kept[index].accessing { url.stopAccessingSecurityScopedResource() }
             kept[index].url = nil
             kept[index].accessing = false
+            kept[index].missing = false
             var stale = false
-            guard let url = try? URL(resolvingBookmarkData: kept[index].bookmark, options: [], relativeTo: nil,
-                                     bookmarkDataIsStale: &stale) else { continue }
+            let url: URL
+            do {
+                url = try URL(resolvingBookmarkData: kept[index].bookmark, options: [], relativeTo: nil,
+                              bookmarkDataIsStale: &stale)
+            } catch {
+                let facts = InPlaceFile.Facts(failure: error, bookmark: kept[index].bookmark, own: Probe.documents)
+                kept[index].missing = InPlaceFile.state(facts) == .missing
+                continue
+            }
             let accessing = url.startAccessingSecurityScopedResource()
-            guard FileManager.default.isReadableFile(atPath: url.path) else {
+            let state = InPlaceFile.state(InPlaceFile.Facts(
+                resolution: FileManager.default.isReadableFile(atPath: url.path)
+                    ? .readable(inTrash: Self.inTrash(url)) : .unreadable))
+            guard state == .available else {
                 if accessing { url.stopAccessingSecurityScopedResource() }
+                kept[index].missing = state == .missing
                 continue
             }
             kept[index].url = url
             kept[index].accessing = accessing
-            if stale, let renewed = try? url.bookmarkData() {
+            if stale, let renewed = try? Self.bookmark(url) {
                 kept[index].bookmark = renewed
                 needsSaving = true
             }
@@ -203,7 +225,7 @@ final class ModelFiles {
         let accessing = url.startAccessingSecurityScopedResource()
         let bookmark: Data
         do {
-            bookmark = try url.bookmarkData()
+            bookmark = try Self.bookmark(url)
         } catch {
             if accessing { url.stopAccessingSecurityScopedResource() }
             throw error
@@ -361,7 +383,22 @@ final class ModelFiles {
         }
     }
 
+    /// A bookmark that records the file's volume, so a file whose volume is
+    /// there can be told from one whose drive isn't connected.
+    private static func bookmark(_ url: URL) throws -> Data {
+        try url.bookmarkData(options: [], includingResourceValuesForKeys: InPlaceFile.bookmarkKeys, relativeTo: nil)
+    }
+
     // MARK: Where a file is
+
+    /// Whether a file is in the trash, where a bookmark follows a deleted
+    /// file (InPlaceFile).
+    private static func inTrash(_ url: URL) -> Bool {
+        var relationship = FileManager.URLRelationship.other
+        guard (try? FileManager.default.getRelationship(&relationship, of: .trashDirectory, in: [],
+                                                         toItemAt: url)) != nil else { return false }
+        return relationship == .contains
+    }
 
     /// Whether the file is in Documents itself, where it's listed already.
     nonisolated private static func inDocuments(_ url: URL) -> Bool {
