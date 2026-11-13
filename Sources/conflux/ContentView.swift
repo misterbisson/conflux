@@ -11,6 +11,7 @@ struct ContentView: View {
             modelSection
             appleSection
             meshSection
+            pairSection
             monitoringSection
             gatewaySection
             aboutSection
@@ -252,10 +253,65 @@ struct ContentView: View {
     @State private var peerProblem: String?
     @State private var forgetting: TrustedPeer?
 
+    /// The devices this Mac shares models with, how each is doing, and how
+    /// they're found. Pairing by hand, the fallback, has its own section.
     @ViewBuilder var meshSection: some View {
-        Section("Mesh") {
+        Section {
+            if let problem = model.meshProblem {
+                Text("No device can reach this Mac: \(problem)").foregroundStyle(.red)
+            }
+            if let problem = model.directoryProblem {
+                Text("Couldn't read iCloud Keychain: \(problem)").foregroundStyle(.red)
+            }
+            if let notice = model.directoryNotice {
+                Text(notice).foregroundStyle(.orange)
+            }
+            if model.trusted.isEmpty {
+                Text(model.directory != nil && model.settings.iCloudKeychain
+                     ? "No other device yet. Your Macs and iPads appear here once they're signed in to this Apple "
+                        + "Account and have opened conflux, which can take a minute. Pair one by hand below."
+                     : "No other device yet. Pair one by hand below.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(model.trusted) { peer in
+                peerRow(peer)
+            }
+            if model.refused > 0 {
+                LabeledContent("Refused", value: "\(model.refused) connections from devices that aren't peers")
+            }
+            if model.directory != nil {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Find my Macs through iCloud Keychain",
+                           isOn: Binding(get: { model.settings.iCloudKeychain },
+                                         set: { model.setICloudKeychain($0) }))
+                        .disabled(model.running)
+                    Text("Macs and iPads signed in to this Apple Account, with iCloud Keychain on and conflux "
+                        + "open, find each other."
+                        + (model.running ? " Stop conflux to change this." : ""))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Mesh")
+        } footer: {
+            Text("Devices in the mesh use each other's models, and send each other work.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .confirmationDialog("Forget \(forgetting?.name ?? "this device")?",
+                            isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
+                            presenting: forgetting) { peer in
+            Button("Forget", role: .destructive) { model.forget(peer.endpointID) }
+        } message: { _ in
+            Text("It's removed from iCloud Keychain on every device, and none of them trusts it. If conflux is running there, it stays out until it's turned on there again.")
+        }
+    }
+
+    /// The fallback: for a device on another Apple Account, or a build from
+    /// source. Each side gives the other its ID.
+    @ViewBuilder var pairSection: some View {
+        Section {
             if let id = model.endpointID {
-                LabeledContent("This Mac") {
+                LabeledContent("This Mac's ID") {
                     HStack {
                         Text(DeviceIdentity.short(id) + "…").font(.body.monospaced())
                             .help(id)
@@ -263,62 +319,32 @@ struct ContentView: View {
                     }
                 }
             }
-            if model.directory != nil {
-                Toggle("Find my Macs through iCloud Keychain",
-                       isOn: Binding(get: { model.settings.iCloudKeychain }, set: { model.setICloudKeychain($0) }))
-                    .disabled(model.running)
-                if let notice = model.directoryNotice {
-                    Text(notice).font(.caption).foregroundStyle(.orange)
+            LabeledContent("The other device's ID") {
+                HStack {
+                    TextField("The other device's ID", text: $newPeer, prompt: Text("paste it here"))
+                        .labelsHidden()
+                        .font(.body.monospaced())
+                        .onSubmit(addPeer)
+                    Button("Add", action: addPeer).disabled(newPeer.isEmpty)
                 }
-                if let problem = model.directoryProblem {
-                    Text(problem).font(.caption).foregroundStyle(.red)
-                }
-            }
-            if let problem = model.meshProblem {
-                Text(problem).foregroundStyle(.red)
-            }
-            ForEach(model.trusted) { peer in
-                peerRow(peer)
-            }
-            HStack {
-                TextField("Peer", text: $newPeer, prompt: Text("another Mac's ID"))
-                    .font(.body.monospaced())
-                    .onSubmit(addPeer)
-                Button("Add", action: addPeer).disabled(newPeer.isEmpty)
             }
             .disabled(model.running)
             if !model.running, let peerProblem {
                 Text(peerProblem).font(.caption).foregroundStyle(.red)
             }
-            if model.refused > 0 {
-                LabeledContent("Refused", value: "\(model.refused) connections from devices that aren't peers")
-            }
-            Text(meshCaption).font(.caption).foregroundStyle(.secondary)
-            if model.running {
-                Text(model.directory != nil
-                     ? "Stop conflux to change iCloud Keychain or the peers added by hand."
-                     : "Stop conflux to change the peers added by hand.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .confirmationDialog("Forget \(forgetting?.name ?? "this Mac")?",
-                            isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
-                            presenting: forgetting) { peer in
-            Button("Forget", role: .destructive) { model.forget(peer.endpointID) }
-        } message: { _ in
-            Text("It's removed from iCloud Keychain on every Mac, and none of them trusts it. If conflux is running there, it stays out until it's turned on there again.")
+            Text(pairCaption).font(.caption).foregroundStyle(.secondary)
+        } header: {
+            Text("Pair by hand")
         }
     }
 
-    var meshCaption: String {
-        let found = "Macs signed in to this Apple Account, with iCloud Keychain on here and there, find each other."
-        let byHand = "Peers added by hand have to add each other."
-        let none = "With no peers, conflux connects to nothing."
-        return switch (model.directory != nil, model.settings.iCloudKeychain) {
-        case (true, true): "Peers use each other's models. \(found) \(byHand)"
-        case (true, false): "Peers use each other's models. \(byHand) \(none)"
-        case (false, _): "Peers use each other's models. \(byHand) Built from source, conflux can't use iCloud Keychain. \(none)"
-        }
+    var pairCaption: String {
+        let how = "Copy this Mac's ID into the other device's conflux, under Pair by hand, and add its ID here. "
+            + "Each has to add the other."
+        let lock = model.running ? " Stop conflux to add or remove one." : ""
+        return model.directory != nil
+            ? "For a device on another Apple Account, or without iCloud Keychain. \(how)\(lock)"
+            : "Built from source, conflux can't use iCloud Keychain, so this is how devices pair. \(how)\(lock)"
     }
 
     func addPeer() {
@@ -326,20 +352,26 @@ struct ContentView: View {
         if peerProblem == nil { newPeer = "" }
     }
 
+    /// One line for who and how it's doing, one for the detail.
     @ViewBuilder func peerRow(_ peer: TrustedPeer) -> some View {
         let id = peer.endpointID
         let status = model.peers.first { $0.endpointID == id }
         let host = status.flatMap(model.peerHost)
+        let connected = status.map { $0.path != .none } ?? false
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Circle().fill(host.map { $0.state.color } ?? .gray).frame(width: 8, height: 8)
+                Circle().fill(peerColor(running: model.running, connected: connected, host: host))
+                    .frame(width: 8, height: 8)
                 if let name = peer.name {
                     Text(name).lineLimit(1).truncationMode(.middle)
                 }
                 Text(DeviceIdentity.short(id) + "…").font(.body.monospaced())
                     .foregroundStyle(peer.name == nil ? .primary : .secondary).help(id)
-                Text(host?.state.label ?? (model.running ? "Not started" : "Peer"))
                 Spacer()
+                if model.running {
+                    Text(connected ? host?.state.label ?? "Connected" : "Not connected")
+                        .foregroundStyle(.secondary)
+                }
                 if peer.addedByHand {
                     Button("Remove") { model.removePeer(id) }
                         .disabled(model.running)
@@ -348,17 +380,25 @@ struct ContentView: View {
                     Button("Forget…") { forgetting = peer }
                 }
             }
-            Text(source(of: peer)).font(.caption).foregroundStyle(.secondary)
-            if let host, model.running {
-                let parts = [host.model?.id, status.map(\.path.label),
-                             host.capacity > 0 ? "\(host.active) busy of \(host.capacity)" : nil,
-                             host.completed > 0 ? "\(host.completed) completed" : nil].compactMap { $0 }
-                Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
-                if let detail = host.state.detail {
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
-                }
+            let live = connected ? host : nil
+            let parts = [source(of: peer),
+                         model.running ? status.map(\.path.label) : nil,
+                         live?.model?.id,
+                         live.flatMap { $0.capacity > 0 ? "\($0.active) busy of \($0.capacity)" : nil },
+                         host.flatMap { $0.completed > 0 ? "\($0.completed) completed" : nil }].compactMap { $0 }
+            Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+            if model.running, let detail = host?.state.detail {
+                Text(detail).font(.caption).foregroundStyle(connected ? .secondary : Color.orange)
             }
         }
+    }
+
+    /// Grey while stopped, orange while it can't be reached, and otherwise
+    /// the colour of its host's state.
+    func peerColor(running: Bool, connected: Bool, host: HostSnapshot?) -> Color {
+        guard running else { return .gray }
+        guard connected, let host else { return .orange }
+        return host.state.color
     }
 
     func source(of peer: TrustedPeer) -> String {

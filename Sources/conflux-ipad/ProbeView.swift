@@ -22,6 +22,7 @@ struct ProbeView: View {
                 serving
                 choice
                 mesh
+                pair
                 device
                 results
                 Section("About") {
@@ -139,66 +140,110 @@ struct ProbeView: View {
         return state.color
     }
 
+    /// The Macs this iPad serves, how each is doing, and how they're found.
+    /// Pairing by hand, the fallback, has its own section.
     private var mesh: some View {
         Section {
+            if let problem = server.meshProblem {
+                Text("No Mac can reach this iPad: \(problem)").foregroundStyle(.red)
+            }
+            if let problem = server.directoryProblem {
+                Text("Couldn't read iCloud Keychain: \(problem)").foregroundStyle(.red)
+            }
+            if let notice = server.directoryNotice {
+                Text(notice).foregroundStyle(.orange)
+            }
+            if server.trusted.isEmpty {
+                Text(server.directory != nil && server.settings.iCloudKeychain
+                     ? "No Mac yet. Your Macs appear here once they're signed in to this Apple Account and have "
+                        + "opened conflux, which can take a minute. Pair one by hand below."
+                     : "No Mac yet. Pair one by hand below.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(server.trusted) { peer in
+                macRow(peer)
+            }
+            if server.directory != nil {
+                Toggle(isOn: Binding(get: { server.settings.iCloudKeychain },
+                                     set: { server.setICloudKeychain($0) })) {
+                    Text("Find my Macs through iCloud Keychain")
+                    Text("Macs signed in to this Apple Account, with iCloud Keychain on and conflux open, find "
+                        + "this iPad, and it finds them.")
+                }
+            }
+        } header: {
+            Text("Your Macs")
+        } footer: {
+            Text("Your Macs send this iPad work while it serves."
+                + (server.running ? " Changes here take effect the next time it serves." : ""))
+        }
+    }
+
+    /// Who, and how it's connected.
+    private func macRow(_ peer: TrustedPeer) -> some View {
+        let path = server.peers.first { $0.endpointID == peer.endpointID }?.path
+        let connected = path.map { $0 != .none } ?? false
+        return HStack(alignment: .firstTextBaseline) {
+            Circle().fill(server.running ? (connected ? Color.green : .orange) : .gray)
+                .frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(peer.name ?? DeviceIdentity.short(peer.endpointID) + "…")
+                    .font(peer.name == nil ? .body.monospaced() : .body)
+                    .lineLimit(1).truncationMode(.middle)
+                Text(peer.listed ? (peer.addedByHand ? "From iCloud Keychain, and added by hand"
+                                                     : "From iCloud Keychain")
+                                 : "Added by hand")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if server.running {
+                Text(connected ? path?.label ?? "" : "not connected").foregroundStyle(.secondary)
+            }
+            if peer.addedByHand {
+                Button("Remove", role: .destructive) { server.removePeer(peer.endpointID) }
+                    .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    /// The fallback: for a Mac on another Apple Account, or a build from
+    /// source. Each side gives the other its ID.
+    private var pair: some View {
+        Section {
             if let id = server.endpointID {
-                LabeledContent("This iPad") {
+                LabeledContent("This iPad's ID") {
                     HStack {
                         Text(DeviceIdentity.short(id) + "…").font(.body.monospaced())
                         CopyButton(title: "Copy ID") { UIPasteboard.general.string = id; return true }
                     }
                 }
             }
-            if server.directory != nil {
-                Toggle("Find my Macs through iCloud Keychain", isOn: Binding(
-                    get: { server.settings.iCloudKeychain }, set: { server.setICloudKeychain($0) }))
-            }
-            Toggle("Serve on battery", isOn: Binding(
-                get: { server.settings.servesOnBattery }, set: { server.setServesOnBattery($0) }))
-            ForEach(server.trusted) { peer in
-                LabeledContent {
-                    Text(server.peers.first { $0.endpointID == peer.endpointID }?.path.label
-                         ?? (server.running ? "not connected" : "trusted"))
-                } label: {
-                    HStack(alignment: .firstTextBaseline) {
-                        if let name = peer.name {
-                            Text(name).lineLimit(1).truncationMode(.middle)
-                        }
-                        Text(DeviceIdentity.short(peer.endpointID) + "…").font(.body.monospaced())
-                            .foregroundStyle(peer.name == nil ? .primary : .secondary)
-                    }
-                }
-                .swipeActions {
-                    if peer.addedByHand {
-                        Button("Remove", role: .destructive) { server.removePeer(peer.endpointID) }
-                    }
-                }
-            }
             HStack {
-                TextField("Add a Mac's endpoint ID", text: $newPeer)
-                    .font(.body.monospaced())
+                TextField("The Mac's ID", text: $newPeer, prompt: Text("Paste the Mac's ID"))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Button("Add") {
-                    peerProblem = server.addPeer(newPeer)
-                    if peerProblem == nil { newPeer = "" }
-                }
-                .disabled(newPeer.isEmpty)
+                    .onSubmit(addPeer)
+                Button("Add", action: addPeer)
+                    .buttonStyle(.borderless)
+                    .disabled(newPeer.isEmpty)
             }
-            ForEach([peerProblem, server.meshProblem, server.directoryProblem, server.directoryNotice]
-                .compactMap { $0 }, id: \.self) { text in
-                Text(text).font(.footnote).foregroundStyle(.secondary)
+            if let peerProblem {
+                Text(peerProblem).foregroundStyle(.red)
             }
         } header: {
-            Text("Mesh")
+            Text("Pair by hand")
         } footer: {
-            Text(server.directory == nil
-                 ? "Each Mac needs this iPad's ID, and this iPad each Mac's: copy them from one conflux to the "
-                    + "other. Changes take effect the next time it serves."
-                 : "Macs signed in to this Apple Account, with iCloud Keychain on, find this iPad, and it finds "
-                    + "them. Peers added by hand have to add each other. By default it serves only while "
-                    + "charging. Changes take effect the next time it serves.")
+            Text((server.directory != nil
+                  ? "For a Mac on another Apple Account, or without iCloud Keychain. "
+                  : "This build can't use iCloud Keychain, so this is how Macs pair. ")
+                + "Copy this iPad's ID into the Mac's conflux window, under Pair by hand, and paste the Mac's ID "
+                + "here. Each has to add the other.")
         }
+    }
+
+    private func addPeer() {
+        peerProblem = server.addPeer(newPeer)
+        if peerProblem == nil { newPeer = "" }
     }
 
     private var device: some View {
@@ -249,6 +294,12 @@ struct ProbeView: View {
                     }
                 }
                 .disabled(server.running || probe.running)
+                // Left enabled while serving: it applies at once.
+                Toggle(isOn: Binding(get: { server.settings.servesOnBattery },
+                                     set: { server.setServesOnBattery($0) })) {
+                    Text("Serve on battery")
+                    Text("Otherwise it serves only while charging, and pauses when unplugged.")
+                }
                 Button {
                     guard let model else { return }
                     server.start(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot)
