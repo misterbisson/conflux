@@ -171,8 +171,10 @@ In order:
    elsewhere. It also needs the device directory on iPadOS, and models copied
    in from a Mac with Finder or the Files app. *Built*: a node with no
    gateway, which trusts the Macs in the directory and serves them over the
-   socket ([running.md](running.md#on-an-ipad)). Not yet run on an iPad
-   with a Mac using it.
+   socket ([running.md](running.md#on-an-ipad)). The first run on an iPad
+   found its socket's path too long for apple-iroh, so its mesh never
+   started; the name is now short enough. Not yet run on an iPad with a Mac
+   using it.
 4. **A host screen** meant to be read from across a room: state, model,
    throughput, temperature and charging. *Built*, at the top of the iPad
    app.
