@@ -52,7 +52,10 @@
 				     modification date, so an unchanged file isn't hashed again
 				     at every start. The files are the models the user chose in
 				     an open panel, reopened through security-scoped bookmarks
-				     (Sources/conflux/ModelAccess.swift). -->
+				     (Sources/conflux/ModelAccess.swift), and on an iPad the
+				     ones chosen in the document picker or copied into the
+				     app's Documents folder
+				     (Sources/conflux-ipad/ModelFiles.swift). -->
 				<string>3B52.1</string>
 			</array>
 		</dict>
@@ -63,8 +66,9 @@
 			<array>
 				<!-- CA92.1: information accessible only to the app itself. The
 				     node's settings (Sources/conflux/App.swift) and the model
-				     files' bookmarks (Sources/conflux/ModelAccess.swift), in
-				     the app's own domain. conflux belongs to no App Group. -->
+				     files' bookmarks (Sources/conflux/ModelAccess.swift, and
+				     Sources/conflux-ipad/ModelFiles.swift on an iPad), in the
+				     app's own domain. conflux belongs to no App Group. -->
 				<string>CA92.1</string>
 			</array>
 		</dict>

@@ -14,6 +14,10 @@ struct ProbeView: View {
     @State private var contextPerSlot = 4096
     /// What Stop serving would cut off, while it asks.
     @State private var stopping: String?
+    /// Whether the document picker is open.
+    @State private var choosing = false
+    /// The copy Delete would delete, while it asks.
+    @State private var deleting: URL?
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -21,6 +25,7 @@ struct ProbeView: View {
             Form {
                 serving
                 choice
+                modelFiles
                 mesh
                 pair
                 device
@@ -34,6 +39,18 @@ struct ProbeView: View {
             }
             .navigationTitle("conflux")
             .refreshable { probe.reload() }
+        }
+        .fileImporter(isPresented: $choosing, allowedContentTypes: [.gguf], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls): Task { await probe.choose(urls) }
+            case .failure(let error): probe.files.problem = "Couldn't open Files: \(error.localizedDescription)"
+            }
+        }
+        // Open in conflux, from the share button in Safari's downloads or the
+        // Files app.
+        .onOpenURL { url in
+            guard url.isFileURL else { return }
+            Task { await probe.open(url) }
         }
         .onChange(of: scenePhase) { _, phase in
             // Models are copied in while the app is in the background.
@@ -266,23 +283,19 @@ struct ProbeView: View {
     private var choice: some View {
         Section {
             if probe.models.isEmpty {
-                Text("""
-                    Copy a GGUF model here from a Mac: connect the iPad, select it in Finder, open the Files tab, \
-                    and drag the file onto conflux. The Files app shows the same folder, under On My iPad. \
-                    A vision model's projector goes alongside it, with "mmproj" in its name.
-                    """)
+                Text("No model yet. Add one under Model files.")
                     .foregroundStyle(.secondary)
             } else {
                 Group {
                     Picker("Model", selection: $model) {
                         ForEach(probe.models, id: \.self) { url in
-                            Text(Probe.label(url)).tag(Optional(url))
+                            Text(probe.label(url)).tag(Optional(url))
                         }
                     }
                     Picker("Projector", selection: $projector) {
                         Text("None, text only").tag(URL?.none)
                         ForEach(probe.projectors, id: \.self) { url in
-                            Text(Probe.label(url)).tag(Optional(url))
+                            Text(probe.label(url)).tag(Optional(url))
                         }
                     }
                     StepperRow("Slots", value: $slots, in: 1...4)
@@ -328,9 +341,7 @@ struct ProbeView: View {
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 if probe.models.first.map(Probe.included) == true {
-                    Text("The starter model is included with conflux. To check another, copy it here from a Mac: "
-                        + "in Finder, select the iPad, open the Files tab, and drag the file onto conflux. A vision "
-                        + "model's projector goes alongside it, with \"mmproj\" in its name.")
+                    Text("The starter model is included with conflux. Add others under Model files.")
                 }
                 Text("Slots are how many requests this iPad runs at once, and each one takes memory for its "
                     + "context. More slots don't always mean more speed.")
@@ -339,6 +350,71 @@ struct ProbeView: View {
                     + "iPadOS ends it, the next launch records the model as killed: too big for this iPad, or for "
                     + "these slots.")
             }
+        }
+    }
+
+    /// The models added to the starter model, and the ways to add one.
+    private var modelFiles: some View {
+        Section {
+            let added = (probe.models + probe.projectors).filter { !Probe.included($0) }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            ForEach(added, id: \.self) { url in
+                fileRow(url)
+            }
+            if let copy = probe.files.copying {
+                if let fraction = copy.fraction {
+                    ProgressView(value: fraction) {
+                        Text("Copying \(copy.name) into conflux…")
+                    } currentValueLabel: {
+                        Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                    }
+                } else {
+                    HStack { ProgressView(); Text("Downloading \(copy.name) from iCloud…") }
+                }
+                Button("Stop copying", role: .destructive) { probe.files.cancel() }
+            }
+            if let problem = probe.files.problem {
+                Text(problem).foregroundStyle(.red)
+            }
+            Button("Choose from Files…") { choosing = true }
+        } header: {
+            Text("Model files")
+        } footer: {
+            Text("Choose a GGUF model in Files, with its projector if it has one, which has \"mmproj\" in its "
+                + "name. A model on this iPad or on a drive is used where it is. One in iCloud Drive is copied "
+                + "in, since iCloud can remove the iPad's copy of a file. Sharing a model to conflux, from "
+                + "Safari's downloads or the Files app, copies it in too. Keep conflux open while it copies. "
+                + "From a Mac, select the iPad in Finder, open the Files tab, and drag the files onto conflux.")
+        }
+        .confirmationDialog("Delete \(deleting?.lastPathComponent ?? "")?",
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { url in
+            Button("Delete", role: .destructive) { probe.remove(url) }
+        } message: { _ in
+            Text("This deletes conflux's copy of the file. It can't be undone.")
+        }
+    }
+
+    /// Where a model is, and how to remove it: a file used in place is
+    /// forgotten and stays where it is, and a copy is deleted.
+    private func fileRow(_ url: URL) -> some View {
+        let inPlace = probe.files.isInPlace(url)
+        // Not while it's loaded.
+        let inUse = (server.running || probe.running) && (url == model || url == projector)
+        return HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(url.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                Text("\(Memory.gigabytes(Probe.size(url))) · "
+                    + (inPlace ? "used where it is, in \(url.deletingLastPathComponent().lastPathComponent)"
+                               : "copied into conflux"))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(inPlace ? "Remove" : "Delete", role: .destructive) {
+                if inPlace { probe.remove(url) } else { deleting = url }
+            }
+            .buttonStyle(.borderless)
+            .disabled(inUse)
         }
     }
 

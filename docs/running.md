@@ -231,12 +231,31 @@ increased memory limit and extended virtual addressing, to its app ID the
 first time.
 
 **The starter model** is listed first, so there's something to serve or
-check before any model is copied in.
+check before you add a model.
 
-**Copying models in.** Connect the iPad to the Mac, select it in Finder, open
-the **Files** tab, and drag the GGUF files onto conflux. The Files app shows
-the same folder, under **On My iPad**. A vision model's projector goes
-alongside it, with `mmproj` in its file name, as llama.cpp names them.
+**Adding models.** Models are listed under **Model files**, and a vision
+model's projector is listed with them, with `mmproj` in its file name, as
+llama.cpp names them. A model gets there in one of three ways:
+
+- **Choose from Files…** opens the document picker, for the model and its
+  projector together. A file on the iPad, in **On My iPad**, or on a USB
+  drive, is used where it is, with no copy: conflux keeps its
+  access to the file between launches, as the Mac app does. A file in iCloud
+  Drive is copied in instead, because iCloud can remove the iPad's copy of a
+  file it thinks isn't needed, and that isn't safe under a loaded model.
+- **Sharing a file to conflux.** A GGUF file downloaded in Safari, or found
+  in the Files app, can be opened in conflux from the share button. conflux
+  copies it into its own folder, the one the Files app shows under **On My
+  iPad › conflux**.
+- **From a Mac.** Connect the iPad, select it in Finder, open the **Files**
+  tab, and drag the GGUF files onto conflux.
+
+A copy of a big model takes a while, and the screen shows how far it's got.
+Keep conflux open until it's done. **Remove** beside a file used in place
+forgets it, and the file stays where it is. **Delete** beside a copy deletes
+it. Disconnecting a drive takes its models off the list. If it's still
+disconnected when conflux next opens, or a file was deleted, conflux forgets
+the file, and it has to be chosen again.
 
 **Serving.** Choose the model, its projector, the slots and the context, and
 press **Serve this model to my Macs**. The top of the screen says what the
@@ -280,8 +299,8 @@ switcher between checks.
 **Sharing results.** **Share results** gives a Markdown table for
 [measurements.md](measurements.md). It names the kind of iPad, such as
 `iPad13,4`, its memory, and the model files: nothing that identifies the
-iPad or its owner. The same results are in `probe-results.json`, in the
-folder the models are in.
+iPad or its owner. The same results are in `probe-results.json`, in
+conflux's own folder, where copied models go.
 
 ## Files
 

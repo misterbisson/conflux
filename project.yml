@@ -183,8 +183,8 @@ targets:
   # The same app on iPadOS: one bundle ID, so one App Store Connect record
   # and one TestFlight track for both platforms, and one keychain access
   # group. An iPad is a host only (docs/plan.md, Phase 3): it serves a model
-  # copied into its Documents folder to the Macs' gateways, and its memory
-  # probe checks whether a model fits (Sources/conflux-ipad).
+  # copied into its Documents folder, or used in place, to the Macs' gateways,
+  # and its memory probe checks whether a model fits (Sources/conflux-ipad).
   conflux-ipad:
     type: application
     platform: iOS
@@ -205,14 +205,35 @@ targets:
       - package: ConfluxPackage
         product: ConfluxUI
     # Xcode generates the rest of the Info.plist from INFOPLIST_KEY_ settings,
-    # which don't cover these.
+    # which don't cover these. XcodeGen writes them to
+    # App/conflux-ipad-Info.plist each time it generates the project, so
+    # change them here, not there.
     info:
       path: App/conflux-ipad-Info.plist
       properties:
-        # Models are copied in from a Mac: in Finder, the iPad's Files tab
+        # Models can be copied in from a Mac: in Finder, the iPad's Files tab
         # shows conflux's Documents folder, and the Files app does too.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # GGUF, llama.cpp's model file, so Safari's downloads and the Files
+        # app offer to open one in conflux, which copies it in
+        # (Sources/conflux-ipad/ModelFiles.swift). conflux doesn't own the
+        # format, so it imports the type rather than exporting it, and isn't
+        # its owner as a handler either.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: GGUF model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Default
+            LSItemContentTypes:
+              - ai.ggml.gguf
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: ai.ggml.gguf
+            UTTypeDescription: GGUF model
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - gguf
         # XcodeGen writes 1.0 otherwise: the versions release-please and
         # Xcode Cloud set, as the Mac app's are.
         CFBundleShortVersionString: $(MARKETING_VERSION)
