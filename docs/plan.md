@@ -217,6 +217,8 @@ contribution is measured against the effort of keeping it there.
   an M2 MacBook Air it read 88 of 90 self-check probes, in 0.45 s each, while
   SmolVLM-500M did worse, 55 of 60. Nearly every miss read a doubled letter
   once, so the self-check's text no longer repeats a character back to back.
+  On an iPad it swapped two neighbouring letters and failed the check, so a
+  swap now counts as one mistake, like a misread letter.
   Its text answers are weak: it proves the plumbing, not the work. The build
   fetches it pinned by revision and checksum, so the weights still aren't
   committed, and it ships inside the app: the app downloads nothing, which
