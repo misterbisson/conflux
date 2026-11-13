@@ -27,20 +27,17 @@ struct ContentView: View {
         Section {
             VStack(alignment: .leading, spacing: 12) {
                 StatusHeadline(stateLabel, color: color, detail: stateDetail) { controls }
-                if model.running, let snapshot = model.snapshot {
+                if model.running {
+                    // Now; how it's gone is below. Waiting has its own tile.
                     let own = [model.host, model.appleHost].compactMap { $0 }
                     let connected = model.peers.filter { $0.path != .none }.count
                     StatusFigures([
-                        ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy"),
-                        ("\(snapshot.queued)", "waiting"),
-                        ("\(snapshot.completed)", "completed"),
-                        ("\(Int(snapshot.perHour.rounded()))", "per hour"),
-                    ])
-                    let typical = model.host?.typicalSeconds.map { [(String(format: "%.1f s", $0), "typical request")] }
-                    StatusFigures([
+                        ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy here"),
                         ("\(connected)", connected == 1 ? "peer connected" : "peers connected"),
-                        (Thermal.label, "temperature"),
-                    ] + (typical ?? []))
+                    ])
+                    ActivityPanel(series: model.activitySeries, typicalSeconds: model.host?.typicalSeconds,
+                                  metric: $metric, range: $range)
+                    resources
                 }
             }
             .padding(.vertical, 8)
@@ -57,6 +54,29 @@ struct ContentView: View {
                         Text(served.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
                     }
                 }
+            }
+        }
+    }
+
+    @AppStorage("activityMetric") private var metric = ActivityMetric.requests
+    @AppStorage("activityRange") private var range = ActivityRange.hour
+
+    /// The Mac's side of things on the chart's span: work waiting at the
+    /// gateway, the model's memory, and heat.
+    var resources: some View {
+        HStack(alignment: .top, spacing: 16) {
+            ResourceTile("Waiting", value: "\(model.snapshot?.queued ?? 0)") {
+                Sparkline(model.waiting.bins(range), color: .blue, ceiling: 4)
+            }
+            // Against all the Mac's memory: how much of it the model takes.
+            let installed = ProcessInfo.processInfo.physicalMemory
+            ResourceTile("conflux's memory",
+                         value: ProcessMemory.gigabytes(UInt64(model.memory.latest ?? 0))
+                            + " of \(installed / 1_073_741_824) GB") {
+                Sparkline(model.memory.bins(range), color: .purple, ceiling: Double(installed))
+            }
+            ResourceTile("Heat", value: Thermal.label.capitalized) {
+                LevelBand(model.heat.bins(range), colors: thermalColors)
             }
         }
     }

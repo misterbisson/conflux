@@ -1,3 +1,4 @@
+import ConfluxUI
 import Darwin
 import Foundation
 import os
@@ -14,17 +15,7 @@ enum Memory {
 
     /// The process's memory footprint now, and the highest it has been since
     /// launch. The footprint is what iPadOS counts against the limit.
-    static var footprint: (now: UInt64, peak: UInt64) {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(task_self_trap(), task_flavor_t(TASK_VM_INFO), $0, &count)
-            }
-        }
-        guard result == KERN_SUCCESS else { return (0, 0) }
-        return (info.phys_footprint, UInt64(max(0, info.ledger_phys_footprint_peak)))
-    }
+    static var footprint: (now: UInt64, peak: UInt64) { ProcessMemory.footprint }
 
     /// The model of device, such as `iPad13,4`: which kind of iPad, not which
     /// one.
@@ -36,7 +27,5 @@ enum Memory {
         return String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
     }
 
-    static func gigabytes(_ bytes: UInt64) -> String {
-        String(format: "%.2f GB", Double(bytes) / 1_073_741_824)
-    }
+    static func gigabytes(_ bytes: UInt64) -> String { ProcessMemory.gigabytes(bytes) }
 }

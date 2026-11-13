@@ -288,7 +288,10 @@ Each gateway keeps, for the mesh and for each host it schedules to:
 completions and completions per hour, failures by kind (not answering,
 server error, busy, out of the client's time), and idle-with-work seconds.
 The window shows them, and so does `GET /health` for a client with the token
-([clients.md](clients.md#the-api)).
+([clients.md](clients.md#the-api)). Each scheduler also keeps a day of each
+host's activity by the minute: requests completed and failed, and the tokens
+read and written, from the `usage` and `timings` in each answer. The status
+charts show it. It's kept in memory, and a host that leaves keeps its history.
 
 Idle-with-work is measured where it happens. For this Mac's own host, the
 gateway holds the slots, and the count is exact: seconds the host had a free

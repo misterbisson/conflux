@@ -1,5 +1,6 @@
 import AppKit
 import ConfluxCore
+import ConfluxUI
 import SwiftUI
 import SystemConfiguration
 import UniformTypeIdentifiers
@@ -46,6 +47,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var peers: [PeerStatus] = []
     @Published private(set) var meshProblem: String?
     @Published private(set) var refused = 0
+    /// Each host's last day by the minute, for the activity chart.
+    @Published private(set) var activity: [String: [ActivityMinute]] = [:]
+    /// Requests waiting at this gateway, the most in each reading.
+    @Published private(set) var waiting = TimeSeries(keeping: .highest)
+    /// conflux's memory footprint: with the model run in the process, the
+    /// model's memory.
+    @Published private(set) var memory = TimeSeries()
+    /// The thermal state as a level, the highest in each reading.
+    @Published private(set) var heat = TimeSeries(keeping: .highest)
     /// This Mac's endpoint ID, for other devices' peer lists.
     let endpointID: String?
     /// iCloud Keychain's device directory. Only a signed app has one: built
@@ -78,12 +88,23 @@ final class AppModel: ObservableObject {
         // until there are peers and the node starts.
         endpointID = try? DeviceIdentity.load().endpointID
         polling = Task { [weak self] in
+            var tick = 0
             while !Task.isCancelled {
                 if let self {
-                    self.snapshot = await self.node.scheduler.snapshot()
+                    let snapshot = await self.node.scheduler.snapshot()
+                    self.snapshot = snapshot
                     self.peers = self.node.peers
                     self.meshProblem = self.node.meshProblem
                     self.refused = self.node.refusedConnections
+                    self.waiting.append(Double(snapshot.queued))
+                    self.memory.append(Double(ProcessMemory.footprint.now))
+                    self.heat.append(Double(Thermal.level))
+                    // A day of minutes changes once a minute at most, and
+                    // the chart's latest bar fills in within a few seconds.
+                    if tick % 5 == 0 {
+                        self.activity = await self.node.scheduler.activity(since: Date().addingTimeInterval(-86400))
+                    }
+                    tick += 1
                 }
                 try? await Task.sleep(for: .seconds(1))
             }
@@ -125,6 +146,29 @@ final class AppModel: ObservableObject {
     func peerName(of host: HostSnapshot) -> String? {
         guard let endpointID = peers.first(where: { $0.hostID == host.id })?.endpointID else { return nil }
         return trusted.first { $0.endpointID == endpointID }?.name
+    }
+
+    /// Every host with activity, this Mac's first, then Apple's model, then
+    /// peers, so each keeps its place and its colour in the chart.
+    var activitySeries: [ActivitySeries] {
+        var ids = Set(activity.keys).union(snapshot?.hosts.map(\.id) ?? [])
+        let first = [ConfluxNode.localHostID, ConfluxNode.appleHostID].filter { ids.contains($0) }
+        ids.subtract(first)
+        return (first + ids.sorted()).map {
+            ActivitySeries(id: $0, name: hostName($0), minutes: activity[$0] ?? [])
+        }
+    }
+
+    /// What the chart calls a host: by its device's name for a peer, even
+    /// one that has left.
+    func hostName(_ id: String) -> String {
+        switch id {
+        case ConfluxNode.localHostID: return "This Mac"
+        case ConfluxNode.appleHostID: return "Apple's model"
+        default:
+            let peer = trusted.first { "peer-\(DeviceIdentity.short($0.endpointID))" == id }
+            return peer?.name ?? String(id.dropFirst("peer-".count)) + "…"
+        }
     }
 
     /// The model the app ships, served until the person chooses one. Built

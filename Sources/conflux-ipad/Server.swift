@@ -1,4 +1,5 @@
 import ConfluxCore
+import ConfluxUI
 import Foundation
 import Observation
 import UIKit
@@ -30,6 +31,15 @@ final class Server {
     private(set) var listed: [ListedDevice] = []
     /// Why it isn't taking work while running, if it isn't.
     private(set) var held: String?
+    /// This iPad's host's last day by the minute, for the activity chart.
+    private(set) var activity: [ActivityMinute] = []
+    /// What this process can still allocate before iPadOS ends it, the
+    /// least in each reading. Taken while it serves.
+    private(set) var memoryLeft = TimeSeries(keeping: .lowest)
+    /// The thermal state as a level, the highest in each reading.
+    private(set) var heat = TimeSeries(keeping: .highest)
+    /// 0 charging, 1 on battery: the worse in each reading.
+    private(set) var power = TimeSeries(keeping: .highest)
 
     var settings: Settings {
         didSet { save() }
@@ -112,11 +122,20 @@ final class Server {
         polling?.cancel()
         polling = Task { [weak self] in
             var lastSync = ContinuousClock.now
+            var tick = 0
             while !Task.isCancelled {
                 guard let self else { return }
                 self.snapshot = await self.node.scheduler.snapshot()
                 self.peers = self.node.peers
                 self.meshProblem = self.node.meshProblem
+                self.memoryLeft.append(Double(Memory.available))
+                self.heat.append(Double(Thermal.level))
+                self.power.append(self.charging ? 0 : 1)
+                if tick % 5 == 0 {
+                    self.activity = await self.node.scheduler.activity(since: Date().addingTimeInterval(-86400))[
+                        ConfluxNode.localHostID] ?? []
+                }
+                tick += 1
                 if ContinuousClock.now - lastSync >= Self.directoryInterval {
                     lastSync = .now
                     await self.syncDirectory()

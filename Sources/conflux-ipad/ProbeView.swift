@@ -64,6 +64,25 @@ struct ProbeView: View {
         return copied.count == 1 ? copied.first : nil
     }
 
+    @AppStorage("activityMetric") private var metric = ActivityMetric.requests
+    @AppStorage("activityRange") private var range = ActivityRange.hour
+
+    /// The iPad's side of things on the chart's span: memory left before
+    /// iPadOS ends conflux, heat, and power, which pauses it when unplugged.
+    private var resources: some View {
+        HStack(alignment: .top, spacing: 20) {
+            ResourceTile("Memory left", value: Memory.gigabytes(Memory.available)) {
+                Sparkline(server.memoryLeft.bins(range), color: .purple, ceiling: Double(probe.limitAtLaunch))
+            }
+            ResourceTile("Heat", value: Thermal.label.capitalized) {
+                LevelBand(server.heat.bins(range), colors: thermalColors)
+            }
+            ResourceTile("Power", value: server.charging ? "Charging" : "On battery") {
+                LevelBand(server.power.bins(range), colors: [.green, .orange])
+            }
+        }
+    }
+
     /// Read from across a room: what this iPad is doing, and how much.
     private var serving: some View {
         Section {
@@ -71,18 +90,16 @@ struct ProbeView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     StatusHeadline(headline, color: headlineColor, detail: headlineDetail)
                     if server.running {
+                        // Now; how it's gone is below.
                         let connected = server.peers.filter { $0.path != .none }.count
                         StatusFigures([
                             ("\(server.host?.active ?? 0) of \(server.host?.capacity ?? 0)", "busy"),
-                            ("\(server.host?.completed ?? 0)", "completed"),
-                            (String(format: "%.0f", server.host?.perHour ?? 0), "per hour"),
                             ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
                         ])
-                        StatusFigures([
-                            (Thermal.label, "temperature"),
-                            (probe.charging.map { $0 ? "charging" : "on battery" } ?? "unknown", "power"),
-                            (Memory.gigabytes(Memory.available), "memory left"),
-                        ])
+                        ActivityPanel(series: [ActivitySeries(id: ConfluxNode.localHostID, name: "This iPad",
+                                                              minutes: server.activity)],
+                                      typicalSeconds: server.host?.typicalSeconds, metric: $metric, range: $range)
+                        resources
                     }
                 }
                 .padding(.vertical, 8)
