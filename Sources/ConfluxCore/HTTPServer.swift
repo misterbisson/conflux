@@ -127,7 +127,7 @@ public final class HTTPServer: @unchecked Sendable {
                 connection.cancel()
                 return
             case .request(let request, let consumed):
-                buffer.removeFirst(consumed)
+                buffer = HTTPServer.remainder(of: buffer, after: consumed)
                 continued = false
                 let response = await handler(request)
                 let keepAlive = request.keepAlive
@@ -138,6 +138,15 @@ public final class HTTPServer: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// What's left of `buffer` after its first `count` bytes, in storage of
+    /// its own. `Data.removeFirst` only moves the start forward and keeps
+    /// every byte before it, so a keep-alive connection would hold all it
+    /// had ever received, gigabytes over a long night of image requests.
+    static func remainder(of buffer: Data, after count: Int) -> Data {
+        guard count < buffer.count else { return Data() }
+        return buffer.subdata(in: buffer.index(buffer.startIndex, offsetBy: count)..<buffer.endIndex)
     }
 
     private func receive(on connection: NWConnection) async -> Data? {
