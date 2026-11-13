@@ -46,10 +46,12 @@ struct ProbeResult: Codable, Identifiable, Sendable {
     var charging: Bool?
 }
 
-/// The iPad app's first version: load a model the person copied in, check
+/// The iPad app's first version: load a model the person added, check
 /// it, and record what memory it took (docs/plan.md, Phase 3, step 1).
 @MainActor @Observable
 final class Probe {
+    /// Models used in place, and the copying in of others.
+    let files: ModelFiles
     private(set) var models: [URL] = []
     private(set) var projectors: [URL] = []
     private(set) var results: [ProbeResult] = []
@@ -64,6 +66,7 @@ final class Probe {
 
     init() {
         limitAtLaunch = Memory.footprint.now + Memory.available
+        files = ModelFiles()
         UIDevice.current.isBatteryMonitoringEnabled = true
         results = (try? JSONDecoder().decode([ProbeResult].self, from: Data(contentsOf: Self.resultsURL))) ?? []
         // A check that was still running when the app ended didn't finish.
@@ -79,7 +82,7 @@ final class Probe {
     // MARK: Files
 
     /// Where models are copied in: the folder Finder and the Files app show
-    /// for conflux.
+    /// for conflux. Models used in place are elsewhere (ModelFiles).
     static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
     static var resultsURL: URL { documents.appending(path: "probe-results.json") }
     static var pendingURL: URL {
@@ -88,17 +91,43 @@ final class Probe {
     }
 
     func reload() {
+        // A drive connected again since: its files are back.
+        files.retry()
         let files = (try? FileManager.default.contentsOfDirectory(at: Self.documents, includingPropertiesForKeys: nil))
             ?? []
-        let ggufs = files.filter { $0.pathExtension.lowercased() == "gguf" }
+        let ggufs = (files.filter { $0.pathExtension.lowercased() == "gguf" } + self.files.inPlace)
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         // llama.cpp's vision projectors are named mmproj by convention.
-        let copied = ggufs.filter { $0.lastPathComponent.lowercased().contains("mmproj") }
+        let added = ggufs.filter { $0.lastPathComponent.lowercased().contains("mmproj") }
         // The starter model the app ships comes first, so there's something
-        // to check before any model is copied in.
+        // to check before any model is added.
         let starter = StarterModel.files().map { (URL(fileURLWithPath: $0.model), URL(fileURLWithPath: $0.projector)) }
-        projectors = (starter.map { [$0.1] } ?? []) + copied
-        models = (starter.map { [$0.0] } ?? []) + ggufs.filter { !copied.contains($0) }
+        projectors = (starter.map { [$0.1] } ?? []) + added
+        models = (starter.map { [$0.0] } ?? []) + ggufs.filter { !added.contains($0) }
+    }
+
+    /// Files chosen in the document picker.
+    func choose(_ urls: [URL]) async {
+        await files.choose(urls)
+        reload()
+    }
+
+    /// A file another app opened in conflux.
+    func open(_ url: URL) async {
+        await files.open(url)
+        reload()
+    }
+
+    /// Forgets a model used in place, or deletes a copy.
+    func remove(_ url: URL) {
+        files.remove(url)
+        reload()
+    }
+
+    /// Forgets a model used in place that can't be reached now.
+    func remove(_ unavailable: ModelFiles.Unavailable) {
+        files.remove(unavailable)
+        reload()
     }
 
     /// Whether a file is the starter model's, inside the app.
@@ -108,8 +137,9 @@ final class Probe {
     }
 
     /// A file's name and size, for choosing it.
-    static func label(_ url: URL) -> String {
-        "\(url.lastPathComponent) · \(Memory.gigabytes(size(url)))" + (included(url) ? " · included" : "")
+    func label(_ url: URL) -> String {
+        let note = Self.included(url) ? " · included" : files.isInPlace(url) ? " · in place" : ""
+        return "\(url.lastPathComponent) · \(Memory.gigabytes(Self.size(url)))" + note
     }
 
     static func size(_ url: URL) -> UInt64 {

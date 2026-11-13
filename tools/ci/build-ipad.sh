@@ -41,6 +41,11 @@ expect() {
 expect CFBundleIdentifier com.caseybisson.conflux
 expect UIDeviceFamily:0 2
 expect UIFileSharingEnabled true
+# Opens GGUF files from other apps (Sources/conflux-ipad/ModelFiles.swift).
+expect LSSupportsOpeningDocumentsInPlace true
+expect CFBundleDocumentTypes:0:LSItemContentTypes:0 ai.ggml.gguf
+expect UTImportedTypeDeclarations:0:UTTypeIdentifier ai.ggml.gguf
+expect UTImportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:0 gguf
 expect ITSAppUsesNonExemptEncryption false
 expect MinimumOSVersion 27.0
 expect CFBundleShortVersionString "$(sed -nE 's/^ *MARKETING_VERSION: "([^"]+)".*/\1/p' project.yml)"
