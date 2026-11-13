@@ -37,8 +37,18 @@ struct ConfluxApp: App {
 @MainActor
 final class AppModel: ObservableObject {
     @Published var settings: NodeSettings {
-        didSet { save() }
+        didSet {
+            save()
+            if settings.host?.model != oldValue.host?.model || settings.host?.projector != oldValue.host?.projector {
+                checkFiles()
+            }
+        }
     }
+    /// What's wrong with the chosen model and projector, from their headers:
+    /// a model that's a projector, a projector that isn't one or doesn't fit
+    /// the model. In the sandbox conflux reads only the files chosen, not
+    /// their neighbours, so it can't suggest a projector, but it can say this.
+    @Published private(set) var fileProblems: [String] = []
     @Published private(set) var snapshot: SchedulerSnapshot?
     @Published private(set) var running = false
     @Published private(set) var port: UInt16?
@@ -126,6 +136,27 @@ final class AppModel: ObservableObject {
                 done.signal()
             }
             _ = done.wait(timeout: .now() + 3)
+        }
+        checkFiles()
+    }
+
+    /// Reads the chosen files' headers, off the main thread, and says what's
+    /// wrong with them in `fileProblems`.
+    func checkFiles() {
+        guard let host = settings.host, !host.model.isEmpty else {
+            fileProblems = []
+            return
+        }
+        let borrowed = ([host.model] + (host.projector.map { [$0] } ?? [])).map(access.borrow)
+        Task {
+            let problems = await Task.detached {
+                Projectors.problems(model: GGUFFile(borrowed[0].url),
+                                    projector: borrowed.count > 1 ? GGUFFile(borrowed[1].url) : nil)
+            }.value
+            access.giveBack(borrowed)
+            // Chosen again meanwhile: that check says what's wrong.
+            guard settings.host?.model == host.model, settings.host?.projector == host.projector else { return }
+            fileProblems = problems
         }
     }
 

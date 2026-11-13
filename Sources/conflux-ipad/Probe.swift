@@ -97,8 +97,10 @@ final class Probe {
             ?? []
         let ggufs = (files.filter { $0.pathExtension.lowercased() == "gguf" } + self.files.inPlace)
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        // llama.cpp's vision projectors are named mmproj by convention.
-        let added = ggufs.filter { $0.lastPathComponent.lowercased().contains("mmproj") }
+        // A projector says so in its header. Only a file whose header can't
+        // be read goes by its name. Each file is read once for each version
+        // of it, however often the list is.
+        let added = ggufs.filter { GGUFFile($0).isProjector }
         // The starter model the app ships comes first, so there's something
         // to check before any model is added.
         let starter = StarterModel.files().map { (URL(fileURLWithPath: $0.model), URL(fileURLWithPath: $0.projector)) }
