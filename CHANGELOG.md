@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.0](https://github.com/misterbisson/conflux/compare/v0.7.0...v0.8.0) (2026-11-13)
+
+
+### Features
+
+* a Mac offers the model it serves to the devices it trusts ([#78](https://github.com/misterbisson/conflux/issues/78)) ([057a226](https://github.com/misterbisson/conflux/commit/057a22637095a1f297a434e3fb243c571d5fcace))
+* chart requests, tokens, memory and heat over the last hour or day ([#73](https://github.com/misterbisson/conflux/issues/73)) ([c6257bb](https://github.com/misterbisson/conflux/commit/c6257bb5b80489b20bb7ab3fd8af937c49a5b99b))
+* **ipad:** open models from Files and other apps, and use them in place ([#72](https://github.com/misterbisson/conflux/issues/72)) ([8cae412](https://github.com/misterbisson/conflux/commit/8cae4123dabdceb5533b39b9c171a80e051a5bec))
+* **ipad:** pull a model and its projector from a Mac in the mesh ([#79](https://github.com/misterbisson/conflux/issues/79)) ([872d7b3](https://github.com/misterbisson/conflux/commit/872d7b373fd6b29524a9db7c155698f1e0e2aee9))
+* **ipad:** say which models will likely fit before loading them ([#77](https://github.com/misterbisson/conflux/issues/77)) ([6f45b58](https://github.com/misterbisson/conflux/commit/6f45b587392af1cedaea0b63a7563b2c68963926))
+* tell projectors from models by what's in the file, and suggest the one that fits ([#76](https://github.com/misterbisson/conflux/issues/76)) ([5eff6ba](https://github.com/misterbisson/conflux/commit/5eff6ba1c17097774995a337b17af931a7910612))
+
+
+### Bug Fixes
+
+* stop a request when its client closes the connection ([#71](https://github.com/misterbisson/conflux/issues/71)) ([5fa09fa](https://github.com/misterbisson/conflux/commit/5fa09fa4fa0c950b97b466902b880357ab7b9cbc))
+
 ## [0.7.0](https://github.com/misterbisson/conflux/compare/v0.6.1...v0.7.0) (2026-11-13)
 
 
