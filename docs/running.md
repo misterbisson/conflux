@@ -259,12 +259,18 @@ llama.cpp names them. A model gets there in one of four ways:
 A copy of a big model takes a while, and the screen shows how far it's got.
 Keep conflux open until it's done. **Remove** beside a file used in place
 forgets it, and the file stays where it is. **Delete** beside a copy deletes
-it. When conflux can't reach a file used in place, because its drive isn't
-connected or the file was moved or deleted, it leaves the model choices and
-stays under **Model files** as *not connected*, until you remove it. conflux
-looks for it again each time it comes to the foreground and before you
-choose from Files, so a drive connected again shows its models without
-reopening conflux.
+it. When conflux can't reach a file used in place, it leaves the model
+choices and stays under **Model files**, until you remove it, as one of two:
+
+- *not connected*, when its drive isn't, or when conflux can't tell why.
+- *missing*, when its drive, or the iPad's own storage, is there and the
+  file isn't: deleted, or moved somewhere conflux can't follow it. A file
+  moved on the same drive is followed.
+
+conflux looks for both again each time it comes to the foreground and before
+you choose from Files, so a drive connected again, or a file put back, shows
+its models without reopening conflux. conflux never removes either by
+itself: **Remove** forgets one.
 
 **Getting a model from your Macs.** A Mac running conflux offers the model
 it serves, and its projector, to the devices it trusts, and **Get a model

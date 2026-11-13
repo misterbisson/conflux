@@ -517,12 +517,14 @@ struct ProbeView: View {
             ForEach(added, id: \.self) { url in
                 fileRow(url)
             }
-            // Kept, and listed again once the drive is connected.
+            // Kept, and listed again once the drive is connected, or the
+            // file is back.
             ForEach(probe.files.unavailable) { file in
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(file.name).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                        Text("not connected").font(.footnote).foregroundStyle(.secondary)
+                        Text(file.missing ? "missing" : "not connected")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Remove", role: .destructive) { probe.remove(file) }
