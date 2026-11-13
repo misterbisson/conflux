@@ -305,7 +305,14 @@ public final class ConfluxNode: @unchecked Sendable {
         // too, so peers hear "serves no model" rather than nothing. Peers see
         // one host per device for now: the model file's, or else Apple's
         // model.
-        let handler = HostService(scheduler: scheduler, hostID: localHosts.first?.id)
+        // And the files of the model it serves, the starter model's
+        // included, for peers to copy. None for Apple's model.
+        var files: [PeerFile.Role: String] = [:]
+        if let config = lock.withLock({ host?.config }) {
+            files[.model] = config.model
+            files[.projector] = config.projector
+        }
+        let handler = HostService(scheduler: scheduler, hostID: localHosts.first?.id, files: files)
         let service: HTTPServer
         let exposure: Mesh.Exposure
         if let path = Self.hostSocket {
@@ -385,6 +392,27 @@ public final class ConfluxNode: @unchecked Sendable {
             PeerStatus(endpointID: peer, hostID: remotes.first { $0.endpointID == peer }?.id ?? "",
                        path: mesh.path(to: peer))
         }
+    }
+
+    /// The files a peer's host offers: the model it serves and its
+    /// projector. The peer is one this device trusts, and the mesh is
+    /// running, with or without a host of its own. Takes as long as the peer
+    /// takes to hash its files, if it hasn't yet.
+    public func files(of peer: String) async throws -> PeerFileList {
+        try await peerFiles(peer).list()
+    }
+
+    /// Copies one of a peer's files to `destination`, through `partial`,
+    /// resuming what an earlier pull left there (`PeerFiles.pull`). Cancel
+    /// the task to stop it; the partial file stays, to resume.
+    public func pull(_ file: PeerFile, from peer: String, to destination: URL, partial: URL,
+                     progress: @escaping @Sendable (PullProgress) -> Void = { _ in }) async throws {
+        try await peerFiles(peer).pull(file, to: destination, partial: partial, progress: progress)
+    }
+
+    private func peerFiles(_ peer: String) throws -> PeerFiles {
+        guard let link = lock.withLock({ mesh })?.link(to: peer) else { throw PeerFilesError.notAPeer }
+        return PeerFiles(link: link)
     }
 
     /// Devices that tried to connect and weren't peers.

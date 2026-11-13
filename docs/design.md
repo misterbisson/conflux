@@ -328,9 +328,21 @@ conflux as-is:
 - Everything between them, including control streams, requests, results and
   cancellation, is HTTP over that forwarded connection.
 
-Bandwidth is not a concern. An image sized for a vision model is a few hundred
-KB, so even a fast mesh moves well under 1 MB/s, and a relayed path is fine.
-Connection setup takes seconds, but it happens once per host per session.
+Requests need little bandwidth. An image sized for a vision model is a few
+hundred KB, so even a fast mesh moves well under 1 MB/s, and a relayed path is
+fine. Connection setup takes seconds, but it happens once per host per session.
+
+Copying a model is another matter. One iroh connection moved 25 to 45 MB/s on
+a direct path, measured between two processes on one M4 Pro Mac, and each end
+spent about one core doing it: the limit is iroh's QUIC on a single
+connection, not the network or apple-iroh's forwarding. Two streams on one
+connection share that rate evenly, so parallel ranges wouldn't be faster. A
+3 GB model and its projector take one to two minutes at that rate, and longer
+over Wi-Fi or on an iPad's slower cores. A relayed path is much slower: n0's
+public relays don't publish their limits, and its paid shared relays are
+listed at 5 MB/s, so a relayed copy takes ten minutes or more. Meanwhile,
+completions on the same connection wait tens of milliseconds longer for their
+first bytes, against completions that take seconds.
 
 The apple-iroh changes conflux needs are listed in [plan.md](plan.md). All of
 them are additive, keep today's defaults, and stay compatible with apple-iroh's
@@ -368,6 +380,24 @@ apple-iroh lets conflux name its own ALPN.
   left its slot. In-process, generation stops at the next token. A cancel
   that arrives before its request is remembered for a minute, and the
   request is answered `cancelled` without running.
+- `GET /conflux/0/files`: the files of the model the host serves, so a peer
+  can copy them: `model` and, for a vision model, `projector`, each with its
+  name, size and SHA-256, and the `model_id` and `fingerprint` it serves
+  them as. Empty when it serves no model file, or only Apple's model. The
+  hashes are the ones the host made of its files to fingerprint them, so
+  listing reads nothing again.
+- `GET /conflux/0/files/model` and `GET /conflux/0/files/projector`: the file,
+  sent from disk a chunk at a time, each chunk read only once the connection
+  has taken the last, so a file of gigabytes takes a megabyte of memory.
+  `ETag` is the file's SHA-256 in quotes. One range, `Range: bytes=N-` or
+  `bytes=N-M`, gets `206`, and one past the end `416`. With `If-Range`
+  naming another version, the whole file comes back with `200`, so a copy
+  resumed after the file changed starts over rather than splicing the two.
+  `If-Match` naming another version gets `412`.
+
+A host sends only the files it serves, chosen by those two names from the
+paths it was started with, never a path from the request. A transfer holds no
+slot.
 
 **Admission belongs to the host.** A request from a peer's gateway runs only
 if one of the host's slots is free now, whichever gateway sent it. It

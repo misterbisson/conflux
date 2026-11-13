@@ -139,6 +139,10 @@ targets:
         # - Sources/ConfluxCore/LlamaServerHost.swift: FileHash takes the
         #   SHA-256 of the model files, through CryptoKit, so a host can say
         #   which model it serves. A fingerprint: no key, nothing encrypted.
+        # - Sources/ConfluxCore/PeerFiles.swift: takes the SHA-256 of a model
+        #   file copied from another of the user's devices, through CryptoKit,
+        #   to check the copy matches the original. A checksum: no key,
+        #   nothing encrypted.
         # - Sources/ConfluxCore/Gateway.swift: the gateway's bearer token is 32
         #   bytes from SecRandomCopyBytes, compared on each request. A secret,
         #   not a key: nothing is encrypted with it.

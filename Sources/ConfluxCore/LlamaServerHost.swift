@@ -335,7 +335,22 @@ enum FileHash {
         return SHA256.hash(data: Data(parts.joined(separator: "\n").utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// One hash at a time, so a file asked for twice at once, by the host
+    /// starting and by a peer listing its files, is read once: the second
+    /// waits and finds it in the cache. It also keeps the cache file whole.
+    private static let hashing = NSLock()
+
     static func sha256(_ path: String) throws -> String {
+        try hashing.withLock { try hash(path) }
+    }
+
+    /// The same, off the caller's thread: hashing gigabytes takes seconds,
+    /// too long to hold a thread of Swift's cooperative pool.
+    static func sha256(of path: String) async throws -> String {
+        try await Blocking.run { try sha256(path) }
+    }
+
+    private static func hash(_ path: String) throws -> String {
         let attributes = try FileManager.default.attributesOfItem(atPath: path)
         let size = (attributes[.size] as? NSNumber)?.int64Value ?? -1
         let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0

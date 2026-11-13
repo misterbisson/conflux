@@ -32,6 +32,9 @@ public enum HostProtocol {
     /// has left its slot, as `generation capacity active held`, so the
     /// gateway needn't wait for the status that says the same.
     public static let slotsHeader = "Conflux-Slots"
+    /// The files of the model the host serves, listed (`PeerFileList`), and
+    /// each by its role below it: `…/files/model`, `…/files/projector`.
+    public static let filesPath = "/conflux/0/files"
 }
 
 /// What a host tells gateways about itself, polled every second.
@@ -103,6 +106,9 @@ final class HostService: Sendable {
     /// This device's host, or nil when it serves no model and only uses
     /// peers'.
     let hostID: String?
+    /// The files this device's host serves, by role: the only files it
+    /// sends, whatever a request names.
+    let files: [PeerFile.Role: String]
     /// Completions running or waiting, by request ID, so a gateway can cancel
     /// them, and IDs cancelled before their request arrived.
     private let running = Running()
@@ -145,9 +151,10 @@ final class HostService: Sendable {
         }
     }
 
-    init(scheduler: Scheduler, hostID: String?) {
+    init(scheduler: Scheduler, hostID: String?, files: [PeerFile.Role: String] = [:]) {
         self.scheduler = scheduler
         self.hostID = hostID
+        self.files = files
     }
 
     func handle(_ request: HTTPRequest) async -> HTTPResponse {
@@ -174,6 +181,10 @@ final class HostService: Sendable {
                                      type: "invalid_request_error")
             }
             return .json(200, ["cancelled": running.cancel(id)])
+        case ("GET", HostProtocol.filesPath):
+            return await listFiles()
+        case ("GET", let path) where path.hasPrefix(HostProtocol.filesPath + "/"):
+            return await serveFile(String(path.dropFirst(HostProtocol.filesPath.count + 1)), for: request)
         default:
             return Gateway.error(404, "no such endpoint: \(request.path)", type: "invalid_request_error")
         }
@@ -232,6 +243,52 @@ final class HostService: Sendable {
             return reply(409, "cancelled", ChatCompletionResult.error("cancelled by the gateway that sent it",
                                                                       type: "server_error"))
         }
+    }
+
+    /// The files, each with its size and SHA-256. The host hashed them as
+    /// it started, so this is a lookup in `FileHash`'s cache, or waits for
+    /// that hashing to finish. A transfer holds no slot.
+    func listFiles() async -> HTTPResponse {
+        var listed: [PeerFile] = []
+        for role in PeerFile.Role.allCases {
+            guard let path = files[role] else { continue }
+            do {
+                listed.append(PeerFile(role: role, name: URL(fileURLWithPath: path).lastPathComponent,
+                                       size: try Self.size(of: path), sha256: try await FileHash.sha256(of: path)))
+            } catch {
+                return Gateway.error(503, "can't read the model's files: \(error.localizedDescription)",
+                                     type: "server_error")
+            }
+        }
+        var list = PeerFileList(files: listed)
+        if !listed.isEmpty, let hostID, let model = await scheduler.status(of: hostID, after: nil, wait: 0).0?.model {
+            list.modelID = model.id
+            // Provisional until the host has hashed its files.
+            list.fingerprint = model.fingerprint == "identifying" ? nil : model.fingerprint
+        }
+        let body = (try? PeerFileList.encoder.encode(list)) ?? Data()
+        return HTTPResponse(status: 200, headers: [("Content-Type", "application/json")], body: body)
+    }
+
+    /// One of the files, by its role, with `Range` for resuming. A name that
+    /// isn't one of the roles is refused: a path never comes from a request.
+    func serveFile(_ name: String, for request: HTTPRequest) async -> HTTPResponse {
+        guard let role = PeerFile.Role(rawValue: name), let path = files[role] else {
+            return Gateway.error(404, "this device serves no such file", type: "invalid_request_error")
+        }
+        do {
+            let size = try Self.size(of: path)
+            let digest = try await FileHash.sha256(of: path)
+            return .file(at: path, size: size, etag: digest, for: request)
+        } catch {
+            return Gateway.error(503, "can't read the model's files: \(error.localizedDescription)",
+                                 type: "server_error")
+        }
+    }
+
+    static func size(of path: String) throws -> Int64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        return (attributes[.size] as? NSNumber)?.int64Value ?? 0
     }
 
     static let encoder: JSONEncoder = {
