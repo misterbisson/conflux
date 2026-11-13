@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/misterbisson/conflux/compare/v0.6.0...v0.6.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* stop keep-alive connections from holding every request they've carried ([#59](https://github.com/misterbisson/conflux/issues/59)) ([3d49e12](https://github.com/misterbisson/conflux/commit/3d49e12e931c7313c6a2abc183ddabc6758d2137))
+
 ## [0.6.0](https://github.com/misterbisson/conflux/compare/v0.5.0...v0.6.0) (2026-11-12)
 
 
