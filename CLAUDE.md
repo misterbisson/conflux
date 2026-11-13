@@ -134,7 +134,10 @@ chosen one. `tools/ci/fetch-starter-model.sh` fetches it at build time,
 pinned by revision and checksum, into the ignored `App/StarterModel`, and its
 licence, Apache 2.0, is in `App/Credits.html`. Only a model whose license
 allows redistribution without passing on use restrictions can take its
-place. The app never downloads models itself.
+place. The app never fetches models from the internet itself. Copying a model
+between a person's own trusted devices, over the mesh, isn't redistribution,
+and fetches nothing from the internet: an iPad can copy the model a Mac in its
+mesh serves.
 
 ### Dependencies
 

@@ -184,6 +184,13 @@ final class ModelFiles {
         } else if Self.inDocuments(url) {
             do {
                 try FileManager.default.removeItem(at: url)
+                // A pair's folder goes with its last file.
+                if Probe.folder(of: url) != nil {
+                    let folder = url.deletingLastPathComponent()
+                    if (try? FileManager.default.contentsOfDirectory(atPath: folder.path))?.isEmpty == true {
+                        try? FileManager.default.removeItem(at: folder)
+                    }
+                }
             } catch {
                 problem = "Couldn't delete \(url.lastPathComponent): \(error.localizedDescription)"
             }
@@ -357,9 +364,9 @@ final class ModelFiles {
     // MARK: Where a file is
 
     /// Whether the file is in Documents itself, where it's listed already.
-    private static func inDocuments(_ url: URL) -> Bool {
+    nonisolated private static func inDocuments(_ url: URL) -> Bool {
         url.resolvingSymlinksInPath().deletingLastPathComponent().path
-            == Probe.documents.resolvingSymlinksInPath().path
+            == Probe.documents.resolvingSymlinksInPath().path || Probe.folder(of: url) != nil
     }
 
     /// Where iPadOS puts a file another app hands over as a copy.
