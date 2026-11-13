@@ -193,6 +193,31 @@ import Testing
         let (data, _) = try await URLSession(configuration: .ephemeral).data(for: request)
         #expect(String(decoding: data, as: UTF8.self) == "6000000")
     }
+
+    /// A keep-alive connection holds only what it hasn't handled yet, however
+    /// many requests it has carried. A buffer whose start has moved past the
+    /// requests it handled is still holding their bytes.
+    @Test func connectionsDontKeepWhatTheyHandled() {
+        let request = Data("POST /x HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello".utf8)
+        var buffer = Data()
+        for _ in 0..<1000 {
+            buffer.append(request)
+            guard case .request(let parsed, let consumed) = HTTPParser.parse(buffer, maxBodyBytes: 1 << 20) else {
+                Issue.record("not parsed")
+                return
+            }
+            #expect(parsed.body == Data("hello".utf8))
+            buffer = HTTPServer.remainder(of: buffer, after: consumed)
+        }
+        #expect(buffer.isEmpty)
+        #expect(buffer.startIndex == 0)
+
+        // What follows a request, the start of the next, is kept.
+        let rest = HTTPServer.remainder(of: request + Data("GET".utf8), after: request.count)
+        #expect(rest == Data("GET".utf8))
+        #expect(rest.startIndex == 0)
+        #expect(HTTPServer.remainder(of: request, after: request.count).isEmpty)
+    }
 }
 
 @Suite struct SelfCheckTests {
