@@ -202,19 +202,18 @@ private final class FileHost: @unchecked Sendable {
         #expect(socket >= 0)
         #expect(first > 0)
 
-        // Reading nothing more, the server stops reading the file.
-        try await Task.sleep(for: .milliseconds(500))
-        let stalled = server.fileBytesRead
-        try await Task.sleep(for: .milliseconds(500))
-        #expect(server.fileBytesRead == stalled)
+        // Reading nothing more, the server stops reading the file once the
+        // sockets' buffers are full. The kernel grows those buffers for a
+        // while, so the count settles when it settles, not at a set time; how
+        // far it got is what matters.
+        let stalled = try #require(await settled { server.fileBytesRead },
+                                   "kept reading the file for a client that read 4 KB")
         #expect(stalled < total / 4, "read \(stalled) of \(total) bytes for a client that read 4 KB")
 
-        // Closing stops the stream: it reads no more.
+        // Closing stops the stream: it reads no more, and never the rest.
         close(socket)
-        try await Task.sleep(for: .milliseconds(500))
-        let closed = server.fileBytesRead
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(server.fileBytesRead == closed)
+        let closed = try #require(await settled { server.fileBytesRead },
+                                  "kept reading the file after the client closed")
         #expect(closed < total)
     }
 }

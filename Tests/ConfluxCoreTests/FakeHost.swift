@@ -113,3 +113,26 @@ func eventually(within seconds: Double = 10, _ condition: () async -> Bool) asyn
     }
     return await condition()
 }
+
+/// Waits until `value` has stopped changing for `quiet`, checking every
+/// 10 ms, for up to `seconds`, and returns where it settled, or nil if it
+/// never did. A count that keeps moving on a slow machine makes this slower,
+/// not wrong.
+func settled<Value: Equatable>(for quiet: Duration = .milliseconds(500), within seconds: Double = 10,
+                               _ value: () -> Value) async -> Value? {
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(seconds)
+    var last = value()
+    var since = clock.now
+    while clock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(10))
+        let now = value()
+        if now != last {
+            last = now
+            since = clock.now
+        } else if clock.now - since >= quiet {
+            return last
+        }
+    }
+    return nil
+}
