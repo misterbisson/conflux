@@ -133,7 +133,13 @@ public final class HTTPServer: @unchecked Sendable {
                 continued = false
                 let response = await handle(request, watching: inbox)
                 let keepAlive = request.keepAlive
-                await send(response.serialized(keepAlive: keepAlive), on: connection)
+                let sent = await send(response.serialized(keepAlive: keepAlive), on: connection)
+                // A file that stopped short leaves the client counting on
+                // bytes that won't come: only closing tells it so.
+                if let file = response.file, !(sent ? await stream(file, on: connection, inbox: inbox) : false) {
+                    connection.cancel()
+                    return
+                }
                 // A client that has closed its side sends nothing more to answer.
                 if !keepAlive || inbox.isClosed {
                     connection.cancel()
@@ -167,10 +173,48 @@ public final class HTTPServer: @unchecked Sendable {
         return buffer.subdata(in: buffer.index(buffer.startIndex, offsetBy: count)..<buffer.endIndex)
     }
 
-    private func send(_ data: Data, on connection: NWConnection) async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            connection.send(content: data, completion: .contentProcessed { _ in continuation.resume() })
+    /// Sends `data`, and returns once the connection has taken it, with
+    /// whether it could.
+    @discardableResult
+    private func send(_ data: Data, on connection: NWConnection) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                continuation.resume(returning: error == nil)
+            })
         }
+    }
+
+    /// Bytes read from a file and sent at a time.
+    static let fileChunk = 1 << 20
+
+    /// File bytes read for responses since the server started, for tests.
+    var fileBytesRead: Int64 { lock.withLock { readFromFiles } }
+    private var readFromFiles: Int64 = 0
+
+    /// Sends a file body a chunk at a time. Each chunk is read only once the
+    /// connection has taken the one before, so a slow client, or iroh's flow
+    /// control behind it, holds the server to about one chunk in memory.
+    /// Reads happen on this task, never on the queue the server's
+    /// connections share. Returns whether every byte went: false when the
+    /// client closed the connection, a send failed, or the file ran short.
+    private func stream(_ file: HTTPResponse.FileBody, on connection: NWConnection, inbox: Inbox) async -> Bool {
+        guard let handle = FileHandle(forReadingAtPath: file.path) else { return false }
+        defer { try? handle.close() }
+        do {
+            try handle.seek(toOffset: UInt64(max(0, file.offset)))
+        } catch {
+            return false
+        }
+        var left = file.length
+        while left > 0 {
+            guard !inbox.isClosed, !Task.isCancelled else { return false }
+            let count = Int(min(Int64(Self.fileChunk), left))
+            guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else { return false }
+            lock.withLock { readFromFiles += Int64(chunk.count) }
+            left -= Int64(chunk.count)
+            guard await send(chunk, on: connection) else { return false }
+        }
+        return true
     }
 }
 

@@ -143,6 +143,14 @@ actor IrohLink: PeerLink {
                 try await withCheckedThrowingContinuation { continuation in
                     Thread.detachNewThread {
                         do {
+                            // A peer that dialled this device left a
+                            // connection both ends can forward over, and
+                            // dialling it too would make a second. A peer
+                            // known but not connected, after a failed dial,
+                            // has none to forward over.
+                            if (try? Iroh.path(id)) != nil, let port = try? Iroh.forward(id) {
+                                return continuation.resume(returning: port)
+                            }
                             try Iroh.connect(id)
                             continuation.resume(returning: try Iroh.forward(id))
                         } catch {
