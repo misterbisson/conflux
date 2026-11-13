@@ -361,6 +361,18 @@ struct ProbeView: View {
             ForEach(added, id: \.self) { url in
                 fileRow(url)
             }
+            // Kept, and listed again once the drive is connected.
+            ForEach(probe.files.unavailable) { file in
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(file.name).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                        Text("not connected").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Remove", role: .destructive) { probe.remove(file) }
+                        .buttonStyle(.borderless)
+                }
+            }
             if let copy = probe.files.copying {
                 if let fraction = copy.fraction {
                     ProgressView(value: fraction) {
@@ -376,7 +388,11 @@ struct ProbeView: View {
             if let problem = probe.files.problem {
                 Text(problem).foregroundStyle(.red)
             }
-            Button("Choose from Files…") { choosing = true }
+            Button("Choose from Files…") {
+                // A file on a drive connected again is listed, not chosen twice.
+                probe.reload()
+                choosing = true
+            }
         } header: {
             Text("Model files")
         } footer: {

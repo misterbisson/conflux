@@ -253,9 +253,12 @@ llama.cpp names them. A model gets there in one of three ways:
 A copy of a big model takes a while, and the screen shows how far it's got.
 Keep conflux open until it's done. **Remove** beside a file used in place
 forgets it, and the file stays where it is. **Delete** beside a copy deletes
-it. Disconnecting a drive takes its models off the list. If it's still
-disconnected when conflux next opens, or a file was deleted, conflux forgets
-the file, and it has to be chosen again.
+it. When conflux can't reach a file used in place, because its drive isn't
+connected or the file was moved or deleted, it leaves the model choices and
+stays under **Model files** as *not connected*, until you remove it. conflux
+looks for it again each time it comes to the foreground and before you
+choose from Files, so a drive connected again shows its models without
+reopening conflux.
 
 **Serving.** Choose the model, its projector, the slots and the context, and
 press **Serve this model to my Macs**. The top of the screen says what the

@@ -91,6 +91,8 @@ final class Probe {
     }
 
     func reload() {
+        // A drive connected again since: its files are back.
+        files.retry()
         let files = (try? FileManager.default.contentsOfDirectory(at: Self.documents, includingPropertiesForKeys: nil))
             ?? []
         let ggufs = (files.filter { $0.pathExtension.lowercased() == "gguf" } + self.files.inPlace)
@@ -119,6 +121,12 @@ final class Probe {
     /// Forgets a model used in place, or deletes a copy.
     func remove(_ url: URL) {
         files.remove(url)
+        reload()
+    }
+
+    /// Forgets a model used in place that can't be reached now.
+    func remove(_ unavailable: ModelFiles.Unavailable) {
+        files.remove(unavailable)
         reload()
     }
 

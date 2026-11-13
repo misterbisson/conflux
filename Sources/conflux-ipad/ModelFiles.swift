@@ -17,6 +17,8 @@ extension UTType {
 /// and reopened at launch, as the Mac keeps the files chosen in its open
 /// panel (Sources/conflux/ModelAccess.swift). Access is held for as long as
 /// the file is listed: llama.cpp maps the file, and reads it while serving.
+/// A bookmark that doesn't resolve, as when its drive isn't connected, is
+/// kept and tried again, until the person removes it.
 ///
 /// A file in iCloud Drive is copied into Documents instead, because iCloud can
 /// evict a file's local copy, which isn't safe under a loaded model. So is a
@@ -33,14 +35,33 @@ final class ModelFiles {
     private(set) var copying: Copy?
     var problem: String?
 
-    /// The files used in place that are there now. A drive that's been
-    /// disconnected hides its files until it's back.
-    var inPlace: [URL] { kept.map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) } }
+    /// The files used in place that are there now.
+    var inPlace: [URL] { kept.compactMap { $0.available ? $0.url : nil } }
+
+    /// A file used in place that conflux can't reach now: on a drive that
+    /// isn't connected, or moved or deleted. It's kept, and tried again.
+    struct Unavailable: Identifiable {
+        let id: UUID
+        let name: String
+    }
+
+    var unavailable: [Unavailable] {
+        kept.filter { !$0.available }.map { Unavailable(id: $0.id, name: $0.name) }
+    }
 
     private struct Kept {
-        var url: URL
+        let id = UUID()
+        /// The file's name when it was chosen, to show while it can't be
+        /// reached.
+        var name: String
         var bookmark: Data
-        var accessing: Bool
+        /// Where the bookmark resolved, while it does.
+        var url: URL?
+        var accessing = false
+
+        var available: Bool { url.map { FileManager.default.isReadableFile(atPath: $0.path) } ?? false }
+
+        func plist() -> [String: Any] { ["name": name, "bookmark": bookmark] }
     }
 
     private var kept: [Kept] = []
@@ -54,32 +75,62 @@ final class ModelFiles {
     init() {
         // A copy the app ended in the middle of.
         try? FileManager.default.removeItem(at: Self.staging)
-        let saved = UserDefaults.standard.array(forKey: Self.key) as? [Data] ?? []
-        for data in saved {
+        for item in UserDefaults.standard.array(forKey: Self.key) ?? [] {
+            if let entry = item as? [String: Any], let name = entry["name"] as? String,
+               let bookmark = entry["bookmark"] as? Data {
+                kept.append(Kept(name: name, bookmark: bookmark))
+            } else if let bookmark = item as? Data {
+                // Saved before the name was: read it from the bookmark.
+                let values = URL.resourceValues(forKeys: [.nameKey], fromBookmarkData: bookmark)
+                kept.append(Kept(name: values?.name ?? "A model file", bookmark: bookmark))
+                needsSaving = true
+            }
+        }
+        retry()
+    }
+
+    @ObservationIgnored private var needsSaving = false
+
+    func isInPlace(_ url: URL) -> Bool { kept.contains { $0.url == url } }
+
+    /// Resolves the bookmarks of files that can't be reached, so a drive
+    /// that's connected again shows its files. Called at launch, when the
+    /// app comes to the foreground, and before choosing files.
+    func retry() {
+        for index in kept.indices where !kept[index].available {
+            if let url = kept[index].url, kept[index].accessing { url.stopAccessingSecurityScopedResource() }
+            kept[index].url = nil
+            kept[index].accessing = false
             var stale = false
-            // One that can't be resolved, or renewed, is dropped: the file is
-            // gone, or conflux can't reach it.
-            guard let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil,
+            guard let url = try? URL(resolvingBookmarkData: kept[index].bookmark, options: [], relativeTo: nil,
                                      bookmarkDataIsStale: &stale) else { continue }
             let accessing = url.startAccessingSecurityScopedResource()
-            let bookmark = stale ? try? url.bookmarkData() : data
-            guard let bookmark, FileManager.default.isReadableFile(atPath: url.path),
-                  !kept.contains(where: { $0.url.path == url.path }) else {
+            guard FileManager.default.isReadableFile(atPath: url.path) else {
                 if accessing { url.stopAccessingSecurityScopedResource() }
                 continue
             }
-            kept.append(Kept(url: url, bookmark: bookmark, accessing: accessing))
+            kept[index].url = url
+            kept[index].accessing = accessing
+            if stale, let renewed = try? url.bookmarkData() {
+                kept[index].bookmark = renewed
+                needsSaving = true
+            }
         }
-        if kept.map(\.bookmark) != saved { save() }
+        // Two bookmarks for one file: the first one stays.
+        var paths = Set<String>()
+        for item in kept {
+            guard let path = item.url?.path else { continue }
+            if !paths.insert(path).inserted { forget(item.id) }
+        }
+        if needsSaving { save() }
     }
-
-    func isInPlace(_ url: URL) -> Bool { kept.contains { $0.url == url } }
 
     /// Files chosen in the document picker: used in place, or copied in from
     /// iCloud Drive.
     func choose(_ urls: [URL]) async {
         await serially {
             self.problem = nil
+            self.retry()
             for url in urls {
                 let accessing = url.startAccessingSecurityScopedResource()
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
@@ -127,9 +178,8 @@ final class ModelFiles {
     /// copy.
     func remove(_ url: URL) {
         problem = nil
-        if let index = kept.firstIndex(where: { $0.url == url }) {
-            let item = kept.remove(at: index)
-            if item.accessing { item.url.stopAccessingSecurityScopedResource() }
+        if let item = kept.first(where: { $0.url == url }) {
+            forget(item.id)
             save()
         } else if Self.inDocuments(url) {
             do {
@@ -152,16 +202,27 @@ final class ModelFiles {
             throw error
         }
         // Chosen again: the new bookmark replaces the old.
-        if let index = kept.firstIndex(where: { $0.url.path == url.path }) {
-            let old = kept.remove(at: index)
-            if old.accessing { old.url.stopAccessingSecurityScopedResource() }
-        }
-        kept.append(Kept(url: url, bookmark: bookmark, accessing: accessing))
+        for old in kept where old.url?.path == url.path { forget(old.id) }
+        kept.append(Kept(name: url.lastPathComponent, bookmark: bookmark, url: url, accessing: accessing))
         save()
     }
 
+    /// Forgets a file that can't be reached now.
+    func remove(_ unavailable: Unavailable) {
+        problem = nil
+        forget(unavailable.id)
+        save()
+    }
+
+    private func forget(_ id: UUID) {
+        guard let index = kept.firstIndex(where: { $0.id == id }) else { return }
+        let item = kept.remove(at: index)
+        if item.accessing, let url = item.url { url.stopAccessingSecurityScopedResource() }
+    }
+
     private func save() {
-        UserDefaults.standard.set(kept.map(\.bookmark), forKey: Self.key)
+        UserDefaults.standard.set(kept.map { $0.plist() }, forKey: Self.key)
+        needsSaving = false
     }
 
     // MARK: Copying in
