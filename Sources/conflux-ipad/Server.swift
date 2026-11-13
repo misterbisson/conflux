@@ -22,6 +22,12 @@ final class Server {
     let endpointID: String?
 
     private(set) var running = false
+    /// Whether the mesh runs with no host, so this iPad can reach its Macs
+    /// to get a model from one (MacModels): while it's in the foreground and
+    /// not serving. Its Macs see it serving no model.
+    private(set) var meshOnly = false
+    /// Whether the mesh is up: serving, or only to reach the Macs.
+    var meshUp: Bool { running || meshOnly }
     private(set) var snapshot: SchedulerSnapshot?
     private(set) var peers: [PeerStatus] = []
     private(set) var problem: String?
@@ -57,6 +63,9 @@ final class Server {
 
     private var foreground = true
     private var polling: Task<Void, Never>?
+    /// The last start or stop of the node: each waits for the one before,
+    /// so serving and the mesh alone never start over each other.
+    private var changing: Task<Void, Never>?
     private static let key = "server"
     private static let directoryInterval: Duration = .seconds(10)
 
@@ -107,35 +116,69 @@ final class Server {
             problem = "No Mac to serve. Turn on iCloud Keychain, or add a Mac's ID below."
             return
         }
+        meshOnly = false
         running = true
-        UIApplication.shared.isIdleTimerDisabled = true
-        Task {
-            await syncDirectory()
+        KeepAwake.set(.serving, true)
+        // Starting the node stops the mesh it ran alone.
+        change {
+            await self.syncDirectory()
+            guard self.running else { return }
             do {
                 try await self.node.start(node, directory: directory)
-                applyIntent()
+                self.applyIntent()
             } catch {
-                problem = "Couldn't start: \(error.localizedDescription)"
-                stop()
+                self.problem = "Couldn't start: \(error.localizedDescription)"
+                self.stop()
             }
         }
+        poll()
+    }
+
+    func stop() {
+        polling?.cancel()
+        polling = nil
+        running = false
+        held = nil
+        KeepAwake.set(.serving, false)
+        change {
+            await self.node.stop()
+            self.snapshot = nil
+            self.peers = []
+        }
+        startMesh()
+    }
+
+    /// Runs `work` once the node's last start or stop is done.
+    private func change(_ work: @escaping @MainActor () async -> Void) {
+        let previous = changing
+        changing = Task {
+            await previous?.value
+            await work()
+        }
+    }
+
+    /// Reads how the node is doing every second, and the directory every
+    /// few, while the mesh is up.
+    private func poll() {
         polling?.cancel()
         polling = Task { [weak self] in
             var lastSync = ContinuousClock.now
             var tick = 0
             while !Task.isCancelled {
                 guard let self else { return }
-                self.snapshot = await self.node.scheduler.snapshot()
                 self.peers = self.node.peers
                 self.meshProblem = self.node.meshProblem
-                self.memoryLeft.append(Double(Memory.available))
-                self.heat.append(Double(Thermal.level))
-                self.power.append(self.charging ? 0 : 1)
-                if tick % 5 == 0 {
-                    self.activity = await self.node.scheduler.activity(since: Date().addingTimeInterval(-86400))[
-                        ConfluxNode.localHostID] ?? []
+                if self.running {
+                    self.snapshot = await self.node.scheduler.snapshot()
+                    self.memoryLeft.append(Double(Memory.available))
+                    self.heat.append(Double(Thermal.level))
+                    self.power.append(self.charging ? 0 : 1)
+                    if tick % 5 == 0 {
+                        self.activity = await self.node.scheduler.activity(
+                            since: Date().addingTimeInterval(-86400))[ConfluxNode.localHostID] ?? []
+                    }
+                    tick += 1
                 }
-                tick += 1
                 if ContinuousClock.now - lastSync >= Self.directoryInterval {
                     lastSync = .now
                     await self.syncDirectory()
@@ -145,17 +188,46 @@ final class Server {
         }
     }
 
-    func stop() {
+    // MARK: The mesh alone
+
+    /// Runs the mesh with no host, while this iPad is in the foreground and
+    /// not serving, so it can reach its Macs to get a model from one. It
+    /// runs no gateway either, and its Macs see it serving no model.
+    func startMesh() {
+        guard foreground, !running, !meshOnly else { return }
+        let directory = settings.iCloudKeychain ? directory : nil
+        guard directory != nil || !settings.peers.isEmpty else { return }
+        meshOnly = true
+        let node = NodeSettings(host: nil, requireToken: false, peers: settings.peers,
+                                iCloudKeychain: settings.iCloudKeychain, gateway: false)
+        change {
+            await self.syncDirectory()
+            guard self.meshOnly else { return }
+            do {
+                try await self.node.start(node, directory: directory)
+            } catch {
+                self.meshProblem = "\(error)"
+            }
+        }
+        poll()
+    }
+
+    func stopMesh() {
+        guard meshOnly else { return }
+        meshOnly = false
         polling?.cancel()
         polling = nil
-        running = false
-        held = nil
-        UIApplication.shared.isIdleTimerDisabled = false
-        Task {
-            await node.stop()
-            snapshot = nil
-            peers = []
+        change {
+            await self.node.stop()
+            self.peers = []
         }
+    }
+
+    /// Starts the mesh alone again, after its Macs changed, or for the
+    /// first Mac. Serving takes them at its next start.
+    private func macsChanged() {
+        if meshOnly { stopMesh() }
+        startMesh()
     }
 
     /// Called as the app comes and goes from the foreground.
@@ -227,7 +299,7 @@ final class Server {
     }
 
     /// Joins or leaves the directory. Leaving removes this iPad's listing
-    /// from every device. Takes effect at the next start.
+    /// from every device. Serving takes it at its next start.
     func setICloudKeychain(_ on: Bool) {
         guard on != settings.iCloudKeychain else { return }
         settings.iCloudKeychain = on
@@ -240,19 +312,41 @@ final class Server {
             listed = []
             if let directory, let endpointID { Task.detached { try? directory.remove(endpointID) } }
         }
+        macsChanged()
     }
 
-    /// Adds a Mac's endpoint ID. Returns why not, if it can't. Takes effect
-    /// at the next start.
+    /// Adds a Mac's endpoint ID. Returns why not, if it can't. Serving takes
+    /// it at its next start.
     func addPeer(_ text: String) -> String? {
         let id = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard DeviceIdentity.isEndpointID(id) else {
             return "An endpoint ID is 64 characters, 0-9 and a-f. Copy it from the Mac's conflux window."
         }
         guard id != endpointID else { return "That's this iPad's own ID." }
-        if !settings.peers.contains(id) { settings.peers.append(id) }
+        if !settings.peers.contains(id) {
+            settings.peers.append(id)
+            macsChanged()
+        }
         return nil
     }
 
-    func removePeer(_ id: String) { settings.peers.removeAll { $0 == id } }
+    func removePeer(_ id: String) {
+        settings.peers.removeAll { $0 == id }
+        macsChanged()
+    }
+}
+
+/// Keeps the screen awake while anything needs it: serving, checking a
+/// model, or getting one from a Mac. iPadOS suspends conflux once the screen
+/// locks, which would stop each of them.
+@MainActor
+enum KeepAwake {
+    enum Reason { case serving, checking, pulling }
+
+    private static var reasons: Set<Reason> = []
+
+    static func set(_ reason: Reason, _ on: Bool) {
+        if on { reasons.insert(reason) } else { reasons.remove(reason) }
+        UIApplication.shared.isIdleTimerDisabled = !reasons.isEmpty
+    }
 }

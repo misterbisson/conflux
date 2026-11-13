@@ -223,8 +223,9 @@ contribution is measured against the effort of keeping it there.
   swap now counts as one mistake, like a misread letter.
   Its text answers are weak: it proves the plumbing, not the work. The build
   fetches it pinned by revision and checksum, so the weights still aren't
-  committed, and it ships inside the app: the app downloads nothing, which
-  would risk App Store review.
+  committed, and it ships inside the app: the app fetches nothing from the
+  internet, which would risk App Store review. An iPad copying the model a
+  Mac in its mesh serves fetches nothing from the internet either.
 - Capability requests and aliases beyond vision.
 - MLX for artifacts that benefit from it.
 

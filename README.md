@@ -55,9 +55,10 @@ swift test
 ## Models
 
 conflux serves a vision-language model in GGUF format, with its multimodal
-projector (`mmproj`): the files llama.cpp runs. It never downloads models.
-Fetch them yourself, then choose them in the app or pass them to
-`conflux serve`. Until you do, the app serves its small
+projector (`mmproj`): the files llama.cpp runs. It never fetches models from
+the internet. Fetch them yourself, then choose them in the app or pass them to
+`conflux serve`. An iPad can copy the model a Mac in its mesh serves, from
+your own Mac. Until you do, the app serves its small
 [starter model](docs/running.md#the-starter-model).
 
 These four are good places to start. Sizes are the model and its projector

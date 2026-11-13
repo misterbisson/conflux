@@ -5,7 +5,9 @@ import WebKit
 
 struct ProbeView: View {
     @State private var probe = Probe()
-    @State private var server = Server()
+    @State private var server: Server
+    /// The models the Macs serve, and getting one here.
+    @State private var macModels: MacModels
     @State private var newPeer = ""
     @State private var peerProblem: String?
     @State private var model: URL?
@@ -20,12 +22,19 @@ struct ProbeView: View {
     @State private var deleting: URL?
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        let server = Server()
+        _server = State(initialValue: server)
+        _macModels = State(initialValue: MacModels(server: server))
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 serving
                 choice
                 modelFiles
+                fromMacs
                 mesh
                 pair
                 device
@@ -56,6 +65,23 @@ struct ProbeView: View {
             // Models are copied in while the app is in the background.
             if phase == .active { probe.reload() }
             server.setForeground(phase == .active)
+            // The mesh alone runs while conflux is open and not serving, to
+            // reach the Macs. In the background iPadOS suspends it, and a
+            // pull stops, to resume on return.
+            switch phase {
+            case .active: server.startMesh()
+            case .background:
+                macModels.pause("conflux left the foreground")
+                server.stopMesh()
+            default: break
+            }
+        }
+        .onChange(of: server.meshUp) { _, up in
+            if up { macModels.startRefreshing() } else { macModels.stopRefreshing() }
+        }
+        // A Mac connected: ask what it serves now, not at the next look.
+        .onChange(of: server.peers.filter { $0.path != .none }.map(\.endpointID)) { _, _ in
+            if server.meshUp { macModels.refresh() }
         }
         .onChange(of: probe.models) { _, models in
             if model.map({ !models.contains($0) }) ?? true { model = models.first }
@@ -68,6 +94,9 @@ struct ProbeView: View {
         .onAppear {
             model = probe.models.first
             projector = suggestedProjector
+            macModels.arrived = { [probe] in probe.reload() }
+            server.startMesh()
+            if server.meshUp { macModels.startRefreshing() }
         }
     }
 
@@ -87,8 +116,8 @@ struct ProbeView: View {
         Projectors.problems(model: model.map { GGUFFile($0) }, projector: projector.map { GGUFFile($0) })
     }
 
-    /// The models measured on iPads so far. A link only: conflux downloads
-    /// nothing.
+    /// The models measured on iPads so far. A link only: conflux fetches
+    /// nothing from the internet.
     private static let measurements =
         URL(string: "https://github.com/misterbisson/conflux/blob/main/docs/measurements.md")!
 
@@ -308,7 +337,8 @@ struct ProbeView: View {
         } header: {
             Text("Your Macs")
         } footer: {
-            Text("Your Macs send this iPad work while it serves."
+            Text("Your Macs send this iPad work while it serves. While conflux is open and not serving, it stays "
+                + "connected to them, to get a model from one."
                 + (server.running ? " Changes here take effect the next time it serves." : ""))
         }
     }
@@ -318,7 +348,7 @@ struct ProbeView: View {
         let path = server.peers.first { $0.endpointID == peer.endpointID }?.path
         let connected = path.map { $0 != .none } ?? false
         return HStack(alignment: .firstTextBaseline) {
-            Circle().fill(server.running ? (connected ? Color.green : .orange) : .gray)
+            Circle().fill(server.meshUp ? (connected ? Color.green : .orange) : .gray)
                 .frame(width: 10, height: 10)
             VStack(alignment: .leading, spacing: 2) {
                 Text(peer.name ?? DeviceIdentity.short(peer.endpointID) + "…")
@@ -330,7 +360,7 @@ struct ProbeView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Spacer()
-            if server.running {
+            if server.meshUp {
                 Text(connected ? path?.label ?? "" : "not connected").foregroundStyle(.secondary)
             }
             if peer.addedByHand {
@@ -444,7 +474,8 @@ struct ProbeView: View {
                 } label: {
                     Text("Serve this model to my Macs")
                 }
-                .disabled(server.running || probe.running || model == nil)
+                // Starting would cut off the Mac a model is coming from.
+                .disabled(server.running || probe.running || model == nil || macModels.active)
                 Button {
                     guard let model else { return }
                     Task { await probe.check(model: model, projector: projector, slots: slots,
@@ -537,6 +568,165 @@ struct ProbeView: View {
         }
     }
 
+    /// Each connected Mac's model and projector, and copying them here.
+    private var fromMacs: some View {
+        Section {
+            if let notice = macModels.notice {
+                Text(notice).foregroundStyle(.green)
+            }
+            if let pull = macModels.pull, !shownWithItsMac(pull) {
+                // From a Mac that isn't in the mesh now, or whose offer
+                // isn't in yet, or has changed.
+                pullRow(pull)
+            }
+            if !server.meshUp {
+                Text(server.trusted.isEmpty ? "No Mac yet. Pair one under Your Macs, below."
+                                            : "Connecting to your Macs…")
+                    .foregroundStyle(.secondary)
+            } else if server.peers.isEmpty {
+                Text("No Mac yet.").foregroundStyle(.secondary)
+            }
+            ForEach(server.peers) { peer in
+                offerRow(peer)
+            }
+        } header: {
+            Text("Get a model from your Macs")
+        } footer: {
+            Text("A Mac running conflux offers the model it serves, and its projector, to the devices it trusts. "
+                + "conflux copies both here over the mesh, checks each against the Mac's, and keeps them "
+                + "together in a folder named for the model, with the Mac's file names, so this iPad serves the "
+                + "same model. Nothing comes from the internet. Keep conflux open while it copies: the screen "
+                + "stays awake, and if it stops, Resume carries on where it stopped.")
+        }
+    }
+
+    /// Whether a pull shows under its Mac's offer: the Mac is in the mesh
+    /// and still offers those files.
+    private func shownWithItsMac(_ pull: MacModels.Pull) -> Bool {
+        server.peers.contains { $0.endpointID == pull.peer } && macModels.offers[pull.peer] == .files(pull.list)
+    }
+
+    private func macName(_ endpointID: String) -> String {
+        server.trusted.first { $0.endpointID == endpointID }?.name ?? DeviceIdentity.short(endpointID) + "…"
+    }
+
+    @ViewBuilder private func offerRow(_ peer: PeerStatus) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(macName(peer.endpointID)).font(.headline)
+            switch macModels.offers[peer.endpointID] {
+            case nil:
+                Text(peer.path == .none ? "Not connected" : "Asking what it serves…")
+                    .font(.footnote).foregroundStyle(.secondary)
+            case .problem(let why)?:
+                Text("Can't say what it serves: \(why)").font(.footnote).foregroundStyle(.secondary)
+            case .files(let list)? where list.files.isEmpty:
+                Text("Serves no model file.").font(.footnote).foregroundStyle(.secondary)
+            case .files(let list)?:
+                offer(list, from: peer)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder private func offer(_ list: PeerFileList, from peer: PeerStatus) -> some View {
+        ForEach(list.files) { file in
+            Text("\(file.name) · \(Memory.gigabytes(UInt64(file.size)))")
+                .lineLimit(1).truncationMode(.middle)
+        }
+        if list.projector == nil {
+            Text("No projector: text only.").font(.footnote).foregroundStyle(.secondary)
+        }
+        let here = macModels.alreadyHere(list, among: probe.models + probe.projectors)
+        let pulling = macModels.pull.map { $0.peer == peer.endpointID && $0.list == list } ?? false
+        if here {
+            Text("Already on this iPad.").font(.footnote).foregroundStyle(.secondary)
+        } else {
+            fitLine(list)
+            pathLine(list, path: peer.path)
+        }
+        if pulling, let pull = macModels.pull {
+            pullRow(pull)
+        } else if !here {
+            Button("Get this model") {
+                macModels.get(list, from: peer.endpointID, name: macName(peer.endpointID))
+            }
+            // One at a time: another, stopped, resumes or is discarded first.
+            .disabled(macModels.pull != nil || peer.path == .none
+                      || (MacModels.freeStorage.map { $0 < list.size } ?? false))
+        }
+    }
+
+    /// Whether the pair likely fits this iPad's memory, with one slot and a
+    /// typical context (ModelFit), and its storage.
+    private func fitLine(_ list: PeerFileList) -> some View {
+        let largest = ModelFit.largestModel(allowed: probe.limitAtLaunch, physicalMemory: physicalMemory)
+        let fits = UInt64(list.size) <= largest
+        let free = MacModels.freeStorage
+        let room = free.map { $0 >= list.size } ?? true
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(fits ? "Likely fits this iPad's memory, with one slot."
+                      : "Likely too big for this iPad's memory: models up to about \(Memory.roughly(largest)), "
+                        + "with their projectors, will likely load.")
+                .foregroundStyle(fits ? Color.secondary : Color.orange)
+            Text("Takes \(Memory.roughly(UInt64(list.size))) of storage"
+                + (free.map { ", and \(Memory.roughly(UInt64(max(0, $0)))) is free." } ?? "."))
+                .foregroundStyle(room ? Color.secondary : Color.red)
+        }
+        .font(.footnote)
+    }
+
+    /// Direct, or relayed and slow, with how long it would take.
+    @ViewBuilder private func pathLine(_ list: PeerFileList, path: PeerPath) -> some View {
+        switch path {
+        case .direct:
+            Text("Connected directly: about \(MacModels.duration(list.size, at: MacModels.directRate)).")
+                .font(.footnote).foregroundStyle(.secondary)
+        case .relay:
+            Text("Connected through a relay, which is slow: at \(MacModels.rate(MacModels.relayRate)) at best, "
+                + "this takes about \(MacModels.duration(list.size, at: MacModels.relayRate)), and could take "
+                + "much longer. On the same network as the Mac, with Local Network allowed, it's direct.")
+                .font(.footnote).foregroundStyle(.orange)
+        case .none:
+            Text("Not connected.").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    /// How far it has got, and Stop, Resume or Discard.
+    @ViewBuilder private func pullRow(_ pull: MacModels.Pull) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ProgressView(value: Double(pull.received), total: Double(max(1, pull.total))) {
+                Text("\(pull.list.modelID ?? pull.folder) from \(pull.name)").lineLimit(1).truncationMode(.middle)
+            } currentValueLabel: {
+                Text(pullDetail(pull))
+            }
+            switch pull.state {
+            case .pulling:
+                Button("Stop", role: .destructive) { macModels.stop() }
+            case .stopped(let why):
+                if let why { Text("Stopped: \(why)").font(.footnote).foregroundStyle(.secondary) }
+                HStack {
+                    Button("Resume") { macModels.resume() }
+                        .disabled(!server.peers.contains { $0.endpointID == pull.peer && $0.path != .none })
+                    Spacer()
+                    Button("Discard", role: .destructive) { macModels.discard() }
+                }
+                .buttonStyle(.borderless)
+            case .failed(let why):
+                Text(why).font(.footnote).foregroundStyle(.red)
+                Button("Dismiss") { macModels.discard() }
+            }
+        }
+    }
+
+    private func pullDetail(_ pull: MacModels.Pull) -> String {
+        var parts = ["\(Memory.roughly(UInt64(pull.received))) of \(Memory.roughly(UInt64(pull.total)))"]
+        if pull.state == .pulling, let rate = pull.progress?.bytesPerSecond, rate > 0 {
+            parts.append(MacModels.rate(rate))
+            parts.append("about \(MacModels.duration(pull.total - pull.received, at: rate)) left")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     /// Where a model is, and how to remove it: a file used in place is
     /// forgotten and stays where it is, and a copy is deleted.
     private func fileRow(_ url: URL) -> some View {
@@ -548,7 +738,7 @@ struct ProbeView: View {
                 Text(url.lastPathComponent).lineLimit(1).truncationMode(.middle)
                 Text("\(Memory.gigabytes(Probe.size(url))) · "
                     + (inPlace ? "used where it is, in \(url.deletingLastPathComponent().lastPathComponent)"
-                               : "copied into conflux"))
+                               : Probe.folder(of: url).map { "copied into conflux, in \($0)" } ?? "copied into conflux"))
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Spacer()

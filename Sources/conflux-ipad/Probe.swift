@@ -85,7 +85,7 @@ final class Probe {
 
     /// Where models are copied in: the folder Finder and the Files app show
     /// for conflux. Models used in place are elsewhere (ModelFiles).
-    static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
+    nonisolated static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
     static var resultsURL: URL { documents.appending(path: "probe-results.json") }
     static var pendingURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -95,9 +95,7 @@ final class Probe {
     func reload() {
         // A drive connected again since: its files are back.
         files.retry()
-        let files = (try? FileManager.default.contentsOfDirectory(at: Self.documents, includingPropertiesForKeys: nil))
-            ?? []
-        let ggufs = (files.filter { $0.pathExtension.lowercased() == "gguf" } + self.files.inPlace)
+        let ggufs = (Self.copied() + self.files.inPlace)
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         // A projector says so in its header. Only a file whose header can't
         // be read goes by its name. Each file is read once for each version
@@ -108,6 +106,30 @@ final class Probe {
         let starter = StarterModel.files().map { (URL(fileURLWithPath: $0.model), URL(fileURLWithPath: $0.projector)) }
         projectors = (starter.map { [$0.1] } ?? []) + added
         models = (starter.map { [$0.0] } ?? []) + ggufs.filter { !added.contains($0) }
+    }
+
+    /// The model files in Documents, and in the folders there, one level
+    /// down: a model and its projector from a Mac arrive in a folder of
+    /// their own (MacModels), and Finder can copy in a folder too. Not
+    /// Inbox, where iPadOS hands over a file before it's moved in.
+    nonisolated static func copied() -> [URL] {
+        let manager = FileManager.default
+        let keys: [URLResourceKey] = [.isDirectoryKey]
+        let top = (try? manager.contentsOfDirectory(at: documents, includingPropertiesForKeys: keys)) ?? []
+        var found = top
+        for folder in top where folder.lastPathComponent != "Inbox"
+            && (try? folder.resourceValues(forKeys: Set(keys)))?.isDirectory == true {
+            found += (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        }
+        return found.filter { $0.pathExtension.lowercased() == "gguf" }
+    }
+
+    /// The folder in Documents a copy is in, if it's in one.
+    nonisolated static func folder(of url: URL) -> String? {
+        let parent = url.deletingLastPathComponent().resolvingSymlinksInPath()
+        guard parent.path != documents.resolvingSymlinksInPath().path,
+              parent.deletingLastPathComponent().path == documents.resolvingSymlinksInPath().path else { return nil }
+        return parent.lastPathComponent
     }
 
     /// Files chosen in the document picker.
@@ -141,12 +163,15 @@ final class Probe {
     }
 
     /// A file's name and size, for choosing it.
+    /// Two files of the same name, one in a folder, say which is where.
     func label(_ url: URL) -> String {
-        let note = Self.included(url) ? " · included" : files.isInPlace(url) ? " · in place" : ""
+        var note = Self.included(url) ? " · included" : files.isInPlace(url) ? " · in place" : ""
+        let named = (models + projectors).filter { $0.lastPathComponent == url.lastPathComponent }
+        if note.isEmpty, named.count > 1 { note = Self.folder(of: url).map { " · in \($0)" } ?? "" }
         return "\(url.lastPathComponent) · \(Memory.gigabytes(Self.size(url)))" + note
     }
 
-    static func size(_ url: URL) -> UInt64 {
+    nonisolated static func size(_ url: URL) -> UInt64 {
         UInt64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
     }
 
@@ -190,11 +215,11 @@ final class Probe {
     func check(model: URL, projector: URL?, slots: Int, contextPerSlot: Int) async {
         guard !running else { return }
         running = true
-        UIApplication.shared.isIdleTimerDisabled = true
+        KeepAwake.set(.checking, true)
         defer {
             running = false
             status = nil
-            UIApplication.shared.isIdleTimerDisabled = false
+            KeepAwake.set(.checking, false)
         }
 
         var result = ProbeResult(

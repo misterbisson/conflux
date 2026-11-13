@@ -240,7 +240,7 @@ check before you add a model.
 
 **Adding models.** Models are listed under **Model files**, and a vision
 model's projector is listed with them, with `mmproj` in its file name, as
-llama.cpp names them. A model gets there in one of three ways:
+llama.cpp names them. A model gets there in one of four ways:
 
 - **Choose from Files…** opens the document picker, for the model and its
   projector together. A file on the iPad, in **On My iPad**, or on a USB
@@ -252,8 +252,9 @@ llama.cpp names them. A model gets there in one of three ways:
   in the Files app, can be opened in conflux from the share button. conflux
   copies it into its own folder, the one the Files app shows under **On My
   iPad › conflux**.
-- **From a Mac.** Connect the iPad, select it in Finder, open the **Files**
-  tab, and drag the GGUF files onto conflux.
+- **From a Mac, with a cable.** Connect the iPad, select it in Finder, open
+  the **Files** tab, and drag the GGUF files onto conflux.
+- **From a Mac in the mesh**, with no cable: see below.
 
 A copy of a big model takes a while, and the screen shows how far it's got.
 Keep conflux open until it's done. **Remove** beside a file used in place
@@ -264,6 +265,45 @@ stays under **Model files** as *not connected*, until you remove it. conflux
 looks for it again each time it comes to the foreground and before you
 choose from Files, so a drive connected again shows its models without
 reopening conflux.
+
+**Getting a model from your Macs.** A Mac running conflux offers the model
+it serves, and its projector, to the devices it trusts, and **Get a model
+from your Macs** lists each Mac in the mesh with what it offers: both files
+and their sizes, whether the pair will likely fit this iPad's memory with one
+slot and a typical context (the same estimate as for a chosen model, below,
+without the model's header, which is on the Mac), the storage it takes and
+what's free, and how the Mac is connected. **Get this model** copies the
+pair here over the mesh: the files come from your own Mac, and nothing from
+the internet. To reach its Macs while it isn't serving, the iPad runs its
+mesh with no model while conflux is open, so a Mac sees it as serving none.
+
+- **Direct or relayed.** Connected directly, on the same network, it says
+  about how long the copy will take at 25 MB/s, what one iroh connection
+  managed between two processes on one Mac
+  ([design.md](design.md#iroh-through-apple-iroh)). An iPad over Wi-Fi may
+  be slower. Connected through a relay, it warns that the copy is slow, and
+  estimates it at 5 MB/s at best, which can mean tens of minutes for a large
+  model. Allowing Local Network, on the same network as the Mac, lets iroh
+  connect directly.
+- **While it copies**, it shows how much has arrived, the rate, and about how
+  long is left, and keeps the screen awake. Keep conflux open: in the
+  background iPadOS suspends it, and the copy stops. **Stop** stops it too.
+  **Resume** carries on where it stopped, even after conflux was closed, and
+  **Discard** throws away what has arrived. Starting to serve waits until
+  it's done or stopped, since serving restarts the connection to the Macs.
+- **Each file is checked.** It's written to a partial file in conflux's
+  Application Support folder, and kept only once its SHA-256 matches the
+  Mac's. A resumed copy asks for the rest of the same version of the file:
+  if the Mac's file changed meanwhile, conflux throws away what it had and
+  says to get the model again.
+- **Where it goes.** Once both files are checked, they move together into a
+  folder named for the model, in conflux's folder in Files, and the model
+  list reads them there, one folder down, with the projector matched to the
+  model as for any other. They keep the Mac's file names, which name the
+  model, so the iPad serves it under the same model ID, and with the same
+  llama.cpp, the same fingerprint, and a gateway treats the two as hosts of
+  one model. **Delete** deletes each, and the folder with the last of them.
+  A pair that's already here, the starter model's included, is marked so.
 
 **Serving.** Choose the model, its projector, the slots and the context, and
 press **Serve this model to my Macs**. The top of the screen says what the
