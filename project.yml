@@ -5,8 +5,8 @@
 #
 # fetches the pinned XcodeGen and generates it, on Xcode Cloud and on a desk.
 # `swift build` and `swift test` don't use this file. The app target compiles
-# Sources/conflux against the package's ConfluxCore library, so the code is the
-# same either way. docs/releasing.md says how a release reaches TestFlight.
+# Sources/conflux against the package's ConfluxCore and ConfluxUI libraries, so
+# the code is the same either way. docs/releasing.md says how a release reaches TestFlight.
 #
 # No Team ID here, or anywhere else in the repository. Signing settings come
 # from App/Signing.xcconfig, which includes the untracked
@@ -69,6 +69,9 @@ targets:
     dependencies:
       - package: ConfluxPackage
         product: ConfluxCore
+      # What the Mac app and the iPad app show the same way.
+      - package: ConfluxPackage
+        product: ConfluxUI
     postBuildScripts:
       # Xcode's asset catalog compiler writes an AppIcon.icns without the 512pt
       # sizes, and App Store Connect refuses that (ITMS-90236). This rebuilds it
@@ -198,6 +201,9 @@ targets:
     dependencies:
       - package: ConfluxPackage
         product: ConfluxCore
+      # What the Mac app and the iPad app show the same way.
+      - package: ConfluxPackage
+        product: ConfluxUI
     # Xcode generates the rest of the Info.plist from INFOPLIST_KEY_ settings,
     # which don't cover these.
     info:
