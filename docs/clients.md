@@ -54,9 +54,14 @@ may run twice. The client records a result once, keyed by its own request ID.
 ### Record which model answered, per response
 
 Read `model` and `system_fingerprint` from **every response**. Don't use a value
-remembered from `/v1/models`. A mesh serves several models at once, and with an
-alias or preference list, consecutive requests can be answered by different
-models.
+remembered from `/v1/models`, whose first entries are aliases, not models. A
+mesh serves several models at once, and with an alias or preference list,
+consecutive requests can be answered by different models.
+
+A refusal names its model too. When a model refuses a request, the `400`
+carries `model` and `system_fingerprint` beside `error`, naming the model that
+refused. If several refused it in turn, that's the last of them. Errors from
+the gateway itself, such as `429` and `503`, name no model, because none ran.
 
 | Field | Contents |
 |---|---|
@@ -140,7 +145,8 @@ declines some content, and takes only short requests. When a model refuses
 that way, the gateway tries another host serving a model the request
 accepts, so accepting more than one model avoids the refusal. With nowhere
 else to go, the client gets `400` with `error.code` set to `content_filter`
-or `context_length_exceeded`, as OpenAI's API names them.
+or `context_length_exceeded`, as OpenAI's API names them, and `model` naming
+the model that refused.
 
 ### Ask for a schema
 
@@ -189,7 +195,7 @@ so a smaller image saves time only with a model that handles it
 | Status | Meaning | Client action |
 |---|---|---|
 | `200` | Result | Record it, with `model` and `system_fingerprint` |
-| `400` | Malformed request | Fix the request. Retrying won't help. |
+| `400` | Malformed request, or the model refused it | Fix the request, or accept other models. Retrying the same won't help. `model` names the model that refused. |
 | `401` | Missing or wrong token | Fix configuration |
 | `404` | No host has served a model this request accepts since the gateway started | Check the model ID, or widen the accepted models |
 | `429` | Mesh busy: no slot in time | Retry after `Retry-After` |

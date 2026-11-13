@@ -203,7 +203,7 @@ check "the starter model's folder holds only its two files" \
 # new use in the sources, and a cryptography library compiled into the app
 # (iroh's QUIC and TLS, OpenSSL, BoringSSL, mbedTLS, libsodium).
 grep -rlE '^[[:space:]]*(@preconcurrency[[:space:]]+)?import[[:space:]]+(CryptoKit|CommonCrypto|Security|CryptoTokenKit)\b|\bSec(Random|Key|Trust|Identity|Certificate)|\bCC(Crypt|_SHA|_MD5|Hmac)|NWProtocolTLS|sec_protocol_|\.tls\b' \
-	Sources/conflux Sources/ConfluxCore | sort >"$work/uses" || true
+	Sources/conflux Sources/ConfluxCore Sources/ConfluxUI | sort >"$work/uses" || true
 unnamed=""
 while read -r file; do
 	grep -qF "# - $file:" project.yml || unnamed+=" $file"

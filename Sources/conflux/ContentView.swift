@@ -1,4 +1,5 @@
 import ConfluxCore
+import ConfluxUI
 import SwiftUI
 
 struct ContentView: View {
@@ -21,32 +22,40 @@ struct ContentView: View {
 
     // MARK: Status
 
+    /// Read from across a room: what this Mac is doing, and how much.
     @ViewBuilder var status: some View {
         Section {
-            HStack(alignment: .firstTextBaseline) {
-                Circle().fill(color).frame(width: 10, height: 10)
-                Text(stateLabel).font(.title2.weight(.semibold))
-                Spacer()
-                controls
+            VStack(alignment: .leading, spacing: 12) {
+                StatusHeadline(stateLabel, color: color, detail: stateDetail) { controls }
+                if model.running, let snapshot = model.snapshot {
+                    let own = [model.host, model.appleHost].compactMap { $0 }
+                    let connected = model.peers.filter { $0.path != .none }.count
+                    StatusFigures([
+                        ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy"),
+                        ("\(snapshot.queued)", "waiting"),
+                        ("\(snapshot.completed)", "completed"),
+                        ("\(Int(snapshot.perHour.rounded()))", "per hour"),
+                    ])
+                    let typical = model.host?.typicalSeconds.map { [(String(format: "%.1f s", $0), "typical request")] }
+                    StatusFigures([
+                        ("\(connected)", connected == 1 ? "peer connected" : "peers connected"),
+                        (Thermal.label, "temperature"),
+                    ] + (typical ?? []))
+                }
             }
-            if let detail = model.host?.state.detail {
-                Text(detail).foregroundStyle(.secondary)
-            }
+            .padding(.vertical, 8)
             if let problem = model.problem {
                 Text(problem).foregroundStyle(.red)
             }
-            if let host = model.host, let snapshot = model.snapshot {
+            if let host = model.host, model.running {
+                if host.capacity < host.slots {
+                    Text("Running \(host.capacity) of \(host.slots) slots: the rest didn't fit.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if let served = host.model {
-                    LabeledContent("Serving", value: served.id)
                     LabeledContent("Fingerprint") {
                         Text(served.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
                     }
-                }
-                LabeledContent("Slots", value: "\(host.active) busy of \(host.capacity)"
-                    + (host.capacity < host.slots ? " (limited from \(host.slots))" : ""))
-                LabeledContent("Waiting", value: "\(snapshot.queued)")
-                if let typical = host.typicalSeconds {
-                    LabeledContent("Typical request", value: String(format: "%.1f s", typical))
                 }
             }
         }
@@ -77,7 +86,7 @@ struct ContentView: View {
                         Button("Drain") { model.setIntent(.draining) }
                     }
                 } message: { work in
-                    Text(stopWarning(running: work.running, waiting: work.waiting))
+                    Text(stopMessage(running: work.running, waiting: work.waiting))
                 }
         } else {
             Button("Start") { model.start() }
@@ -98,17 +107,11 @@ struct ContentView: View {
         }
     }
 
-    func stopWarning(running: Int, waiting: Int) -> String {
-        let work = switch (running, waiting) {
-        case (_, 0): "\(running) \(running == 1 ? "request is" : "requests are") running."
-        case (0, _): "\(waiting) \(waiting == 1 ? "request is" : "requests are") waiting."
-        default: "\(running) \(running == 1 ? "request is" : "requests are") running and \(waiting) \(waiting == 1 ? "is" : "are") waiting."
-        }
-        let cut = " Stopping cuts \(running + waiting == 1 ? "it" : "them") off."
+    func stopMessage(running: Int, waiting: Int) -> String {
         let drain = model.intent == .serving
             ? " Drain instead to let this Mac's models finish what they're running and take nothing new."
             : ""
-        return work + cut + drain
+        return (stopWarning(running: running, waiting: waiting) ?? "") + drain
     }
 
     var stateLabel: String {
@@ -116,9 +119,16 @@ struct ContentView: View {
         return (model.host ?? model.appleHost)?.state.label ?? "Gateway only"
     }
 
+    /// Why it's in the state it's in, or else what it serves.
+    var stateDetail: String? {
+        guard model.running else { return "Start to open the gateway, serve this Mac's models and join the mesh." }
+        guard let state = (model.host ?? model.appleHost) else { return nil }
+        return state.state.detail ?? state.model?.id
+    }
+
     var color: Color {
-        guard model.running, let state = (model.host ?? model.appleHost)?.state else { return .gray }
-        return color(for: state)
+        guard model.running, let state = (model.host ?? model.appleHost)?.state else { return .secondary }
+        return state.color
     }
 
     // MARK: Model
@@ -147,7 +157,7 @@ struct ContentView: View {
                     Button("Use the starter model") { model.useStarter() }
                 }
             }
-            Stepper("Slots: \(host.slots)", value: binding(\.slots), in: 1...32)
+            StepperRow("Slots", value: binding(\.slots), in: 1...32)
             Picker("Context per slot", selection: binding(\.contextPerSlot)) {
                 ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: host.contextPerSlot), id: \.self) {
                     Text("\($0.formatted()) tokens").tag($0)
@@ -188,7 +198,7 @@ struct ContentView: View {
                 if let apple = model.appleHost, model.running {
                     LabeledContent("State") {
                         HStack {
-                            Circle().fill(color(for: apple.state)).frame(width: 8, height: 8)
+                            Circle().fill(apple.state.color).frame(width: 8, height: 8)
                             Text(apple.state.label)
                         }
                     }
@@ -200,7 +210,7 @@ struct ContentView: View {
                         LabeledContent("Typical request", value: String(format: "%.1f s", typical))
                     }
                 }
-                Stepper("Slots: \(model.settings.appleModel.slots)", value: $model.settings.appleModel.slots, in: 1...8)
+                StepperRow("Slots", value: $model.settings.appleModel.slots, in: 1...8)
                     .disabled(model.running)
             }
             Text("""
@@ -388,7 +398,7 @@ struct ContentView: View {
     func peerColor(running: Bool, connected: Bool, host: HostSnapshot?) -> Color {
         guard running else { return .gray }
         guard connected, let host else { return .orange }
-        return color(for: host.state)
+        return host.state.color
     }
 
     func source(of peer: TrustedPeer) -> String {
@@ -396,15 +406,6 @@ struct ContentView: View {
         case (true, true): "From iCloud Keychain, and added by hand"
         case (true, false): "From iCloud Keychain"
         default: "Added by hand"
-        }
-    }
-
-    func color(for state: HostState) -> Color {
-        switch state {
-        case .ready: .green
-        case .busy: .blue
-        case .draining, .paused, .starting: .orange
-        case .failed, .offline: .red
         }
     }
 
@@ -529,36 +530,6 @@ struct ContentView: View {
             LabeledContent("Acknowledgements") {
                 Button("Show…") { NSApplication.shared.orderFrontStandardAboutPanel(nil) }
             }
-        }
-    }
-}
-
-/// A button that copies something and says "Copied" for a moment after it has.
-struct CopyButton: View {
-    let title: String
-    /// Copies, and says whether it did.
-    let copy: () -> Bool
-
-    @State private var copied = false
-    @State private var copies = 0
-
-    var body: some View {
-        Button {
-            copied = copy()
-            copies += 1
-        } label: {
-            // Both labels take up room, so the button keeps its width.
-            ZStack {
-                Text(title).opacity(copied ? 0 : 1)
-                Text("Copied").opacity(copied ? 1 : 0)
-            }
-        }
-        .accessibilityLabel(copied ? "Copied" : title)
-        // Each copy restarts the wait; leaving the window cancels it.
-        .task(id: copies) {
-            guard copied else { return }
-            do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
-            copied = false
         }
     }
 }

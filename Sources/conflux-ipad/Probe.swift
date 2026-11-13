@@ -1,4 +1,5 @@
 import ConfluxCore
+import ConfluxUI
 import Foundation
 import Observation
 import UIKit
@@ -129,15 +130,7 @@ final class Probe {
 
     // MARK: Checking
 
-    var thermal: String {
-        switch ProcessInfo.processInfo.thermalState {
-        case .nominal: "nominal"
-        case .fair: "fair"
-        case .serious: "serious"
-        case .critical: "critical"
-        @unknown default: "unknown"
-        }
-    }
+    var thermal: String { Thermal.label }
 
     var charging: Bool? {
         switch UIDevice.current.batteryState {
