@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0](https://github.com/misterbisson/conflux/compare/v0.6.1...v0.7.0) (2026-11-13)
+
+
+### Features
+
+* show the same status on the Mac and the iPad, and bring the Mac's recent fixes to the iPad ([#63](https://github.com/misterbisson/conflux/issues/63)) ([bead08e](https://github.com/misterbisson/conflux/commit/bead08e0e6aef762e2e96ca3cd27f37a86ccb871))
+
+
+### Bug Fixes
+
+* **gateway:** a refusal names the model that refused ([#65](https://github.com/misterbisson/conflux/issues/65)) ([3de0419](https://github.com/misterbisson/conflux/commit/3de04195455daf08d18a1f84cb172fdfad55ccda))
+* **ipad:** shorten the host socket's path so the iPad's mesh starts ([#62](https://github.com/misterbisson/conflux/issues/62)) ([522951d](https://github.com/misterbisson/conflux/commit/522951da4b29e35773139956aee9cfb192db4267))
+* **self-check:** count two swapped letters as one mistake ([#61](https://github.com/misterbisson/conflux/issues/61)) ([ec10858](https://github.com/misterbisson/conflux/commit/ec10858d3e7e854ff84cb9e62228e00cc74ca4d7))
+* separate pairing by hand from the device list, and show mesh errors in red ([#66](https://github.com/misterbisson/conflux/issues/66)) ([d1dbc10](https://github.com/misterbisson/conflux/commit/d1dbc10e7ac3c8374e47ffb8b5a37d55c45d15d3))
+
 ## [0.6.1](https://github.com/misterbisson/conflux/compare/v0.6.0...v0.6.1) (2026-11-13)
 
 
