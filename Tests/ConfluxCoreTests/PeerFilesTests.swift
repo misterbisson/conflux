@@ -30,6 +30,23 @@ private func sha256(_ url: URL) async throws -> String {
     try await blocking { SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined() }
 }
 
+/// The file bytes the server has read, once they stop changing for `quiet`:
+/// how long the kernel's send buffer takes to fill depends on the machine,
+/// and a slow runner is still filling it after half a second. Gives up at
+/// `deadline`, returning the last count.
+private func settled(_ server: HTTPServer, quiet: Duration = .milliseconds(500),
+                     deadline: Duration = .seconds(15)) async throws -> Int64 {
+    let end = ContinuousClock.now + deadline
+    var last = server.fileBytesRead
+    while ContinuousClock.now < end {
+        try await Task.sleep(for: quiet)
+        let now = server.fileBytesRead
+        if now == last { return now }
+        last = now
+    }
+    return last
+}
+
 private func size(_ url: URL) -> Int64 {
     ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? -1
 }
@@ -202,17 +219,16 @@ private final class FileHost: @unchecked Sendable {
         #expect(socket >= 0)
         #expect(first > 0)
 
-        // Reading nothing more, the server stops reading the file.
-        try await Task.sleep(for: .milliseconds(500))
-        let stalled = server.fileBytesRead
+        // Reading nothing more, the server stops reading the file, and stays
+        // stopped.
+        let stalled = try await settled(server)
         try await Task.sleep(for: .milliseconds(500))
         #expect(server.fileBytesRead == stalled)
         #expect(stalled < total / 4, "read \(stalled) of \(total) bytes for a client that read 4 KB")
 
         // Closing stops the stream: it reads no more.
         close(socket)
-        try await Task.sleep(for: .milliseconds(500))
-        let closed = server.fileBytesRead
+        let closed = try await settled(server)
         try await Task.sleep(for: .milliseconds(300))
         #expect(server.fileBytesRead == closed)
         #expect(closed < total)
