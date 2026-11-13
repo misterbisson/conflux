@@ -125,4 +125,13 @@ public enum HostError: Error, Equatable {
     case busy(String)
     /// The scheduler cancelled it: a hedged copy that lost. Not a failure.
     case cancelled
+
+    /// Counts against the host, as `FailureCounts.hostFaults` does: it
+    /// didn't answer, or its runtime answered with a server error.
+    var isHostFault: Bool {
+        switch self {
+        case .unavailable, .failed: true
+        case .busy, .cancelled: false
+        }
+    }
 }

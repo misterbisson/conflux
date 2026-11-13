@@ -22,7 +22,12 @@ swift run -c release conflux
 
 Choose the model and projector, or keep the
 [starter model](#the-starter-model), set the slots, and press **Start**. The
-window shows the host's state, what's running and waiting, and throughput.
+window shows the host's state and what's running. Below it, a chart shows
+requests completed, or tokens written, for each minute of the last hour or
+each ten minutes of the last day, stacked by host, with a red mark where a
+host failed. Under the chart are the requests waiting, conflux's memory
+(nearly all of it the model's) against the Mac's, and the thermal state, over
+the same span. The history is kept in memory, from when conflux opened.
 **Drain** finishes what's running and takes nothing new. **Pause** takes
 nothing new straight away. **Stop** ends serving and unloads the model.
 
@@ -263,8 +268,10 @@ reopening conflux.
 **Serving.** Choose the model, its projector, the slots and the context, and
 press **Serve this model to my Macs**. The top of the screen says what the
 iPad is doing, in type big enough to read across a room: its state, the slots
-in use, requests completed, its rate per hour, how many Macs are connected,
-and its temperature and power.
+in use and how many Macs are connected. Below that, the same chart as the
+Mac's shows its own requests or tokens over the last hour or day, and under
+it the memory left before iPadOS would end conflux, the thermal state, and
+whether it's charging, over the same span, while it serves.
 
 - **Which Macs.** With **Find my Macs through iCloud Keychain** on, the iPad
   lists itself in iCloud Keychain's device list, and trusts the Macs listed

@@ -329,6 +329,9 @@ public actor Scheduler {
     private var completedCount = 0, rejectedCount = 0, busyCount = 0, unavailableCount = 0
     private var failures = FailureCounts()
     private var recent: [Date] = []
+    /// Each host's last day, by the minute, kept here so it outlasts hosts
+    /// that leave and come back.
+    private var activity: [String: ActivityLog] = [:]
     /// Every host's idle-with-work time, kept here too so it outlasts hosts
     /// that leave.
     private var idleWithWork: TimeInterval = 0
@@ -662,6 +665,7 @@ public actor Scheduler {
             if (200..<300).contains(reply.status) {
                 entries[lease.host]?.completed += 1
                 entries[lease.host]?.recent.append(now)
+                activity[lease.host, default: ActivityLog()].completed(Usage(reply.body), at: now)
                 if let first = entries[lease.host]?.recent.first, first < now.addingTimeInterval(-600) {
                     entries[lease.host]?.recent.removeAll { $0 < now.addingTimeInterval(-600) }
                 }
@@ -671,6 +675,7 @@ public actor Scheduler {
         case .failure(let error):
             let outOfTime = remaining().map { $0 <= 0.5 } ?? false
             entries[lease.host]?.failures.record(error, outOfTime: outOfTime)
+            if !outOfTime, error.isHostFault { activity[lease.host, default: ActivityLog()].failed() }
             if case .unavailable(let why) = error, !outOfTime {
                 entries[lease.host]?.availability = .starting("not answering: \(why)")
             }
@@ -1160,6 +1165,12 @@ public actor Scheduler {
         entry.freeSample = (reported.seconds, entry.waitedTime, reported.at)
         entry.idleSince = nil
         entries[id] = entry
+    }
+
+    /// Each host's activity from `date` on, by host ID, including hosts
+    /// that have left.
+    public func activity(since date: Date) -> [String: [ActivityMinute]] {
+        activity.mapValues { $0.since(date) }.filter { !$0.value.isEmpty }
     }
 
     public func snapshot() -> SchedulerSnapshot {
