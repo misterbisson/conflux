@@ -347,11 +347,7 @@ enum FileHash {
     /// The same, off the caller's thread: hashing gigabytes takes seconds,
     /// too long to hold a thread of Swift's cooperative pool.
     static func sha256(of path: String) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                continuation.resume(with: Result { try sha256(path) })
-            }
-        }
+        try await Blocking.run { try sha256(path) }
     }
 
     private static func hash(_ path: String) throws -> String {
