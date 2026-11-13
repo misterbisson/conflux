@@ -580,7 +580,7 @@ struct ProbeView: View {
                 pullRow(pull)
             }
             if !server.meshUp {
-                Text(server.trusted.isEmpty ? "No Mac yet. Your Macs are under Your Macs, below."
+                Text(server.trusted.isEmpty ? "No Mac yet. Pair one under Your Macs, below."
                                             : "Connecting to your Macs…")
                     .foregroundStyle(.secondary)
             } else if server.peers.isEmpty {
