@@ -105,6 +105,34 @@ public func stopWarning(running: Int, waiting: Int) -> String? {
     return work + " Stopping cuts \(running + waiting == 1 ? "it" : "them") off."
 }
 
+/// A setting stepped up and down, laid out as the pickers around it are: its
+/// name on the left, and its value on the right beside the control.
+public struct StepperRow: View {
+    let title: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    public init(_ title: String, value: Binding<Int>, in range: ClosedRange<Int>) {
+        self.title = title
+        self._value = value
+        self.range = range
+    }
+
+    public var body: some View {
+        LabeledContent(title) {
+            HStack {
+                // Plain text doesn't dim when disabled, so it's dimmed here,
+                // as a picker's value is.
+                Text(value.formatted()).monospacedDigit()
+                    .foregroundStyle(isEnabled ? .primary : .secondary)
+                Stepper(title, value: $value, in: range).labelsHidden()
+            }
+        }
+    }
+}
+
 /// A button that copies something and says "Copied" for a moment after it has.
 public struct CopyButton: View {
     let title: String

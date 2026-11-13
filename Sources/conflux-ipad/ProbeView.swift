@@ -240,7 +240,7 @@ struct ProbeView: View {
                             Text(Probe.label(url)).tag(Optional(url))
                         }
                     }
-                    Stepper("Slots: \(slots)", value: $slots, in: 1...4)
+                    StepperRow("Slots", value: $slots, in: 1...4)
                     Picker("Context per slot", selection: $contextPerSlot) {
                         ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: contextPerSlot),
                                 id: \.self) {

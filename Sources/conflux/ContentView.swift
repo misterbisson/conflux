@@ -156,7 +156,7 @@ struct ContentView: View {
                     Button("Use the starter model") { model.useStarter() }
                 }
             }
-            Stepper("Slots: \(host.slots)", value: binding(\.slots), in: 1...32)
+            StepperRow("Slots", value: binding(\.slots), in: 1...32)
             Picker("Context per slot", selection: binding(\.contextPerSlot)) {
                 ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: host.contextPerSlot), id: \.self) {
                     Text("\($0.formatted()) tokens").tag($0)
@@ -209,7 +209,7 @@ struct ContentView: View {
                         LabeledContent("Typical request", value: String(format: "%.1f s", typical))
                     }
                 }
-                Stepper("Slots: \(model.settings.appleModel.slots)", value: $model.settings.appleModel.slots, in: 1...8)
+                StepperRow("Slots", value: $model.settings.appleModel.slots, in: 1...8)
                     .disabled(model.running)
             }
             Text("""
