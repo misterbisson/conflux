@@ -249,7 +249,15 @@ import Testing
         #expect(SelfCheck.passes(answer: "3PW7", expected: "3PWW7"))
         #expect(!SelfCheck.passes(answer: "TFEAATL", expected: "TFETL"))
         #expect(!SelfCheck.passes(answer: "3P7", expected: "3PWW7"))
+        // Two neighbours swapped, as the starter model did on an iPad.
+        #expect(SelfCheck.passes(answer: " HMVRK", expected: "HMRVK"))
+        #expect(SelfCheck.passes(answer: "MHRVK", expected: "HMRVK"))
+        #expect(!SelfCheck.passes(answer: "MHRKV", expected: "HMRVK"))
+        #expect(!SelfCheck.passes(answer: "HVRMK", expected: "HMRVK"))
+        #expect(!SelfCheck.passes(answer: "HMVRK", expected: "HMRVK", mistakes: 0))
         #expect(SelfCheck.distance(Array("KITTEN"), Array("SITTING")) == 3)
+        #expect(SelfCheck.distance(Array("HMVRK"), Array("HMRVK")) == 1)
+        #expect(SelfCheck.distance(Array("CA"), Array("ABC")) == 3)
     }
 
     @Test func probes() throws {

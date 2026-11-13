@@ -399,6 +399,20 @@ private func curl(_ arguments: [String]) async throws -> Data {
         #expect(!FileManager.default.fileExists(atPath: path))
     }
 
+    /// The host socket's path fits in a socket address on iPadOS, whose
+    /// temporary directory is long: apple-iroh refused the longer name there,
+    /// and the iPad's mesh never started.
+    @Test func hostSocketPathFits() {
+        let iPad = "/private/var/mobile/Containers/Data/Application/0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0/tmp/"
+        let path = ConfluxNode.socketPath(in: iPad, pid: 99_999)
+        #expect(path.utf8.count <= ConfluxNode.socketPathLimit, "\(path)")
+        #expect(path.hasPrefix(iPad))
+        #expect(ConfluxNode.socketPath(in: iPad, pid: 41) != ConfluxNode.socketPath(in: iPad, pid: 42))
+        // A short directory, as on a Mac, keeps the readable name.
+        #expect(ConfluxNode.socketPath(in: "/var/folders/ab/cd/T/", pid: 42) == "/var/folders/ab/cd/T/conflux-42.sock")
+        #expect(ConfluxNode.hostSocket.map { $0.utf8.count <= ConfluxNode.socketPathLimit } ?? true)
+    }
+
     @Test func runOnHostDoesntQueue() async throws {
         let host = FakeHost(id: "local", behavior: FakeHost.reply(after: 1))
         let scheduler = await Scheduler.with([host])

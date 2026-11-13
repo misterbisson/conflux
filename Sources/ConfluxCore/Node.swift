@@ -350,9 +350,21 @@ public final class ConfluxNode: @unchecked Sendable {
         #if os(macOS)
         guard ProcessInfo.processInfo.environment["CONFLUX_HOST_SOCKET"] == "1" else { return nil }
         #endif
-        // Short: a socket's path holds at most 103 bytes. One per process,
-        // so two on one Mac don't collide.
-        return (NSTemporaryDirectory() as NSString).appendingPathComponent("conflux-\(getpid()).sock")
+        return socketPath(in: NSTemporaryDirectory(), pid: getpid())
+    }
+
+    /// The longest a socket's path can be, in bytes.
+    static let socketPathLimit = 103
+
+    /// A socket in `directory`, one per process so two on one Mac don't
+    /// collide. iPadOS's temporary directory, in the app's container, takes
+    /// 89 of the 103 bytes a socket's path holds, so there the name is as
+    /// short as it can be.
+    static func socketPath(in directory: String, pid: Int32) -> String {
+        let directory = directory as NSString
+        let path = directory.appendingPathComponent("conflux-\(pid).sock")
+        guard path.utf8.count > socketPathLimit else { return path }
+        return directory.appendingPathComponent("c\(pid)")
     }
 
     /// Why the mesh isn't running, when there are peers and it should be.

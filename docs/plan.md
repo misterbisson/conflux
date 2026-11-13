@@ -171,8 +171,10 @@ In order:
    elsewhere. It also needs the device directory on iPadOS, and models copied
    in from a Mac with Finder or the Files app. *Built*: a node with no
    gateway, which trusts the Macs in the directory and serves them over the
-   socket ([running.md](running.md#on-an-ipad)). Not yet run on an iPad
-   with a Mac using it.
+   socket ([running.md](running.md#on-an-ipad)). The first run on an iPad
+   found its socket's path too long for apple-iroh, so its mesh never
+   started; the name is now short enough. Not yet run on an iPad with a Mac
+   using it.
 4. **A host screen** meant to be read from across a room: state, model,
    throughput, temperature and charging. *Built*, at the top of the iPad
    app.
@@ -217,6 +219,8 @@ contribution is measured against the effort of keeping it there.
   an M2 MacBook Air it read 88 of 90 self-check probes, in 0.45 s each, while
   SmolVLM-500M did worse, 55 of 60. Nearly every miss read a doubled letter
   once, so the self-check's text no longer repeats a character back to back.
+  On an iPad it swapped two neighbouring letters and failed the check, so a
+  swap now counts as one mistake, like a misread letter.
   Its text answers are weak: it proves the plumbing, not the work. The build
   fetches it pinned by revision and checksum, so the weights still aren't
   committed, and it ships inside the app: the app downloads nothing, which
