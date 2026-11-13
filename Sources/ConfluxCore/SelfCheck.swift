@@ -10,9 +10,9 @@ import UniformTypeIdentifiers
 /// A vision model whose projector fails doesn't report the failure: it
 /// describes an image it never saw, fluently. So the check renders a short
 /// random string, asks the model to read it back, and passes if the answer
-/// contains it with at most one character misread, added or dropped. Small
-/// models misread a letter now and then, and Apple's model sometimes adds
-/// one; a model that can't see the image comes that close by chance well
+/// contains it with at most one character misread, added or dropped, or one
+/// pair of neighbours swapped. Small models misread a letter now and then,
+/// or swap two, and Apple's model sometimes adds one; a model that can't see the image comes that close by chance well
 /// under once in 10,000 tries. A text-only model is asked to repeat a word
 /// instead.
 public enum SelfCheck {
@@ -58,8 +58,8 @@ public enum SelfCheck {
     }
 
     /// Passes when some run of the answer matches the expected text with at
-    /// most `mistakes` characters changed, added or dropped, ignoring case,
-    /// spacing and punctuation.
+    /// most `mistakes` characters changed, added or dropped, or neighbours
+    /// swapped, ignoring case, spacing and punctuation.
     public static func passes(answer: String, expected: String, mistakes: Int = 1) -> Bool {
         func normalize(_ s: String) -> [Character] { Array(s.uppercased().filter { $0.isLetter || $0.isNumber }) }
         let answer = normalize(answer), expected = normalize(expected)
@@ -75,15 +75,20 @@ public enum SelfCheck {
         return false
     }
 
-    /// Edits, of one character each, that turn `a` into `b`.
+    /// Edits that turn `a` into `b`: a character changed, added or dropped,
+    /// or two neighbours swapped, each counting as one. Small vision models
+    /// swap neighbouring letters now and then: the starter model read HMRVK
+    /// as HMVRK on an iPad.
     static func distance(_ a: [Character], _ b: [Character]) -> Int {
-        var previous = Array(0...b.count)
+        var before: [Int] = [], previous = Array(0...b.count)
         for (i, x) in a.enumerated() {
             var current = [i + 1]
             for (j, y) in b.enumerated() {
-                current.append(min(previous[j + 1] + 1, current[j] + 1, previous[j] + (x == y ? 0 : 1)))
+                var edits = min(previous[j + 1] + 1, current[j] + 1, previous[j] + (x == y ? 0 : 1))
+                if i > 0, j > 0, x == b[j - 1], a[i - 1] == y { edits = min(edits, before[j - 1] + 1) }
+                current.append(edits)
             }
-            previous = current
+            (before, previous) = (previous, current)
         }
         return previous[b.count]
     }
