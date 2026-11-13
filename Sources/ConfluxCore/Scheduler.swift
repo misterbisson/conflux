@@ -13,8 +13,9 @@ public enum Outcome: Sendable, Equatable {
     case unavailable(retryAfter: Int, message: String)
     /// No host has served a model this request accepts: 404.
     case unknownModel(String)
-    /// The gateway that sent it cancelled it: a hedged copy that lost. Only
-    /// a host answers this, to another device's gateway.
+    /// Whoever sent it cancelled it: another device's gateway, for a hedged
+    /// copy that lost, or a client that closed its connection, which isn't
+    /// there to read the answer.
     case cancelled
 }
 
@@ -321,7 +322,9 @@ public actor Scheduler {
     private var order: [String] = []
     private var waiting: [Waiter] = []
     private var seen: [String: ModelInfo] = [:]
-    private var inFlight: [String: Task<Outcome, Never>] = [:]
+    /// Requests with an `Idempotency-Key` that are running, and the clients
+    /// waiting for each.
+    private var inFlight: [String: Shared] = [:]
     private var finished: [String: (outcome: Outcome, at: Date)] = [:]
     private var completedCount = 0, rejectedCount = 0, busyCount = 0, unavailableCount = 0
     private var failures = FailureCounts()
@@ -335,6 +338,14 @@ public actor Scheduler {
     private var generations: [String: Int] = [:]
     private var fingerprints: [String: String] = [:]
     private var watchers: [UUID: (host: String, continuation: CheckedContinuation<Void, Never>)] = [:]
+
+    /// A request that clients sending the same key share. It runs while any
+    /// of them waits for it.
+    struct Shared {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: CheckedContinuation<Outcome, Never>] = [:]
+    }
 
     /// One request's copies in flight: the first, and a hedge.
     struct Attempt {
@@ -457,22 +468,76 @@ public actor Scheduler {
     /// Runs one request: finds a host, waits for a slot if it's worth
     /// waiting, retries on another host if one fails, and answers before
     /// `deadline`. Requests with the same `key` run once.
+    ///
+    /// Cancelling the calling task, as the gateway does when a client closes
+    /// its connection, stops the request and frees its slot, and the answer
+    /// is `.cancelled`. A request other clients wait for with the same key
+    /// runs on for them.
     public func submit(_ body: Data, choice: ModelChoice, deadline: Date?, key: String?) async -> Outcome {
         pruneFinished()
         guard let key else { return await execute(body, choice: choice, deadline: deadline) }
         if let done = finished[key] { return done.outcome }
-        if let running = inFlight[key] { return await running.value }
-        let task = Task { await self.execute(body, choice: choice, deadline: deadline) }
-        inFlight[key] = task
-        let outcome = await task.value
+        if inFlight[key] == nil {
+            let shared = UUID()
+            let task = Task {
+                let outcome = await self.execute(body, choice: choice, deadline: deadline)
+                self.finish(key, shared: shared, outcome)
+            }
+            inFlight[key] = Shared(id: shared, task: task)
+        }
+        guard let shared = inFlight[key]?.id else { return .cancelled }
+        let id = UUID()
+        // Isolated to this actor by name, as in `enqueue`.
+        return await withTaskCancellationHandler(operation: {
+            await join(key, shared: shared, as: id)
+        }, onCancel: {
+            Task { await self.leave(key, shared: shared, as: id) }
+        }, isolation: self)
+    }
+
+    private func join(_ key: String, shared: UUID, as id: UUID) async -> Outcome {
+        await withCheckedContinuation { continuation in
+            guard inFlight[key]?.id == shared else {
+                continuation.resume(returning: finished[key]?.outcome ?? .cancelled)
+                return
+            }
+            guard !Task.isCancelled else {
+                continuation.resume(returning: .cancelled)
+                stopIfUnwanted(key)
+                return
+            }
+            inFlight[key]?.waiters[id] = continuation
+        }
+    }
+
+    /// A client stopped waiting for a request it shares. The last to go
+    /// cancels it, and a client that sends the key after that starts it again.
+    private func leave(_ key: String, shared: UUID, as id: UUID) {
+        guard inFlight[key]?.id == shared, let waiter = inFlight[key]?.waiters.removeValue(forKey: id) else { return }
+        waiter.resume(returning: .cancelled)
+        stopIfUnwanted(key)
+    }
+
+    /// How many clients wait for the request running with this key.
+    func clients(waitingFor key: String) -> Int { inFlight[key]?.waiters.count ?? 0 }
+
+    private func stopIfUnwanted(_ key: String) {
+        guard let shared = inFlight[key], shared.waiters.isEmpty else { return }
         inFlight[key] = nil
+        shared.task.cancel()
+    }
+
+    private func finish(_ key: String, shared: UUID, _ outcome: Outcome) {
         switch outcome {
         case .completed, .rejected:
             finished[key] = (outcome, Date())
         default:
             break // Worth trying again: don't remember.
         }
-        return outcome
+        // Unless every client left, and it was cancelled and forgotten.
+        guard let running = inFlight[key], running.id == shared else { return }
+        inFlight[key] = nil
+        for waiter in running.waiters.values { waiter.resume(returning: outcome) }
     }
 
     func execute(_ body: Data, choice: ModelChoice, deadline: Date?) async -> Outcome {
@@ -498,8 +563,11 @@ public actor Scheduler {
 
         var tried: Set<String> = []
         while true {
+            // Its client has gone: no one would read the answer.
+            if Task.isCancelled { return .cancelled }
             guard let lease = await acquire(choice: choice, excluding: tried, until: queueUntil, remaining: remaining)
             else {
+                if Task.isCancelled { return .cancelled }
                 busyCount += 1
                 return .busy(retryAfter: estimateWait(choice))
             }
@@ -530,6 +598,7 @@ public actor Scheduler {
                 rejectedCount += 1
                 return .rejected(reply, model: reply.model ?? answer.model)
             case .failure(let error):
+                if Task.isCancelled { return .cancelled }
                 // Running out of the client's time isn't the host's fault.
                 let outOfTime = remaining().map { $0 <= 0.5 } ?? false
                 failures.record(error, outOfTime: outOfTime)
@@ -598,7 +667,7 @@ public actor Scheduler {
                 }
             }
         case .failure(.cancelled):
-            break // A hedged copy that lost: not the host's doing.
+            break // A hedged copy that lost, or a client that left: not the host's doing.
         case .failure(let error):
             let outOfTime = remaining().map { $0 <= 0.5 } ?? false
             entries[lease.host]?.failures.record(error, outOfTime: outOfTime)
@@ -849,17 +918,38 @@ public actor Scheduler {
     private func attempt(_ body: Data, lease: Lease, model: ModelInfo, choice: ModelChoice, tried: Set<String>,
                          remaining: @escaping () -> TimeInterval?) async -> Answer {
         let id = UUID()
-        return await withCheckedContinuation { continuation in
+        // Copies run in tasks of their own, so cancelling the request's task
+        // stops them here. Isolated to this actor by name, as in `enqueue`.
+        return await withTaskCancellationHandler(operation: {
+            await begin(body, lease: lease, model: model, choice: choice, tried: tried, remaining: remaining, as: id)
+        }, onCancel: {
+            Task { await self.abandon(id) }
+        }, isolation: self)
+    }
+
+    private func begin(_ body: Data, lease: Lease, model: ModelInfo, choice: ModelChoice, tried: Set<String>,
+                       remaining: @escaping () -> TimeInterval?, as id: UUID) async -> Answer {
+        await withCheckedContinuation { continuation in
             attempts[id] = Attempt(body: body, choice: choice, tried: tried, remaining: remaining, first: lease.id,
                                    continuation: continuation)
             launch(lease, model: model, for: id)
-            if config.hedge, let due = hedgeDue(lease) {
+            if Task.isCancelled {
+                abandon(id)
+            } else if config.hedge, let due = hedgeDue(lease) {
                 Task { [weak self] in
                     try? await Task.sleep(for: .seconds(due))
                     await self?.hedge(id)
                 }
             }
         }
+    }
+
+    /// Stops every copy of a request whose client has gone. The request
+    /// settles as cancelled once they have left their slots.
+    private func abandon(_ id: UUID) {
+        guard let attempt = attempts[id] else { return }
+        attempts[id]?.hedged = true // So it gets no copy.
+        for copy in attempt.copies.values { cancel(copy.lease) }
     }
 
     private func launch(_ lease: Lease, model: ModelInfo, for id: UUID) {

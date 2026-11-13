@@ -146,7 +146,7 @@ public final class Gateway: Sendable {
         case .unknownModel(let message):
             return Gateway.error(404, message, type: "invalid_request_error", code: "model_not_found")
         case .cancelled:
-            // Only a host answers this, to a peer's gateway.
+            // The client closed its connection, so it won't read this.
             return Gateway.error(503, "the request was cancelled", type: "server_error", code: "unavailable",
                                  headers: [(ContractHeader.retryAfter, "1")])
         }
