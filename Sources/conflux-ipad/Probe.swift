@@ -60,6 +60,8 @@ final class Probe {
     /// What iPadOS allowed this process at launch: its footprint plus what it
     /// could still allocate.
     let limitAtLaunch: UInt64
+    /// The kind of iPad, such as `iPad13,4`.
+    let machine = Memory.machine
 
     static let killedDetail = "the app ended while the model was loading or running; on an iPad that's "
         + "almost always the per-app memory limit"
@@ -148,6 +150,19 @@ final class Probe {
         UInt64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
     }
 
+    /// The latest check of these files with these settings on this kind of
+    /// iPad, or nil. Files are matched by name and size, which is what the
+    /// results record.
+    func measured(model: URL, projector: URL?, slots: Int, contextPerSlot: Int) -> ProbeResult? {
+        let modelBytes = Self.size(model)
+        let projectorBytes = projector.map(Self.size)
+        return results.last { r in
+            r.machine == machine && r.model == model.lastPathComponent && r.modelBytes == modelBytes
+                && r.projector == projector?.lastPathComponent && r.projectorBytes == projectorBytes
+                && r.slots == slots && r.contextPerSlot == contextPerSlot
+        }
+    }
+
     private func save() {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -183,7 +198,7 @@ final class Probe {
         }
 
         var result = ProbeResult(
-            machine: Memory.machine, system: UIDevice.current.systemVersion,
+            machine: machine, system: UIDevice.current.systemVersion,
             model: model.lastPathComponent, modelBytes: Self.size(model),
             projector: projector?.lastPathComponent, projectorBytes: projector.map(Self.size),
             slots: slots, contextPerSlot: contextPerSlot, detail: Self.killedDetail,

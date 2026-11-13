@@ -28,4 +28,9 @@ enum Memory {
     }
 
     static func gigabytes(_ bytes: UInt64) -> String { ProcessMemory.gigabytes(bytes) }
+
+    /// To a tenth of a gigabyte, for an estimate or a limit in words.
+    static func roughly(_ bytes: UInt64) -> String {
+        String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
+    }
 }

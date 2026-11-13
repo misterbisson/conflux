@@ -296,6 +296,25 @@ say which app connected, so on an iPad it listens on a Unix socket in
 conflux's own container, which other apps can't reach, and apple-iroh
 carries the Macs' requests there.
 
+**Which models will likely fit.** Above the model choices, conflux says
+how much memory iPadOS lets it use on this iPad, and how large a model,
+with its projector, will likely load. Below them, it estimates the memory
+the chosen model, projector, slots and context will take: the two files,
+whole, plus each slot's context, worked out from the model's header (its
+layers, key/value heads and their width, at llama.cpp's default f16 cache),
+plus room for llama.cpp and conflux to work in. It marks the choice *likely
+too big* when the estimate is more than three quarters of what iPadOS
+allows, or of the iPad's memory if that's less. The quarter kept back is
+for iPadOS, which can report a limit as large as all of the iPad's memory,
+and for what the estimate can't see. The estimate errs towards saying a
+model may not fit, and it's a hint, never a block: serving and checking
+stay open either way. It also says when the context per slot is more than
+the model was trained to read, which takes memory and may not help. Once a
+check has run for the same files, slots and context, conflux shows what it
+measured instead: what it took once the model loaded and what was left, or
+that iPadOS ended it. **Models measured on iPads** links to
+[measurements.md](measurements.md) on GitHub.
+
 **Checking a model.** Choose the model, its projector, the slots and the
 context, and press **Check whether it fits**. conflux loads it, runs the
 self-check, and times one request, keeping the screen awake meanwhile. Keep

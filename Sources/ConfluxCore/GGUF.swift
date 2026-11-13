@@ -2,7 +2,8 @@ import Foundation
 import Synchronization
 
 /// What a GGUF file's header says about it: enough to tell a vision projector
-/// from a model, and whether a projector fits a model.
+/// from a model, whether a projector fits a model, and how much memory a
+/// model's context takes.
 ///
 /// Read from the header's key/value pairs, never the tensors. The keys are
 /// llama.cpp's: its converter writes them, and its loaders read them.
@@ -32,9 +33,35 @@ public struct GGUFMetadata: Sendable, Equatable {
     /// `clip.has_audio_encoder`: the projector reads audio.
     public var hasAudioEncoder: Bool?
 
+    // What a model's context takes in memory (ModelFit): llama.cpp keeps a
+    // key and a value for each token, in each layer, for each key/value head.
+
+    /// A model's `<architecture>.block_count`: how many layers it has.
+    public var blockCount: Int?
+    /// A model's `<architecture>.context_length`: the most tokens it was
+    /// trained to read at once.
+    public var contextLength: Int?
+    /// A model's `<architecture>.attention.head_count`: how many attention
+    /// heads it has. Where the file gives a count for each layer, the
+    /// smallest that isn't 0, so a head width worked out from it errs wide.
+    public var headCount: Int?
+    /// A model's `<architecture>.attention.head_count_kv`: how many heads its
+    /// keys and values have. One count for every layer, or, for a model whose
+    /// layers differ, one for each, with 0 for a layer without attention. Nil
+    /// when the file doesn't say, which llama.cpp reads as `headCount`.
+    public var headCountKV: [Int]?
+    /// A model's `<architecture>.attention.key_length`: how wide each head's
+    /// keys are. Nil when the file doesn't say, which llama.cpp reads as the
+    /// embedding length over the head count.
+    public var keyLength: Int?
+    /// A model's `<architecture>.attention.value_length`: the same, for
+    /// values.
+    public var valueLength: Int?
+
     public init(version: UInt32 = 3, architecture: String? = nil, name: String? = nil, basename: String? = nil,
                 embeddingLength: Int? = nil, imageWidth: Int? = nil, hasVisionEncoder: Bool? = nil,
-                hasAudioEncoder: Bool? = nil) {
+                hasAudioEncoder: Bool? = nil, blockCount: Int? = nil, contextLength: Int? = nil,
+                headCount: Int? = nil, headCountKV: [Int]? = nil, keyLength: Int? = nil, valueLength: Int? = nil) {
         self.version = version
         self.architecture = architecture
         self.name = name
@@ -43,6 +70,12 @@ public struct GGUFMetadata: Sendable, Equatable {
         self.imageWidth = imageWidth
         self.hasVisionEncoder = hasVisionEncoder
         self.hasAudioEncoder = hasAudioEncoder
+        self.blockCount = blockCount
+        self.contextLength = contextLength
+        self.headCount = headCount
+        self.headCountKV = headCountKV
+        self.keyLength = keyLength
+        self.valueLength = valueLength
     }
 
     /// A multimodal projector, llama.cpp's mmproj: its architecture is `clip`.
@@ -92,6 +125,10 @@ extension GGUFMetadata {
         static let tensors: UInt64 = 1 << 24
         /// Longer names are skipped, not kept.
         static let keptString: UInt64 = 4096
+        /// Longer lists of counts, one for each layer, are skipped, not kept.
+        static let layers: UInt64 = 1 << 12
+        /// Larger widths, counts and context lengths aren't believed.
+        static let dimension = 1 << 24
     }
 
     /// Reads the header of the GGUF file at `url`.
@@ -128,16 +165,30 @@ extension GGUFMetadata {
         guard keys <= Limits.keys else { throw .corrupt("it claims \(keys) keys") }
 
         var metadata = GGUFMetadata(version: version)
-        var embeddingLengths: [String: Int] = [:]
+        /// A model's hyperparameters, by key: kept for every architecture,
+        /// since the file may name its own after them.
+        var hyperparameters: [String: [Int]] = [:]
         var projectionWidth: Int?
         /// Written only by llama.cpp's older converters, whose projection_dim
         /// is the image encoder's own width.
         var legacy = false
+        /// Whether this is a model, and its names and the hyperparameters
+        /// `suffixes` are known.
+        func known(_ suffixes: [String]) -> Bool {
+            guard let architecture = metadata.architecture, !metadata.isProjector, metadata.name != nil,
+                  metadata.basename != nil else { return false }
+            return suffixes.allSatisfy { hyperparameters[architecture + $0] != nil }
+        }
         for _ in 0..<keys {
             let length = try reader.u64()
             guard length <= Limits.keyLength else { throw .corrupt("a key \(length) bytes long") }
             let key = String(decoding: try reader.bytes(Int(length)), as: UTF8.self)
             let type = try reader.u32()
+            // A model's tokenizer is most of its header, and llama.cpp's
+            // converter writes the model's hyperparameters before it. One
+            // that isn't written by then, such as key_length for a model
+            // whose heads are the usual width, isn't written: stop.
+            if key.hasPrefix("tokenizer."), known(Hyperparameter.always) { break }
             switch key {
             case "general.architecture": metadata.architecture = try reader.string(type)
             case "general.name": metadata.name = try reader.string(type)
@@ -149,27 +200,55 @@ extension GGUFMetadata {
                  "clip.has_glm_projector":
                 legacy = true
                 try reader.skipValue(type)
-            case _ where key.hasSuffix(".embedding_length"):
-                if let length = try reader.integer(type), length > 0 { embeddingLengths[key] = length }
+            case _ where Hyperparameter.all.contains(where: key.hasSuffix):
+                if let values = try reader.integers(type), values.allSatisfy({ (0...Limits.dimension).contains($0) }) {
+                    hyperparameters[key] = values
+                }
             default:
                 try reader.skipValue(type)
             }
-            // A model's tokenizer comes last, and is most of its header: stop
-            // once there's nothing more to learn.
-            if let architecture = metadata.architecture, !metadata.isProjector,
-               embeddingLengths["\(architecture).embedding_length"] != nil,
-               metadata.name != nil, metadata.basename != nil {
-                break
-            }
+            // Stop once there's nothing more to learn.
+            if known(Hyperparameter.all) { break }
         }
         if let architecture = metadata.architecture, !metadata.isProjector {
-            metadata.embeddingLength = embeddingLengths["\(architecture).embedding_length"]
+            /// One count, for the whole model, that isn't 0.
+            func single(_ suffix: String) -> Int? {
+                guard let values = hyperparameters[architecture + suffix], values.count == 1, values[0] > 0 else {
+                    return nil
+                }
+                return values[0]
+            }
+            metadata.embeddingLength = single(Hyperparameter.embeddingLength)
+            metadata.blockCount = single(Hyperparameter.blockCount).flatMap { $0 <= Limits.layers ? $0 : nil }
+            metadata.contextLength = single(Hyperparameter.contextLength)
+            metadata.headCount = hyperparameters[architecture + Hyperparameter.headCount]?.filter { $0 > 0 }.min()
+            metadata.headCountKV = hyperparameters[architecture + Hyperparameter.headCountKV]
+                .flatMap { $0.isEmpty ? nil : $0 }
+            metadata.keyLength = single(Hyperparameter.keyLength)
+            metadata.valueLength = single(Hyperparameter.valueLength)
         }
         if metadata.isProjector, !legacy, let width = projectionWidth, width > 0 {
             metadata.imageWidth = width
         }
         return metadata
     }
+}
+
+/// The model hyperparameters the reader keeps, by what their keys end with
+/// after the architecture's name.
+enum Hyperparameter {
+    static let embeddingLength = ".embedding_length"
+    static let blockCount = ".block_count"
+    static let contextLength = ".context_length"
+    static let headCount = ".attention.head_count"
+    static let headCountKV = ".attention.head_count_kv"
+    static let keyLength = ".attention.key_length"
+    static let valueLength = ".attention.value_length"
+
+    static let all = [embeddingLength, blockCount, contextLength, headCount, headCountKV, keyLength, valueLength]
+    /// Those llama.cpp's converter always writes. It writes the others only
+    /// when they differ from what llama.cpp works out without them.
+    static let always = [embeddingLength, blockCount, contextLength, headCount]
 }
 
 // MARK: Reading
@@ -303,27 +382,30 @@ struct GGUFReader {
         } else if type == Self.string {
             try skip(try u64())
         } else if type == Self.array {
-            let element = try u32()
-            let count = try u64()
-            if let size = Self.fixedSize(element) {
-                let (total, overflow) = count.multipliedReportingOverflow(by: size)
-                guard !overflow else { throw .truncated }
-                try skip(total)
-            } else if element == Self.string {
-                // Each string is at least its 8-byte length: a count the file
-                // can't hold fails here, not after a long loop.
-                let (least, overflow) = count.multipliedReportingOverflow(by: 8)
-                guard !overflow else { throw .truncated }
-                try check(least)
-                for _ in 0..<count { try skip(try u64()) }
-            } else if element == Self.array {
-                // llama.cpp doesn't read arrays of arrays either.
-                throw .corrupt("an array of arrays")
-            } else {
-                throw .corrupt("an array of unknown type \(element)")
-            }
+            try skipArray(element: try u32(), count: try u64())
         } else {
             throw .corrupt("a value of unknown type \(type)")
+        }
+    }
+
+    /// Skips an array's elements, once its element type and count are read.
+    mutating func skipArray(element: UInt32, count: UInt64) throws(GGUFError) {
+        if let size = Self.fixedSize(element) {
+            let (total, overflow) = count.multipliedReportingOverflow(by: size)
+            guard !overflow else { throw .truncated }
+            try skip(total)
+        } else if element == Self.string {
+            // Each string is at least its 8-byte length: a count the file
+            // can't hold fails here, not after a long loop.
+            let (least, overflow) = count.multipliedReportingOverflow(by: 8)
+            guard !overflow else { throw .truncated }
+            try check(least)
+            for _ in 0..<count { try skip(try u64()) }
+        } else if element == Self.array {
+            // llama.cpp doesn't read arrays of arrays either.
+            throw .corrupt("an array of arrays")
+        } else {
+            throw .corrupt("an array of unknown type \(element)")
         }
     }
 
@@ -358,6 +440,27 @@ struct GGUFReader {
             try skipValue(type)
             return nil
         }
+    }
+
+    /// A whole number, or an array of them no longer than `Limits.layers`:
+    /// one for each layer. Nil when the value is another type, has a number
+    /// out of range, or is too long to keep. Either way it's consumed.
+    mutating func integers(_ type: UInt32) throws(GGUFError) -> [Int]? {
+        guard type == Self.array else { return try integer(type).map { [$0] } }
+        let element = try u32()
+        let count = try u64()
+        guard count <= GGUFMetadata.Limits.layers, let size = Self.fixedSize(element) else {
+            try skipArray(element: element, count: count)
+            return nil
+        }
+        // The whole array is in the file before any of it is read.
+        try check(count * size)
+        var values: [Int] = []
+        var whole = true
+        for _ in 0..<count {
+            if let value = try integer(element) { values.append(value) } else { whole = false }
+        }
+        return whole ? values : nil
     }
 
     /// A boolean value, or nil when the value is another type.
