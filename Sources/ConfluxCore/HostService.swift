@@ -196,7 +196,13 @@ final class HostService: Sendable {
             let scheduler = self.scheduler, body = request.body
             let task = Task { await scheduler.run(body, onHost: hostID, deadline: deadline, prefetch: prefetch) }
             if let id, !running.start(id, task) { task.cancel() }
-            outcome = await task.value
+            // The gateway that sent it closed the connection: it won't read
+            // the answer, so the slot goes to other work.
+            outcome = await withTaskCancellationHandler {
+                await task.value
+            } onCancel: {
+                task.cancel()
+            }
         }
         if let id { running.finish(id) }
         let (host, generation) = await scheduler.status(of: hostID, after: nil, wait: 0)

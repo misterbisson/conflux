@@ -94,19 +94,21 @@ public final class HTTPServer: @unchecked Sendable {
             }
         }
         lock.withLock { connections[ObjectIdentifier(connection)] = connection }
+        let inbox = Inbox(connection)
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .failed, .cancelled:
+                inbox.close()
                 _ = self?.lock.withLock { self?.connections.removeValue(forKey: ObjectIdentifier(connection)) }
             default:
                 break
             }
         }
         connection.start(queue: queue)
-        Task { await self.serve(connection) }
+        Task { await self.serve(connection, inbox: inbox) }
     }
 
-    private func serve(_ connection: NWConnection) async {
+    private func serve(_ connection: NWConnection, inbox: Inbox) async {
         var buffer = Data()
         var continued = false
         while true {
@@ -116,7 +118,7 @@ public final class HTTPServer: @unchecked Sendable {
                     continued = true
                     await send(Data("HTTP/1.1 100 Continue\r\n\r\n".utf8), on: connection)
                 }
-                guard let more = await receive(on: connection) else {
+                guard let more = await inbox.next() else {
                     connection.cancel()
                     return
                 }
@@ -129,14 +131,30 @@ public final class HTTPServer: @unchecked Sendable {
             case .request(let request, let consumed):
                 buffer = HTTPServer.remainder(of: buffer, after: consumed)
                 continued = false
-                let response = await handler(request)
+                let response = await handle(request, watching: inbox)
                 let keepAlive = request.keepAlive
                 await send(response.serialized(keepAlive: keepAlive), on: connection)
-                if !keepAlive {
+                // A client that has closed its side sends nothing more to answer.
+                if !keepAlive || inbox.isClosed {
                     connection.cancel()
                     return
                 }
             }
+        }
+    }
+
+    /// Runs the handler, and cancels it if the client closes the connection
+    /// first: nobody is left to take the answer, and the work would hold a
+    /// slot that requests still waiting could use.
+    private func handle(_ request: HTTPRequest, watching inbox: Inbox) async -> HTTPResponse {
+        let handler = self.handler
+        let task = Task { await handler(request) }
+        inbox.whenClosed { task.cancel() }
+        defer { inbox.whenClosed(nil) }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -149,24 +167,109 @@ public final class HTTPServer: @unchecked Sendable {
         return buffer.subdata(in: buffer.index(buffer.startIndex, offsetBy: count)..<buffer.endIndex)
     }
 
-    private func receive(on connection: NWConnection) async -> Data? {
-        await withCheckedContinuation { continuation in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { data, _, isComplete, error in
-                if let data, !data.isEmpty {
-                    continuation.resume(returning: data)
-                } else if isComplete || error != nil {
-                    continuation.resume(returning: nil)
-                } else {
-                    continuation.resume(returning: Data())
-                }
-            }
-        }
-    }
-
     private func send(_ data: Data, on connection: NWConnection) async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             connection.send(content: data, completion: .contentProcessed { _ in continuation.resume() })
         }
+    }
+}
+
+/// What a connection has received and not yet handed on, and whether the
+/// client has closed it.
+///
+/// It keeps one receive outstanding, also while a request is being handled,
+/// because that's the only way to hear that the client has gone: a client
+/// that gives up closes its socket, and the receive completes. Bytes that
+/// arrive meanwhile, a pipelined request, are kept for `next()`. Past
+/// `ahead` bytes kept, it stops reading until they're taken, so a client
+/// can't make the server hold more than that.
+final class Inbox: @unchecked Sendable {
+    static let ahead = 1 << 20
+
+    private let connection: NWConnection
+    private let lock = NSLock()
+    private var pending = Data()
+    private var closed = false
+    private var reading = false
+    private var waiter: CheckedContinuation<Data?, Never>?
+    private var onClose: (@Sendable () -> Void)?
+
+    init(_ connection: NWConnection) {
+        self.connection = connection
+    }
+
+    /// Whether the client has closed the connection, or it failed.
+    var isClosed: Bool { lock.withLock { closed } }
+
+    /// The bytes received since the last call, waiting for some if there are
+    /// none yet. Nil once the connection is closed and every byte is taken.
+    func next() async -> Data? {
+        await withCheckedContinuation { continuation in
+            let ready = lock.withLock { () -> Data?? in
+                if !pending.isEmpty {
+                    defer { pending = Data() }
+                    return .some(pending)
+                }
+                if closed { return .some(nil) }
+                waiter = continuation
+                return .none
+            }
+            if let ready { continuation.resume(returning: ready) }
+            read()
+        }
+    }
+
+    /// Calls `action` once the connection closes, at once if it has already.
+    /// Nil stops watching.
+    func whenClosed(_ action: (@Sendable () -> Void)?) {
+        let now = lock.withLock { () -> Bool in
+            guard closed else {
+                onClose = action
+                return false
+            }
+            onClose = nil
+            return action != nil
+        }
+        if now { action?() }
+    }
+
+    /// The connection failed or was cancelled.
+    func close() {
+        received(nil, ended: true)
+    }
+
+    private func read() {
+        let start = lock.withLock { () -> Bool in
+            guard !reading, !closed, pending.count < Self.ahead else { return false }
+            reading = true
+            return true
+        }
+        guard start else { return }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: Self.ahead) { [self] data, _, isComplete, error in
+            lock.withLock { reading = false }
+            received(data, ended: isComplete || error != nil)
+            read()
+        }
+    }
+
+    private func received(_ data: Data?, ended: Bool) {
+        let (waiter, handing, closing) = lock.withLock {
+            () -> (CheckedContinuation<Data?, Never>?, Data?, (@Sendable () -> Void)?) in
+            if let data, !data.isEmpty { pending.append(data) }
+            var closing: (@Sendable () -> Void)?
+            if ended && !closed {
+                closed = true
+                closing = onClose
+                onClose = nil
+            }
+            guard let waiter, !pending.isEmpty || closed else { return (nil, nil, closing) }
+            self.waiter = nil
+            let handing = pending.isEmpty ? nil : pending
+            pending = Data()
+            return (waiter, handing, closing)
+        }
+        waiter?.resume(returning: handing)
+        closing?()
     }
 }
 

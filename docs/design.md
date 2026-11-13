@@ -278,6 +278,13 @@ never looks like a dead one. See [clients.md](clients.md).
   their slots go to it: a copy never holds up new work. With a preference
   list, the copy can go to a host serving a less preferred model, as any
   request can, and the answer names the model that ran.
+- **A client gives up**: when a client closes its connection before the
+  answer, the gateway stops the request, waiting or running, the way it
+  cancels a hedged copy, and its slot goes to work still wanted. That isn't
+  the host's failure either. Clients that sent the same `Idempotency-Key`
+  share one request, which runs on while any of them still waits; once the
+  last has gone it stops, and the key starts it again. A host does the same
+  when a peer's gateway closes the connection a request came on.
 - **Idle-with-work is a bug.** The gateway counts time a compatible host spends
   idle while compatible work is waiting. That number should be close to zero,
   and it is the first one to look at when throughput disappoints.

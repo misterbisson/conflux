@@ -188,6 +188,8 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             guard let http = answer as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             (data, response) = (bytes, http)
         } catch {
+            // Stopped here, not lost: the link is fine.
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw HostError.cancelled }
             link.reconnect()
             throw HostError.unavailable("the peer didn't answer: \(error.localizedDescription)")
         }
