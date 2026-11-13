@@ -1,4 +1,5 @@
 import ConfluxCore
+import ConfluxUI
 import SwiftUI
 import WebKit
 
@@ -11,6 +12,8 @@ struct ProbeView: View {
     @State private var projector: URL?
     @State private var slots = 1
     @State private var contextPerSlot = 4096
+    /// What Stop serving would cut off, while it asks.
+    @State private var stopping: String?
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -65,31 +68,34 @@ struct ProbeView: View {
         Section {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(headline)
-                        .font(.system(size: 44, weight: .bold))
-                        .foregroundStyle(headlineColor)
-                    if let detail = headlineDetail {
-                        Text(detail).font(.title3).foregroundStyle(.secondary)
-                    }
+                    StatusHeadline(headline, color: headlineColor, detail: headlineDetail)
                     if server.running {
-                        HStack(spacing: 32) {
-                            figure("\(server.host?.active ?? 0) of \(server.host?.capacity ?? 0)", "busy")
-                            figure("\(server.host?.completed ?? 0)", "completed")
-                            figure(String(format: "%.0f", server.host?.perHour ?? 0), "per hour")
-                            figure("\(server.peers.filter { $0.path != .none }.count)",
-                                   server.peers.filter { $0.path != .none }.count == 1 ? "Mac connected" : "Macs connected")
-                        }
-                        HStack(spacing: 32) {
-                            figure(probe.thermal, "temperature")
-                            figure(probe.charging.map { $0 ? "charging" : "on battery" } ?? "unknown", "power")
-                            figure(Memory.gigabytes(Memory.available), "memory left")
-                        }
+                        let connected = server.peers.filter { $0.path != .none }.count
+                        StatusFigures([
+                            ("\(server.host?.active ?? 0) of \(server.host?.capacity ?? 0)", "busy"),
+                            ("\(server.host?.completed ?? 0)", "completed"),
+                            (String(format: "%.0f", server.host?.perHour ?? 0), "per hour"),
+                            ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
+                        ])
+                        StatusFigures([
+                            (Thermal.label, "temperature"),
+                            (probe.charging.map { $0 ? "charging" : "on battery" } ?? "unknown", "power"),
+                            (Memory.gigabytes(Memory.available), "memory left"),
+                        ])
                     }
                 }
                 .padding(.vertical, 8)
             }
             if server.running {
-                Button("Stop serving", role: .destructive) { server.stop() }
+                Button("Stop serving", role: .destructive, action: askToStop)
+                    .confirmationDialog("Stop serving?",
+                                        isPresented: Binding(get: { stopping != nil },
+                                                             set: { if !$0 { stopping = nil } }),
+                                        titleVisibility: .visible, presenting: stopping) { _ in
+                        Button("Stop serving", role: .destructive) { server.stop() }
+                    } message: { warning in
+                        Text(warning)
+                    }
             }
             if let problem = server.problem {
                 Text(problem).foregroundStyle(.red)
@@ -100,10 +106,13 @@ struct ProbeView: View {
         }
     }
 
-    private func figure(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading) {
-            Text(value).font(.title.monospacedDigit().weight(.semibold))
-            Text(label).font(.subheadline).foregroundStyle(.secondary)
+    /// Stops at once when no request is running here. Otherwise it asks
+    /// first. An iPad runs no gateway, so nothing waits here.
+    private func askToStop() {
+        if let warning = stopWarning(running: server.host?.active ?? 0, waiting: 0) {
+            stopping = warning
+        } else {
+            server.stop()
         }
     }
 
@@ -127,11 +136,7 @@ struct ProbeView: View {
 
     private var headlineColor: Color {
         guard server.running, let state = server.host?.state else { return .secondary }
-        switch state {
-        case .ready, .busy: return .green
-        case .failed: return .red
-        default: return .orange
-        }
+        return state.color
     }
 
     private var mesh: some View {
@@ -140,7 +145,7 @@ struct ProbeView: View {
                 LabeledContent("This iPad") {
                     HStack {
                         Text(DeviceIdentity.short(id) + "…").font(.body.monospaced())
-                        Button("Copy ID") { UIPasteboard.general.string = id }
+                        CopyButton(title: "Copy ID") { UIPasteboard.general.string = id; return true }
                     }
                 }
             }
@@ -151,9 +156,17 @@ struct ProbeView: View {
             Toggle("Serve on battery", isOn: Binding(
                 get: { server.settings.servesOnBattery }, set: { server.setServesOnBattery($0) }))
             ForEach(server.trusted) { peer in
-                LabeledContent(peer.name ?? DeviceIdentity.short(peer.endpointID) + "…") {
+                LabeledContent {
                     Text(server.peers.first { $0.endpointID == peer.endpointID }?.path.label
                          ?? (server.running ? "not connected" : "trusted"))
+                } label: {
+                    HStack(alignment: .firstTextBaseline) {
+                        if let name = peer.name {
+                            Text(name).lineLimit(1).truncationMode(.middle)
+                        }
+                        Text(DeviceIdentity.short(peer.endpointID) + "…").font(.body.monospaced())
+                            .foregroundStyle(peer.name == nil ? .primary : .secondary)
+                    }
                 }
                 .swipeActions {
                     if peer.addedByHand {
@@ -215,21 +228,27 @@ struct ProbeView: View {
                     """)
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Model", selection: $model) {
-                    ForEach(probe.models, id: \.self) { url in
-                        Text(Probe.label(url)).tag(Optional(url))
+                Group {
+                    Picker("Model", selection: $model) {
+                        ForEach(probe.models, id: \.self) { url in
+                            Text(Probe.label(url)).tag(Optional(url))
+                        }
+                    }
+                    Picker("Projector", selection: $projector) {
+                        Text("None, text only").tag(URL?.none)
+                        ForEach(probe.projectors, id: \.self) { url in
+                            Text(Probe.label(url)).tag(Optional(url))
+                        }
+                    }
+                    Stepper("Slots: \(slots)", value: $slots, in: 1...4)
+                    Picker("Context per slot", selection: $contextPerSlot) {
+                        ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: contextPerSlot),
+                                id: \.self) {
+                            Text("\($0.formatted()) tokens").tag($0)
+                        }
                     }
                 }
-                Picker("Projector", selection: $projector) {
-                    Text("None, text only").tag(URL?.none)
-                    ForEach(probe.projectors, id: \.self) { url in
-                        Text(Probe.label(url)).tag(Optional(url))
-                    }
-                }
-                Stepper("Slots: \(slots)", value: $slots, in: 1...4)
-                Picker("Context per slot", selection: $contextPerSlot) {
-                    ForEach([2048, 4096, 8192], id: \.self) { Text("\($0) tokens").tag($0) }
-                }
+                .disabled(server.running || probe.running)
                 Button {
                     guard let model else { return }
                     server.start(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot)
@@ -249,6 +268,9 @@ struct ProbeView: View {
                     }
                 }
                 .disabled(server.running || probe.running || model == nil)
+                if server.running {
+                    Text("Stop serving to change these.").font(.footnote).foregroundStyle(.secondary)
+                }
             }
         } header: {
             Text("Model")
@@ -259,6 +281,8 @@ struct ProbeView: View {
                         + "in Finder, select the iPad, open the Files tab, and drag the file onto conflux. A vision "
                         + "model's projector goes alongside it, with \"mmproj\" in its name.")
                 }
+                Text("Slots are how many requests this iPad runs at once, and each one takes memory for its "
+                    + "context. More slots don't always mean more speed.")
                 Text("Keep conflux open while it serves: in the background iPadOS suspends it, and the Macs send "
                     + "their work elsewhere. A check loads the model alone and records the memory it took. If "
                     + "iPadOS ends it, the next launch records the model as killed: too big for this iPad, or for "

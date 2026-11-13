@@ -21,7 +21,7 @@ needs to be: Xcode Cloud manages the certificates and profiles itself.
 
 | File | What it does |
 |---|---|
-| [`project.yml`](../project.yml) | The app's two targets, for [XcodeGen](https://github.com/yonaskolb/XcodeGen): `conflux`, the Mac app, compiles `Sources/conflux`, and `conflux-ipad`, the same app for iPadOS with the same bundle ID, compiles `Sources/conflux-ipad`. Both use the package's `ConfluxCore` library. |
+| [`project.yml`](../project.yml) | The app's two targets, for [XcodeGen](https://github.com/yonaskolb/XcodeGen): `conflux`, the Mac app, compiles `Sources/conflux`, and `conflux-ipad`, the same app for iPadOS with the same bundle ID, compiles `Sources/conflux-ipad`. Both use the package's `ConfluxCore` library, and its `ConfluxUI` library for what they show the same way. |
 | [`App/`](../App) | The entitlements, the icon, the privacy manifest, and the signing settings, without a Team ID. |
 | [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post_clone.sh) | Fetches the starter model and generates `conflux.xcodeproj`. Xcode Cloud runs it by name after cloning, once for each action, and it fails an action whose scheme doesn't fit its platform; GitHub's CI runs it too. |
 | [`tools/ci/fetch-starter-model.sh`](../tools/ci/fetch-starter-model.sh) | Fetches the starter model both apps ship, SmolVLM-256M-Instruct, pinned by revision and checksum, into the ignored `App/StarterModel`. `check-app.sh` and `build-ipad.sh` check each app holds exactly those files. |

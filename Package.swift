@@ -12,6 +12,7 @@ let package = Package(
         .executable(name: "conflux-bench", targets: ["conflux-bench"]),
         // For the Xcode app target in project.yml.
         .library(name: "ConfluxCore", targets: ["ConfluxCore"]),
+        .library(name: "ConfluxUI", targets: ["ConfluxUI"]),
     ],
     targets: [
         // llama.cpp, built by its project for Apple platforms. Pinned by
@@ -44,8 +45,10 @@ let package = Package(
                 .linkedLibrary("c++"),
             ]
         ),
+        // What the Mac app and the iPad app show the same way.
+        .target(name: "ConfluxUI", dependencies: ["ConfluxCore"]),
         // The Mac app, and `conflux serve` without a window.
-        .executableTarget(name: "conflux", dependencies: ["ConfluxCore"]),
+        .executableTarget(name: "conflux", dependencies: ["ConfluxCore", "ConfluxUI"]),
         .testTarget(name: "ConfluxCoreTests", dependencies: ["ConfluxCore", "llama"]),
 
         // Phase 0: measure what one endpoint can do. See docs/phase-0.md.
