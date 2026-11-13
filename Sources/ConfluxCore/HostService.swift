@@ -211,8 +211,9 @@ final class HostService: Sendable {
         case .completed(let result, let model):
             // Named here, by the host that ran it.
             return reply(result.status, "completed", Gateway.attribute(result.body, to: model))
-        case .rejected(let result):
-            return reply(result.status, result.retryElsewhere ? "unsuitable" : "rejected", result.body)
+        case .rejected(let result, let model):
+            return reply(result.status, result.retryElsewhere ? "unsuitable" : "rejected",
+                         Gateway.attribute(result.body, to: model))
         case .busy(let retryAfter):
             return reply(429, "busy", ChatCompletionResult.error("no free slot", type: "rate_limit_error"),
                          [(ContractHeader.retryAfter, String(retryAfter))])

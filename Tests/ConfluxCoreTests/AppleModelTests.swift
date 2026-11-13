@@ -190,7 +190,30 @@ import Testing
         let picky = FakeHost(id: "picky", model: "apple-on-device") { _ in Self.declined }
         let scheduler = await Scheduler.with([picky])
         let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(10), key: nil)
-        #expect(outcome == .rejected(Self.declined))
+        guard case .rejected(let reply, let model) = outcome else {
+            Issue.record("\(outcome)")
+            return
+        }
+        #expect(reply == Self.declined)
+        #expect(model.id == "apple-on-device")
+    }
+
+    /// When every host declines, the refusal passed on names the last model
+    /// that declined, which is the one whose refusal the client reads.
+    @Test func theDeclinePassedOnNamesTheModelThatDeclined() async {
+        let first = FakeHost(id: "first", model: "apple-on-device") { _ in Self.declined }
+        let second = FakeHost(id: "second", model: "model-b") { _ in Self.declined }
+        let scheduler = await Scheduler.with([first, second])
+        await scheduler.setTypical(0.01, for: "first")
+        await scheduler.setTypical(1, for: "second")
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(10), key: nil)
+        guard case .rejected(_, let model) = outcome else {
+            Issue.record("\(outcome)")
+            return
+        }
+        #expect(first.callCount == 1)
+        #expect(second.callCount == 1)
+        #expect(model.id == "model-b")
     }
 
     @Test func onlyHostsServingAnAcceptedModelAreTried() async {
@@ -200,7 +223,11 @@ import Testing
         let onlyApple = ModelChoice(model: "apple-on-device", preference: nil)
         let outcome = await scheduler.submit(Data(), choice: onlyApple, deadline: Date().addingTimeInterval(10),
                                              key: nil)
-        #expect(outcome == .rejected(Self.declined))
+        guard case .rejected(let reply, _) = outcome else {
+            Issue.record("\(outcome)")
+            return
+        }
+        #expect(reply == Self.declined)
         #expect(other.callCount == 0)
     }
 
@@ -212,7 +239,12 @@ import Testing
         await scheduler.setTypical(0.01, for: "first")
         await scheduler.setTypical(1, for: "second")
         let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(10), key: nil)
-        #expect(outcome == .rejected(bad))
+        guard case .rejected(let reply, let model) = outcome else {
+            Issue.record("\(outcome)")
+            return
+        }
+        #expect(reply == bad)
+        #expect(model.id == "model-a")
         #expect(second.callCount == 0)
     }
 
@@ -224,5 +256,8 @@ import Testing
         let reply = try await peer.remote.complete(Data("{}".utf8), timeout: 10)
         #expect(reply.status == 400)
         #expect(reply.retryElsewhere)
+        // Named by the peer, so the gateway can say which model declined.
+        #expect(reply.model?.id == "model-a")
+        #expect(reply.model?.fingerprint == "fake-model-a")
     }
 }

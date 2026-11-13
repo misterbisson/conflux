@@ -222,7 +222,11 @@ struct Peer {
         defer { peer.server.stop() }
         let reply = try await peer.remote.complete(Data("{}".utf8), timeout: 10)
         #expect(reply.status == 400)
-        #expect(reply.model == nil)
+        // Passed on, naming the model that refused.
+        #expect(reply.model?.id == "model-a")
+        let object = try JSONSerialization.jsonObject(with: reply.body) as? [String: Any]
+        #expect(object?["error"] != nil)
+        #expect(object?["system_fingerprint"] as? String == "fake-model-a")
     }
 
     /// The peer admits work: a request without a free slot is refused, and

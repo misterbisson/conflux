@@ -192,7 +192,9 @@ import Testing
         let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 0, status: 400, body: Data("{}".utf8)))
         let scheduler = await Scheduler.with([host])
         let outcome = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
-        #expect(outcome == .rejected(HostReply(status: 400, body: Data("{}".utf8))))
+        guard case .rejected(let reply, let model) = outcome else { Issue.record("\(outcome)"); return }
+        #expect(reply == HostReply(status: 400, body: Data("{}".utf8)))
+        #expect(model.id == "model-a")
     }
 
     @Test func sameKeyRunsOnce() async {

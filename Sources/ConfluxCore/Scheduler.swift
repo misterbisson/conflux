@@ -4,8 +4,9 @@ import Foundation
 public enum Outcome: Sendable, Equatable {
     /// The runtime answered successfully. `model` is what ran.
     case completed(HostReply, model: ModelInfo)
-    /// The runtime refused the request itself (a 4xx). Passed on as is.
-    case rejected(HostReply)
+    /// The runtime refused the request itself (a 4xx). Passed on, naming
+    /// `model`, the model that refused. When several declined, it's the last.
+    case rejected(HostReply, model: ModelInfo)
     /// No slot in time: 429.
     case busy(retryAfter: Int)
     /// Hosts failed and time ran out, or no host for an accepted model is up: 503.
@@ -527,7 +528,7 @@ public actor Scheduler {
                     if others && !(remaining().map { $0 <= 0 } ?? false) { continue }
                 }
                 rejectedCount += 1
-                return .rejected(reply)
+                return .rejected(reply, model: reply.model ?? answer.model)
             case .failure(let error):
                 // Running out of the client's time isn't the host's fault.
                 let outOfTime = remaining().map { $0 <= 0.5 } ?? false
@@ -645,7 +646,8 @@ public actor Scheduler {
         }
         switch await perform(body, lease: lease, host: host, remaining: remaining) {
         case .success(let reply):
-            return (200..<300).contains(reply.status) ? .completed(reply, model: model) : .rejected(reply)
+            return (200..<300).contains(reply.status) ? .completed(reply, model: model)
+                : .rejected(reply, model: model)
         case .failure(.busy):
             return .busy(retryAfter: 1)
         case .failure(.cancelled):
