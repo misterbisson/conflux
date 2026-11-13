@@ -14,6 +14,7 @@ struct GGUFWriter {
         case bool(Bool)
         case strings([String])
         case floats([Float])
+        case ints([Int32])
         /// A type and bytes as they are, for damaged files.
         case raw(type: UInt32, bytes: [UInt8])
     }
@@ -45,6 +46,9 @@ struct GGUFWriter {
             case .floats(let list):
                 bytes += le(UInt32(9)) + le(UInt32(6)) + le(UInt64(list.count))
                 for f in list { bytes += le(f.bitPattern) }
+            case .ints(let list):
+                bytes += le(UInt32(9)) + le(UInt32(5)) + le(UInt64(list.count))
+                for n in list { bytes += le(UInt32(bitPattern: n)) }
             case .raw(let type, let raw): bytes += le(type) + raw
             }
         }
@@ -72,6 +76,38 @@ struct GGUFWriter {
             ("general.basename", .string(basename)),
             ("tokenizer.chat_template", .string(String(repeating: "{{ x }}", count: 2000))),
         ])
+    }
+
+    /// A model in the order llama.cpp's converter writes it: its names, its
+    /// hyperparameters, then its tokenizer. The key and value widths only
+    /// when they're given, as the converter writes them only when they
+    /// differ from the embedding length over the heads.
+    static func transformer(arch: String = "llama", layers: UInt32 = 30, context: UInt32 = 8192,
+                            width: UInt32 = 576, heads: UInt32 = 9, kvHeads: Value? = .u32(3),
+                            keyWidth: UInt32? = nil, valueWidth: UInt32? = nil, tokens: Int = 1000) -> GGUFWriter {
+        var pairs: [(String, Value)] = [
+            ("general.architecture", .string(arch)),
+            ("general.type", .string("model")),
+            ("general.name", .string("Example 256M")),
+            ("general.basename", .string("Example")),
+            ("\(arch).block_count", .u32(layers)),
+            ("\(arch).context_length", .u32(context)),
+            ("\(arch).embedding_length", .u32(width)),
+            ("\(arch).feed_forward_length", .u32(width * 3)),
+            ("\(arch).attention.head_count", .u32(heads)),
+        ]
+        if let kvHeads { pairs.append(("\(arch).attention.head_count_kv", kvHeads)) }
+        pairs.append(("\(arch).rope.freq_base", .f32(100_000)))
+        if let keyWidth { pairs.append(("\(arch).attention.key_length", .u32(keyWidth))) }
+        if let valueWidth { pairs.append(("\(arch).attention.value_length", .u32(valueWidth))) }
+        pairs += [
+            ("\(arch).vocab_size", .u32(UInt32(tokens))),
+            ("tokenizer.ggml.model", .string("gpt2")),
+            ("tokenizer.ggml.tokens", .strings((0..<tokens).map { "token\($0)" })),
+            ("tokenizer.chat_template", .string("{{ x }}")),
+            ("general.quantization_version", .u32(2)),
+        ]
+        return GGUFWriter(tensors: 273, pairs: pairs)
     }
 
     /// A projector in the form llama.cpp's converter writes.
@@ -102,7 +138,7 @@ struct GGUFWriter {
     @Test(arguments: [UInt32(2), 3]) func readsAModel(version: UInt32) throws {
         let metadata = try GGUFMetadata.read(from: GGUFWriter.model(version: version).data)
         #expect(metadata == GGUFMetadata(version: version, architecture: "llama", name: "Example 1B",
-                                         basename: "Example", embeddingLength: 2048))
+                                         basename: "Example", embeddingLength: 2048, contextLength: 8192))
         #expect(!metadata.isProjector)
     }
 
@@ -160,6 +196,69 @@ struct GGUFWriter {
         #expect(audio.imageWidth == nil)
         let both = try GGUFMetadata.read(from: GGUFWriter.projector(vision: true, audio: true).data)
         #expect(both.readsImages)
+    }
+
+    @Test func readsWhatAModelsContextTakes() throws {
+        let metadata = try GGUFMetadata.read(from: GGUFWriter.transformer(keyWidth: 64, valueWidth: 64).data)
+        #expect(metadata == GGUFMetadata(architecture: "llama", name: "Example 256M", basename: "Example",
+                                         embeddingLength: 576, blockCount: 30, contextLength: 8192, headCount: 9,
+                                         headCountKV: [3], keyLength: 64, valueLength: 64))
+        // Widths and key/value heads the file doesn't give stay unknown.
+        let plain = try GGUFMetadata.read(from: GGUFWriter.transformer(kvHeads: nil).data)
+        #expect(plain.blockCount == 30)
+        #expect(plain.headCountKV == nil)
+        #expect(plain.keyLength == nil)
+        #expect(plain.valueLength == nil)
+    }
+
+    @Test func readsKeyValueHeadsForEachLayer() throws {
+        let perLayer: [Int32] = [4, 0, 4, 0]
+        let metadata = try GGUFMetadata.read(from: GGUFWriter.transformer(layers: 4, kvHeads: .ints(perLayer)).data)
+        #expect(metadata.headCountKV == [4, 0, 4, 0])
+        #expect(metadata.blockCount == 4)
+
+        // Too many to keep, or not counts: skipped, and the rest still read.
+        let long = try GGUFMetadata.read(from: GGUFWriter.transformer(
+            kvHeads: .ints(Array(repeating: 2, count: 5000))).data)
+        #expect(long.headCountKV == nil)
+        #expect(long.blockCount == 30)
+        let floats = try GGUFMetadata.read(from: GGUFWriter.transformer(kvHeads: .floats([1, 2])).data)
+        #expect(floats.headCountKV == nil)
+        #expect(floats.contextLength == 8192)
+        let negative = try GGUFMetadata.read(from: GGUFWriter.transformer(kvHeads: .ints([2, -1])).data)
+        #expect(negative.headCountKV == nil)
+    }
+
+    @Test func distrustsAbsurdHyperparameters() throws {
+        var writer = GGUFWriter.transformer(layers: 1 << 20)
+        writer.pairs = writer.pairs.map { $0.0 == "llama.attention.head_count" ? ($0.0, .i32(-9)) : $0 }
+        let metadata = try GGUFMetadata.read(from: writer.data)
+        #expect(metadata.blockCount == nil)
+        #expect(metadata.headCount == nil)
+        #expect(try GGUFMetadata.read(from: GGUFWriter.transformer(context: 0).data).contextLength == nil)
+    }
+
+    @Test func readsNoFurtherThanTheHyperparameters() throws {
+        // A file cut off where its tokenizer starts reads in full: the reader
+        // stops there, without the widths the file doesn't give.
+        let data = GGUFWriter.transformer().data
+        let tokenizer = try #require(data.range(of: Data("tokenizer.ggml.model".utf8)))
+        let cut = data.prefix(upTo: tokenizer.upperBound + 4)
+        let metadata = try GGUFMetadata.read(from: cut)
+        #expect(metadata.headCountKV == [3])
+        #expect(metadata.keyLength == nil)
+
+        // With every key it keeps given, it stops at the last of them.
+        let full = GGUFWriter.transformer(keyWidth: 64, valueWidth: 64).data
+        let last = try #require(full.range(of: Data("llama.attention.value_length".utf8)))
+        #expect(try GGUFMetadata.read(from: full.prefix(upTo: last.upperBound + 8)).valueLength == 64)
+
+        // A projector's own block count and heads aren't a model's.
+        var projector = GGUFWriter.projector()
+        projector.pairs += [("clip.vision.block_count", .u32(12)), ("clip.vision.attention.head_count", .u32(12))]
+        let read = try GGUFMetadata.read(from: projector.data)
+        #expect(read.blockCount == nil)
+        #expect(read.headCount == nil)
     }
 
     @Test func refusesAFileThatIsntGGUF() {
@@ -395,5 +494,25 @@ struct GGUFWriter {
         #expect(projector.isProjector)
         #expect(Projectors.suggestion(for: model, among: [projector]) == projector.url)
         #expect(Projectors.problems(model: model, projector: projector).isEmpty)
+    }
+
+    /// On the M1 iPad Pro the starter model, one slot of 4,096 tokens, took
+    /// 0.3 GB (docs/plan.md, Phase 3).
+    @Test(.enabled(if: present)) func starterModelsEstimate() throws {
+        let url = Self.folder.appending(path: StarterModel.modelFile)
+        let metadata = try GGUFMetadata.read(from: url)
+        #expect(metadata.blockCount == 30)
+        #expect(metadata.contextLength == 8192)
+        // 30 layers of 3 key/value heads, 64 wide, at f16.
+        #expect(ModelFit.contextBytes(metadata, tokens: 4096) == 30 * 3 * (64 + 64) * 2 * 4096)
+        let size = { (name: String) in
+            UInt64((try? Self.folder.appending(path: name).resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        }
+        let fit = ModelFit(model: metadata, modelBytes: size(StarterModel.modelFile),
+                           projectorBytes: size(StarterModel.projectorFile), slots: 1, contextPerSlot: 4096)
+        let gigabytes = { (bytes: UInt64) in String(format: "%.2f GB", Double(bytes) / 1_073_741_824) }
+        print("starter model: files \(gigabytes(fit.weights)), context \(gigabytes(fit.context ?? 0)), "
+            + "with working room \(gigabytes(fit.total))")
+        #expect(fit.likelyFits(allowed: 8 << 30, physicalMemory: 8 << 30))
     }
 }

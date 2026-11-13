@@ -87,6 +87,100 @@ struct ProbeView: View {
         Projectors.problems(model: model.map { GGUFFile($0) }, projector: projector.map { GGUFFile($0) })
     }
 
+    /// The models measured on iPads so far. A link only: conflux downloads
+    /// nothing.
+    private static let measurements =
+        URL(string: "https://github.com/misterbisson/conflux/blob/main/docs/measurements.md")!
+
+    private var physicalMemory: UInt64 { ProcessInfo.processInfo.physicalMemory }
+
+    /// What iPadOS lets conflux use, and how large a model that likely
+    /// loads, with room for its context (ModelFit).
+    private var allowance: String {
+        let allowed = probe.limitAtLaunch
+        let largest = ModelFit.largestModel(allowed: allowed, physicalMemory: physicalMemory)
+        let lets = "This iPad lets conflux use about \(Memory.roughly(allowed))"
+        guard largest > 0 else { return lets + ", which is likely too little for any model but the smallest." }
+        return lets + ", so models up to about \(Memory.roughly(largest)), with their projectors, will likely load."
+    }
+
+    /// The chosen model's memory: what a check of these files with these
+    /// settings measured, or, before one has, an estimate. A hint, never a
+    /// block: Serve and Check stay enabled either way.
+    @ViewBuilder private var fit: some View {
+        if let model {
+            let checked = probe.measured(model: model, projector: projector, slots: slots,
+                                         contextPerSlot: contextPerSlot)
+            switch checked?.outcome {
+            case .passed?:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Fits: checked on this iPad").foregroundStyle(.green)
+                    Text(measuredDetail(checked))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            case .killed?:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Too big: checked on this iPad").foregroundStyle(.red)
+                    Text("iPadOS ended conflux while it was loading or running these files with these slots "
+                        + "and context. Try fewer slots, less context, or a smaller model.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            case .failed?, nil:
+                estimate(model, failed: checked?.detail)
+            }
+        }
+    }
+
+    /// What a check that passed measured once the model loaded.
+    private func measuredDetail(_ result: ProbeResult?) -> String {
+        switch (result?.footprintAfterLoad, result?.availableAfterLoad) {
+        case let (footprint?, left?):
+            "Once it loaded, conflux took \(Memory.roughly(footprint)), and \(Memory.roughly(left)) was left."
+        case let (footprint?, nil):
+            "Once it loaded, conflux took \(Memory.roughly(footprint))."
+        default:
+            "It loaded and answered."
+        }
+    }
+
+    /// The estimate for the chosen model, from its files and its header.
+    private func estimate(_ model: URL, failed: String?) -> some View {
+        let metadata = try? GGUFFile(model).metadata.get()
+        let estimate = ModelFit(model: metadata, modelBytes: Probe.size(model),
+                                projectorBytes: projector.map(Probe.size), slots: slots,
+                                contextPerSlot: contextPerSlot)
+        let allowed = probe.limitAtLaunch
+        let fits = estimate.likelyFits(allowed: allowed, physicalMemory: physicalMemory)
+        var detail = "\(Memory.roughly(estimate.weights)) of files"
+        if let context = estimate.context {
+            detail += ", \(Memory.roughly(context)) of context for \(slots) × \(contextPerSlot.formatted()) tokens"
+        }
+        detail += ", and \(Memory.roughly(estimate.working)) of room to work in. conflux counts on about "
+            + "\(Memory.roughly(ModelFit.usable(allowed: allowed, physicalMemory: physicalMemory))) of the "
+            + "\(Memory.roughly(allowed)) iPadOS allows, keeping the rest for iPadOS and what the estimate "
+            + "can't see."
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(fits ? "Likely fits: about \(Memory.roughly(estimate.total))"
+                      : "Likely too big: about \(Memory.roughly(estimate.total))")
+                .foregroundStyle(fits ? Color.primary : Color.orange)
+            Text(detail).font(.footnote).foregroundStyle(.secondary)
+            if estimate.context == nil {
+                Text("The model's header doesn't say how much memory its context takes, so the estimate "
+                    + "leaves it out.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let trained = estimate.trainedContext {
+                Text("The model was trained to read up to \(trained.formatted()) tokens. More context per slot "
+                    + "takes memory, and may not help.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Text(failed.map { "The last check of these files with these settings failed: \($0). This is an "
+                    + "estimate; a check measures it." }
+                 ?? "This is an estimate, not a limit. A check measures it.")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
     @AppStorage("activityMetric") private var metric = ActivityMetric.requests
     @AppStorage("activityRange") private var range = ActivityRange.hour
 
@@ -309,6 +403,7 @@ struct ProbeView: View {
                 Text("No model yet. Add one under Model files.")
                     .foregroundStyle(.secondary)
             } else {
+                Text(allowance).font(.callout)
                 Group {
                     Picker("Model", selection: $model) {
                         ForEach(probe.models, id: \.self) { url in
@@ -333,6 +428,10 @@ struct ProbeView: View {
                     }
                 }
                 .disabled(server.running || probe.running)
+                fit
+                Link(destination: Self.measurements) {
+                    Label("Models measured on iPads", systemImage: "arrow.up.right.square")
+                }
                 // Left enabled while serving: it applies at once.
                 Toggle(isOn: Binding(get: { server.settings.servesOnBattery },
                                      set: { server.setServesOnBattery($0) })) {
