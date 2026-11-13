@@ -72,13 +72,19 @@ struct ProbeView: View {
     }
 
     /// The projector that goes with the chosen model: the starter model's
-    /// with it, and otherwise the one copied in, if there's only one. A
-    /// projector made for another model fails to load.
+    /// with it, and otherwise the one whose header says it fits, if there's
+    /// one (Projectors.suggestion). A projector made for another model fails
+    /// to load, so with no fit there's no suggestion.
     private var suggestedProjector: URL? {
         guard let model else { return nil }
-        let copied = probe.projectors.filter { !Probe.included($0) }
         if Probe.included(model) { return probe.projectors.first(where: Probe.included) }
-        return copied.count == 1 ? copied.first : nil
+        return Projectors.suggestion(for: GGUFFile(model), among: probe.projectors.map { GGUFFile($0) })
+    }
+
+    /// What's wrong with the chosen projector for the chosen model, from
+    /// their headers.
+    private var pairProblems: [String] {
+        Projectors.problems(model: model.map { GGUFFile($0) }, projector: projector.map { GGUFFile($0) })
     }
 
     @AppStorage("activityMetric") private var metric = ActivityMetric.requests
@@ -315,6 +321,9 @@ struct ProbeView: View {
                             Text(probe.label(url)).tag(Optional(url))
                         }
                     }
+                    ForEach(pairProblems, id: \.self) { problem in
+                        Text(problem).foregroundStyle(.red)
+                    }
                     StepperRow("Slots", value: $slots, in: 1...4)
                     Picker("Context per slot", selection: $contextPerSlot) {
                         ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: contextPerSlot),
@@ -413,10 +422,11 @@ struct ProbeView: View {
         } header: {
             Text("Model files")
         } footer: {
-            Text("Choose a GGUF model in Files, with its projector if it has one, which has \"mmproj\" in its "
-                + "name. A model on this iPad or on a drive is used where it is. One in iCloud Drive is copied "
-                + "in, since iCloud can remove the iPad's copy of a file. Sharing a model to conflux, from "
-                + "Safari's downloads or the Files app, copies it in too. Keep conflux open while it copies. "
+            Text("Choose a GGUF model in Files, with its projector if it has one. conflux reads each file to "
+                + "tell projectors from models, and chooses the projector made for the model. A model on this "
+                + "iPad or on a drive is used where it is. One in iCloud Drive is copied in, since iCloud can "
+                + "remove the iPad's copy of a file. Sharing a model to conflux, from Safari's downloads or the "
+                + "Files app, copies it in too. Keep conflux open while it copies. "
                 + "From a Mac, select the iPad in Finder, open the Files tab, and drag the files onto conflux.")
         }
         .confirmationDialog("Delete \(deleting?.lastPathComponent ?? "")?",

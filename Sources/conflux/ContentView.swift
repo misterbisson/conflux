@@ -170,6 +170,9 @@ struct ContentView: View {
             } else {
                 path("Model", model.settings.host?.model, projector: false)
                 path("Projector", model.settings.host?.projector, projector: true)
+                ForEach(model.fileProblems, id: \.self) { problem in
+                    Text(problem).font(.caption).foregroundStyle(.red)
+                }
                 if model.settings.host?.projector != nil {
                     Button("Remove projector (text only)") { model.settings.host?.projector = nil }
                 }

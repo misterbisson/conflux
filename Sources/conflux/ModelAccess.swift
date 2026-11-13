@@ -67,6 +67,28 @@ final class ModelAccess {
         }
     }
 
+    /// The file at `path`, readable for a moment, to read its header: through
+    /// its bookmark, as `open` opens it, without changing the bookmarks. Give
+    /// it back with `giveBack` once it's read.
+    func borrow(_ path: String) -> Borrowed {
+        var stale = false
+        guard let data = bookmarks[path],
+              let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil,
+                                 bookmarkDataIsStale: &stale) else {
+            return Borrowed(url: URL(fileURLWithPath: path), accessing: false)
+        }
+        return Borrowed(url: url, accessing: url.startAccessingSecurityScopedResource())
+    }
+
+    struct Borrowed: Sendable {
+        var url: URL
+        var accessing: Bool
+    }
+
+    func giveBack(_ borrowed: [Borrowed]) {
+        for file in borrowed where file.accessing { file.url.stopAccessingSecurityScopedResource() }
+    }
+
     /// Gives up access to the files `open` opened.
     func close() {
         for url in accessing { url.stopAccessingSecurityScopedResource() }
