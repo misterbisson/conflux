@@ -131,8 +131,10 @@ way: iCloud Keychain needs the app signed by its team. Each Mac has an
 endpoint ID, the public half of a key that never leaves it. Give each Mac the
 others' IDs:
 
-- **In the app:** **Mesh** shows this Mac's ID, with **Copy ID**. Paste
-  another Mac's ID in **Peer** and click **Add**, then **Start**.
+- **In the app:** **Pair by hand** shows this Mac's ID, with **Copy ID**.
+  Paste the other Mac's ID beside **The other device's ID** and click
+  **Add**, then **Start**. The Mac appears under **Mesh**, marked **Added by
+  hand**.
 - **Without a window:**
 
   ```bash
@@ -246,8 +248,9 @@ and its temperature and power.
   lists itself in iCloud Keychain's device list, and trusts the Macs listed
   there, as Macs trust each other ([Peers](#peers-other-macs-models)). The
   Macs find it and send it work, as they do another Mac. A build not signed
-  for the team has no device list: copy the iPad's ID into each Mac's peers,
-  and each Mac's ID into the iPad's.
+  for the team has no device list: under **Pair by hand**, copy the iPad's ID
+  into each Mac's conflux, and each Mac's ID into the iPad's. The iPad lists
+  its Macs under **Your Macs**, with whether each is connected.
 - **Only in the foreground.** iPadOS suspends an app in the background, so
   when conflux leaves the foreground it finishes what's running and takes
   nothing new, and the Macs send their work elsewhere. It keeps the screen
