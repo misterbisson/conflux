@@ -134,9 +134,9 @@ public final class Gateway: Sendable {
         case .completed(let reply, let model):
             return HTTPResponse(status: reply.status, headers: [("Content-Type", "application/json")],
                                 body: Gateway.attribute(reply.body, to: model))
-        case .rejected(let reply):
+        case .rejected(let reply, let model):
             return HTTPResponse(status: reply.status, headers: [("Content-Type", "application/json")],
-                                body: reply.body)
+                                body: Gateway.attribute(reply.body, to: model))
         case .busy(let retryAfter):
             return Gateway.error(429, "every slot is busy; try again shortly", type: "rate_limit_error",
                                  code: "busy", headers: [(ContractHeader.retryAfter, String(retryAfter))])
@@ -153,7 +153,8 @@ public final class Gateway: Sendable {
     }
 
     /// Sets `model` and `system_fingerprint` to what actually ran, whatever
-    /// the runtime put there. Clients record these per response.
+    /// the runtime put there. Clients record these per response, a refusal
+    /// included: there, beside `error`, they name the model that refused.
     static func attribute(_ body: Data, to model: ModelInfo) -> Data {
         guard var object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return body }
         object["model"] = model.id

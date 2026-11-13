@@ -171,6 +171,7 @@ keep results. Two hosts serving "the same model" can differ in:
 
 Hosts advertise all three. Every response says which model produced it, in the
 OpenAI `model` field, with runtime and artifact hash in `system_fingerprint`.
+So does a model's refusal, beside its `error`.
 Clients record that per result ([clients.md](clients.md)).
 
 **Results are not bit-for-bit reproducible**, even at temperature 0. Batch size
@@ -346,7 +347,8 @@ apple-iroh lets conflux name its own ALPN.
   `Conflux-Outcome` says what became of it: `completed`, `rejected` (the
   runtime refused it, a 4xx the gateway passes on), `unsuitable` (refused
   here, though another host might take it: content the model declined, or a
-  request too long for it), `busy`, `unavailable`, or `cancelled`. A completion names the model that ran, as the host saw it.
+  request too long for it), `busy`, `unavailable`, or `cancelled`. A completion names the model that ran,
+  as the host saw it, and a refusal the model that refused.
   `Conflux-Slots: <generation> <capacity> <active> <held>` says how the
   host's slots stand once the request has left its slot, so the gateway can
   send the next request without waiting for the status that says the same.

@@ -120,6 +120,18 @@ import Testing
         #expect(body["system_fingerprint"] as? String == "fake-model-a")
     }
 
+    @Test func refusalsNameTheModelThatRefused() async {
+        let declined = ChatCompletionResult.error("declined", code: "content_filter")
+        let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 0, status: 400, body: declined))
+        let gateway = Gateway(scheduler: await Scheduler.with([host]), token: "t")
+        let response = await gateway.handle(request())
+        #expect(response.status == 400)
+        let body = json(response)
+        #expect((body["error"] as? [String: Any])?["code"] as? String == "content_filter")
+        #expect(body["model"] as? String == "model-a")
+        #expect(body["system_fingerprint"] as? String == "fake-model-a")
+    }
+
     @Test func modelsListsAliasesFirst() async {
         let gateway = Gateway(scheduler: await Scheduler.with([FakeHost(id: "h")]), token: "t")
         let data = json(await gateway.handle(request("GET", "/v1/models"))) ["data"] as? [[String: Any]] ?? []

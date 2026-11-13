@@ -198,9 +198,9 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         case "completed":
             return HostReply(status: response.statusCode, body: data, model: ranModel(data))
         case "rejected":
-            return HostReply(status: response.statusCode, body: data)
+            return HostReply(status: response.statusCode, body: data, model: ranModel(data))
         case "unsuitable":
-            return HostReply(status: response.statusCode, body: data, retryElsewhere: true)
+            return HostReply(status: response.statusCode, body: data, model: ranModel(data), retryElsewhere: true)
         case "busy":
             throw HostError.busy("the peer has no free slot")
         case "cancelled":
@@ -239,7 +239,7 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         if updated { lock.withLock { changed }?() }
     }
 
-    /// The model the peer says ran, from the answer itself.
+    /// The model the peer says ran, or refused, from the answer itself.
     func ranModel(_ body: Data) -> ModelInfo? {
         guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let id = object["model"] as? String, let fingerprint = object["system_fingerprint"] as? String
