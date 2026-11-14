@@ -195,6 +195,27 @@ import Testing
         #expect(request["count"] as? Int == 12)
     }
 
+    @Test func healthReportsDeclines() throws {
+        let host = HostSnapshot(id: "local", state: .ready,
+                                declined: DeclineCounts(content: 3, length: 1, seconds: 2.34567))
+        var snapshot = SchedulerSnapshot(
+            hosts: [host], queued: 0, completed: 4, failures: FailureCounts(), rejected: 0, busy: 0, unavailable: 0,
+            hedged: 0, hedgeWins: 0, perHour: 0, idleWithWorkSeconds: 0)
+        snapshot.declined = DeclineCounts(content: 3, length: 1, seconds: 2.34567)
+        snapshot.rerouted = 4
+        let health = Gateway.health(snapshot)
+        let mesh = try #require(health["mesh"] as? [String: Any])
+        #expect(mesh["rerouted"] as? Int == 4)
+        let declined = try #require(mesh["declined"] as? [String: Any])
+        #expect(declined["content"] as? Int == 3)
+        #expect(declined["length"] as? Int == 1)
+        #expect(declined["unsupported"] as? Int == 0)
+        #expect(declined["seconds"] as? Double == 2.346)
+        let entry = try #require((health["hosts"] as? [[String: Any]])?.first)
+        let hostDeclined = try #require(entry["declined"] as? [String: Any])
+        #expect(hostDeclined["content"] as? Int == 3)
+    }
+
     @Test func healthLeavesOutWhatIsntMeasuredYet() throws {
         let snapshot = SchedulerSnapshot(
             hosts: [HostSnapshot(id: "local", state: .ready)], queued: 0, completed: 0, failures: FailureCounts(),

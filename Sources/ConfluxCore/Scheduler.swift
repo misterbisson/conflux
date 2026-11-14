@@ -124,6 +124,47 @@ public struct FailureCounts: Sendable, Equatable {
     }
 }
 
+/// Requests a host declined that another host might take: refusals with
+/// `HostReply.retryElsewhere`. Not failures, so they don't count against a
+/// host, but each costs a slot for as long as it took, and the request's
+/// time, so they're counted apart.
+public struct DeclineCounts: Sendable, Equatable {
+    /// The model declined the content.
+    public var content = 0
+    /// The request was too long for the model.
+    public var length = 0
+    /// The request asked for something the model or its runtime doesn't do.
+    public var unsupported = 0
+    /// Seconds spent on requests that were declined, slot time that
+    /// answered nothing.
+    public var seconds: Double = 0
+
+    public init(content: Int = 0, length: Int = 0, unsupported: Int = 0, seconds: Double = 0) {
+        self.content = content
+        self.length = length
+        self.unsupported = unsupported
+        self.seconds = seconds
+    }
+
+    public var total: Int { content + length + unsupported }
+
+    /// Counts a decline by its `error.code`. A code it doesn't know is
+    /// counted as unsupported.
+    mutating func record(_ reply: HostReply, seconds: Double) {
+        switch Self.code(of: reply.body) {
+        case "content_filter": content += 1
+        case "context_length_exceeded": length += 1
+        default: unsupported += 1
+        }
+        self.seconds += seconds
+    }
+
+    static func code(of body: Data) -> String? {
+        let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        return (object?["error"] as? [String: Any])?["code"] as? String
+    }
+}
+
 public struct HostSnapshot: Sendable, Equatable, Identifiable {
     public var id: String
     public var model: ModelInfo?
@@ -133,7 +174,10 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
     public var active: Int
     public var completed: Int
     public var failures: FailureCounts
-    /// Smoothed seconds per request, once there's history.
+    /// Requests it declined that another host might take, by this
+    /// gateway's count.
+    public var declined: DeclineCounts
+    /// Smoothed seconds per request it completed, once there's history.
     public var typicalSeconds: Double?
     /// Completions in the last ten minutes, scaled to an hour.
     public var perHour: Double
@@ -171,7 +215,8 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
 
     public init(id: String, model: ModelInfo? = nil, state: HostState, slots: Int = 0, capacity: Int = 0,
                 active: Int = 0, completed: Int = 0, failures: FailureCounts = FailureCounts(),
-                typicalSeconds: Double? = nil, perHour: Double = 0, idleWithWorkSeconds: Double = 0,
+                declined: DeclineCounts = DeclineCounts(), typicalSeconds: Double? = nil, perHour: Double = 0,
+                idleWithWorkSeconds: Double = 0,
                 freeSeconds: Double = 0, held: Int = 0, prefetched: Int = 0, hardware: HardwareInfo? = nil,
                 utilization: Double? = nil, requestSeconds: Percentiles? = nil, busySlotSeconds: Double = 0,
                 slotSeconds: Double = 0, rejoined: Int = 0) {
@@ -183,6 +228,7 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
         self.active = active
         self.completed = completed
         self.failures = failures
+        self.declined = declined
         self.typicalSeconds = typicalSeconds
         self.perHour = perHour
         self.idleWithWorkSeconds = idleWithWorkSeconds
@@ -211,6 +257,11 @@ public struct SchedulerSnapshot: Sendable, Equatable {
     public var failures: FailureCounts
     /// Answers passed on from runtimes that refused a request (4xx).
     public var rejected: Int
+    /// Requests hosts declined that another host might take, added up over
+    /// every host this gateway sent work to, including hosts that have left.
+    public var declined: DeclineCounts = DeclineCounts()
+    /// Requests completed on another host after one or more declined them.
+    public var rerouted = 0
     /// Answers of 429: no slot in time.
     public var busy: Int
     /// Answers of 503: hosts failed and time ran out, or none was up.
@@ -255,6 +306,7 @@ public actor Scheduler {
         var active: [UUID: Date] = [:]
         var completed = 0
         var failures = FailureCounts()
+        var declined = DeclineCounts()
         var typical: Double?
         /// When requests completed, for throughput. Ten minutes are kept.
         var recent: [Date] = []
@@ -302,6 +354,7 @@ public actor Scheduler {
         struct Counts {
             var completed: Int
             var failures: FailureCounts
+            var declined: DeclineCounts
             var prefetched: Int
             var recent: [Date]
             var durations: [(at: Date, seconds: Double)]
@@ -314,13 +367,14 @@ public actor Scheduler {
 
         var counts: Counts {
             get {
-                Counts(completed: completed, failures: failures, prefetched: prefetched, recent: recent,
-                       durations: durations, freeTime: freeTime, idleTime: idleTime, busySlotTime: busySlotTime,
-                       slotTime: slotTime, rejoined: rejoined)
+                Counts(completed: completed, failures: failures, declined: declined, prefetched: prefetched,
+                       recent: recent, durations: durations, freeTime: freeTime, idleTime: idleTime,
+                       busySlotTime: busySlotTime, slotTime: slotTime, rejoined: rejoined)
             }
             set {
                 completed = newValue.completed
                 failures = newValue.failures
+                declined = newValue.declined
                 prefetched = newValue.prefetched
                 recent = newValue.recent
                 durations = newValue.durations
@@ -413,6 +467,8 @@ public actor Scheduler {
     private var finished: [String: (outcome: Outcome, at: Date)] = [:]
     private var completedCount = 0, rejectedCount = 0, busyCount = 0, unavailableCount = 0
     private var failures = FailureCounts()
+    private var declined = DeclineCounts()
+    private var reroutedCount = 0
     private var recent: [Date] = []
     /// Each host's last day, by the minute, kept here so it outlasts hosts
     /// that leave and come back.
@@ -452,8 +508,10 @@ public actor Scheduler {
         let first: UUID
         var copies: [UUID: (lease: Lease, model: ModelInfo, started: Date)] = [:]
         var hedged = false
-        /// Hosts where a copy failed while another ran on.
+        /// Hosts where a copy failed, or was declined, while another ran on.
         var failed: Set<String> = []
+        /// The models that declined a copy while another ran on, in order.
+        var declinedBy: [String] = []
         let continuation: CheckedContinuation<Answer, Never>
     }
 
@@ -463,6 +521,8 @@ public actor Scheduler {
         let model: ModelInfo
         let result: Result<HostReply, HostError>
         let failed: Set<String>
+        /// The models that declined a copy while another ran on.
+        let declinedBy: [String]
     }
 
     private var attempts: [UUID: Attempt] = [:]
@@ -691,6 +751,9 @@ public actor Scheduler {
         }
 
         var tried: Set<String> = []
+        // The models that declined it and sent it on to another host, in
+        // order, each once.
+        var declinedBy: [String] = []
         // Time spent waiting for a slot, on every try.
         var waited: TimeInterval = 0
         defer { noteWait(waited) }
@@ -713,11 +776,14 @@ public actor Scheduler {
             let answer = await attempt(body, lease: lease, model: model, choice: choice, tried: tried,
                                        remaining: remaining)
             tried.formUnion(answer.failed)
+            for declining in answer.declinedBy where !declinedBy.contains(declining) { declinedBy.append(declining) }
             let hostID = answer.host
             switch answer.result {
-            case .success(let reply):
+            case .success(var reply):
+                reply.declinedBy = declinedBy
                 if (200..<300).contains(reply.status) {
                     completedCount += 1
+                    if !declinedBy.isEmpty { reroutedCount += 1 }
                     recent.append(Date())
                     return .completed(reply, model: reply.model ?? answer.model)
                 }
@@ -727,7 +793,11 @@ public actor Scheduler {
                     tried.insert(hostID)
                     let others = entries.values.contains { $0.model.map { choice.rank($0) != nil } ?? false
                         && !tried.contains($0.host.id) && ($0.capacity > 0 || !$0.active.isEmpty) }
-                    if others && !(remaining().map { $0 <= 0 } ?? false) { continue }
+                    if others && !(remaining().map { $0 <= 0 } ?? false) {
+                        let declining = (reply.model ?? answer.model).id
+                        if !declinedBy.contains(declining) { declinedBy.append(declining) }
+                        continue
+                    }
                 }
                 rejectedCount += 1
                 return .rejected(reply, model: reply.model ?? answer.model)
@@ -793,8 +863,11 @@ public actor Scheduler {
         case .success(let reply):
             let now = Date()
             let seconds = now.timeIntervalSince(started)
-            entries[lease.host]?.record(seconds: seconds)
             if (200..<300).contains(reply.status) {
+                // Only what it completed: a refusal, often quick, would make
+                // the host look faster than it is, and draw more requests
+                // for it to decline.
+                entries[lease.host]?.record(seconds: seconds)
                 entries[lease.host]?.completed += 1
                 entries[lease.host]?.recent.append(now)
                 entries[lease.host]?.durations.append((now, seconds))
@@ -805,6 +878,9 @@ public actor Scheduler {
                 if let durations = entries[lease.host]?.durations {
                     entries[lease.host]?.durations = Self.pruned(durations, at: now)
                 }
+            } else if reply.retryElsewhere {
+                entries[lease.host]?.declined.record(reply, seconds: seconds)
+                declined.record(reply, seconds: seconds)
             }
         case .failure(.cancelled):
             break // A hedged copy that lost, or a client that left: not the host's doing.
@@ -1126,16 +1202,32 @@ public actor Scheduler {
     private func settle(_ id: UUID, lease: Lease, result: Result<HostReply, HostError>) {
         copies[lease.id] = nil
         guard var attempt = attempts[id], let copy = attempt.copies.removeValue(forKey: lease.id) else { return }
-        if case .failure(let error) = result, !attempt.copies.isEmpty {
-            if error != .cancelled { attempt.failed.insert(lease.host) }
-            attempts[id] = attempt
-            return
+        if !attempt.copies.isEmpty {
+            switch result {
+            case .failure(let error):
+                if error != .cancelled { attempt.failed.insert(lease.host) }
+                attempts[id] = attempt
+                return
+            case .success(let reply) where reply.retryElsewhere && !(200..<300).contains(reply.status):
+                // Declined here, often quickly, by a copy's host: the other
+                // copy may yet answer, so it runs on rather than being
+                // cancelled for a refusal.
+                attempt.failed.insert(lease.host)
+                let declining = (reply.model ?? copy.model).id
+                if !attempt.declinedBy.contains(declining) { attempt.declinedBy.append(declining) }
+                attempts[id] = attempt
+                return
+            case .success:
+                break
+            }
         }
         attempts[id] = nil
         for other in attempt.copies.values { cancel(other.lease) }
-        if case .success = result, lease.id != attempt.first { hedgeWinCount += 1 }
+        if case .success(let reply) = result, (200..<300).contains(reply.status), lease.id != attempt.first {
+            hedgeWinCount += 1
+        }
         attempt.continuation.resume(returning: Answer(host: lease.host, model: copy.model, result: result,
-                                                      failed: attempt.failed))
+                                                      failed: attempt.failed, declinedBy: attempt.declinedBy))
     }
 
     /// Stops a copy. A host on another device is told, and answers the copy
@@ -1380,7 +1472,7 @@ public actor Scheduler {
         guard let e = entries[id] else { return nil }
         return HostSnapshot(id: id, model: e.model, state: e.state, slots: e.host.slots, capacity: e.capacity,
                             active: e.active.count, completed: e.completed, failures: e.failures,
-                            typicalSeconds: e.typical,
+                            declined: e.declined, typicalSeconds: e.typical,
                             perHour: Double(e.recent.filter { $0 > cutoff }.count) * 6,
                             idleWithWorkSeconds: e.idleTime, freeSeconds: e.freeTime,
                             held: e.report?.held ?? held(id), prefetched: e.prefetched,
@@ -1400,7 +1492,8 @@ public actor Scheduler {
             $0.offered += lately.slotSeconds
         }
         return SchedulerSnapshot(hosts: hosts, queued: waiting.count, completed: completedCount,
-                                 failures: failures, rejected: rejectedCount, busy: busyCount,
+                                 failures: failures, rejected: rejectedCount, declined: declined,
+                                 rerouted: reroutedCount, busy: busyCount,
                                  unavailable: unavailableCount, hedged: hedgeCount, hedgeWins: hedgeWinCount,
                                  perHour: Double(recent.filter { $0 > cutoff }.count) * 6,
                                  idleWithWorkSeconds: idleWithWork,
