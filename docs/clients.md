@@ -19,7 +19,7 @@ The gateway serves a subset of the OpenAI API on loopback, at
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time; `utilization`, busy slot-seconds over offered ones in the last ten minutes, 0 to 1; the mesh's `wait_seconds`, how long requests waited for a slot, and each host's `request_seconds`, how long they took, each as `p50`, `p95` and `count` over the last ten minutes; `declined`, for the mesh and each host, the requests a model refused that another might take, as `content`, `length` and `unsupported` counts and the `seconds` they took, and the mesh's `rerouted`, how many of those another host then answered; each host's `rejoined`, the times it left and came back, keeping its counts; and each host's `hardware`: `chip`, `performance_cores`, `efficiency_cores`, `gpu_cores`, `memory_bytes` and `model_identifier`, whichever it reported ([design.md](design.md#monitoring)). Nothing that identifies a device |
-| `GET /v1/models` | Every model currently served in the mesh, plus aliases |
+| `GET /v1/models` | Every model currently served in the mesh, plus aliases. Each model's `conflux` object has its `capabilities`, `max_image_dimension`, and `content_filter`, true when the model declines some content |
 | `POST /v1/chat/completions` | One request, including image input |
 
 Requests and responses follow the OpenAI schema, including `response_format`
@@ -140,7 +140,9 @@ Set `model` to one of:
 | Value | Eligible hosts |
 |---|---|
 | An exact artifact ID from `/v1/models` | Only hosts serving that artifact |
-| An alias, for example `any-vision` | Any host whose model has the capability |
+| `any` | Any host |
+| `any-vision` | Any host whose model reads images |
+| `any-vision-unfiltered` | Any host whose model reads images and has no `content_filter` |
 
 To accept a list of models in order of preference:
 
@@ -161,7 +163,10 @@ the model that refused. A refusal that went elsewhere still took its time,
 so the response names the models that declined in `Conflux-Declined`, and
 `/health` counts them, as `declined` and `rerouted`. A client that sees the
 same model decline the same kind of request again and again saves that time
-by leaving the model out of what that kind of request accepts.
+by leaving the model out of what that kind of request accepts. `/v1/models`
+marks the models that decline content with `content_filter: true`, and
+`any-vision-unfiltered` leaves them out. It's listed only while a model it
+accepts is served.
 
 ### Ask for a schema
 

@@ -715,7 +715,10 @@ build. Its guardrails decline some content, and its context is small,
 fit isn't the client's fault, so the host marks it for another host, and the
 gateway tries one that serves an accepted model. The client sees the
 refusal, a `400` with code `content_filter` or `context_length_exceeded`,
-only when there's none. `response_format` becomes a `DynamicGenerationSchema`
+only when there's none. Its `ModelInfo` says it filters content, so
+`/v1/models` marks it `content_filter`, and the `any-vision-unfiltered` alias
+leaves it out. A peer from before that was reported is taken to filter
+content when it serves `apple-on-device`. `response_format` becomes a `DynamicGenerationSchema`
 for its guided generation, read by the same parser as the grammar, so a
 schema malformed for one runtime is malformed for both. What guided
 generation can't enforce, such as `pattern`, `format` or a string's length,

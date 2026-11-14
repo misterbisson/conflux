@@ -11,16 +11,38 @@ public struct ModelInfo: Sendable, Equatable, Codable {
     /// The longest image side worth sending. Larger images cost transfer time
     /// and give the model nothing.
     public var maxImageDimension: Int?
+    /// Whether the model's runtime declines some content, as Apple's
+    /// on-device model's guardrails do, answering `content_filter`. Clients
+    /// that send such content can leave these models out.
+    public var contentFilter: Bool
 
     public enum Capability: String, Sendable, Codable, CaseIterable {
         case text, vision
     }
 
-    public init(id: String, capabilities: Set<Capability>, fingerprint: String, maxImageDimension: Int? = nil) {
+    public init(id: String, capabilities: Set<Capability>, fingerprint: String, maxImageDimension: Int? = nil,
+                contentFilter: Bool = false) {
         self.id = id
         self.capabilities = capabilities
         self.fingerprint = fingerprint
         self.maxImageDimension = maxImageDimension
+        self.contentFilter = contentFilter
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, capabilities, fingerprint, maxImageDimension, contentFilter
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        capabilities = try container.decode(Set<Capability>.self, forKey: .capabilities)
+        fingerprint = try container.decode(String.self, forKey: .fingerprint)
+        maxImageDimension = try container.decodeIfPresent(Int.self, forKey: .maxImageDimension)
+        // A peer from before this was reported filters content only if it
+        // serves Apple's model.
+        contentFilter = try container.decodeIfPresent(Bool.self, forKey: .contentFilter)
+            ?? (id == AppleModelHost.modelID)
     }
 }
 
@@ -31,12 +53,25 @@ public struct ModelChoice: Sendable, Equatable {
         case exact(String)
         case any
         case capability(ModelInfo.Capability)
+        /// A model with the capability and no content filter.
+        case unfiltered(ModelInfo.Capability)
+
+        public func accepts(_ model: ModelInfo) -> Bool {
+            switch self {
+            case .exact(let id): id == model.id
+            case .any: true
+            case .capability(let capability): model.capabilities.contains(capability)
+            case .unfiltered(let capability): model.capabilities.contains(capability) && !model.contentFilter
+            }
+        }
     }
 
     /// In the client's order of preference.
     public var options: [Option]
 
-    public static let aliases: [String: Option] = ["any": .any, "any-vision": .capability(.vision)]
+    public static let aliases: [String: Option] = [
+        "any": .any, "any-vision": .capability(.vision), "any-vision-unfiltered": .unfiltered(.vision),
+    ]
 
     public init(options: [Option]) { self.options = options }
 
@@ -57,12 +92,6 @@ public struct ModelChoice: Sendable, Equatable {
     /// The position of the first option this model satisfies, or nil if none
     /// does. Lower is more preferred.
     public func rank(_ model: ModelInfo) -> Int? {
-        options.firstIndex { option in
-            switch option {
-            case .exact(let id): id == model.id
-            case .any: true
-            case .capability(let capability): model.capabilities.contains(capability)
-            }
-        }
+        options.firstIndex { $0.accepts(model) }
     }
 }
