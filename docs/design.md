@@ -108,7 +108,9 @@ running, sees exactly the free slots. Its owner may instead stop the request,
 the newest first. The host then answers `busy`, which isn't a failure, so the
 gateway sends the request to another host. No slots frees the model once its
 last request ends, and leaves a device's gateway sending all its work to
-peers. `llama-server`'s slots are fixed when it starts.
+peers. Apple's model's slots change the same way, without the memory:
+its requests run in a system process. `llama-server`'s slots are fixed when
+it starts.
 
 ### States
 

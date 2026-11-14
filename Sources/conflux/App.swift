@@ -400,11 +400,21 @@ final class AppModel: ObservableObject {
         var host = settings.host ?? ModelConfig(model: "")
         host.slots = slots
         settings.host = host
+        resize(ConfluxNode.localHostID, to: slots, cancelling: cancelling)
+    }
+
+    /// The same for Apple's model.
+    func setAppleSlots(_ slots: Int, cancelling: Bool = false) {
+        settings.appleModel.slots = slots
+        resize(ConfluxNode.appleHostID, to: slots, cancelling: cancelling)
+    }
+
+    private func resize(_ hostID: String, to slots: Int, cancelling: Bool) {
         guard running else { return }
         let previous = resizing
         resizing = Task { [node] in
             await previous?.value
-            await node.setSlots(slots, cancelling: cancelling)
+            await node.setSlots(slots, cancelling: cancelling, for: hostID)
         }
     }
 

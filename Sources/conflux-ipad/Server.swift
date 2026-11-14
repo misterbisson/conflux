@@ -148,6 +148,16 @@ final class Server {
         startMesh()
     }
 
+    /// Changes how many requests the model runs at once, while it serves.
+    /// Requests running in slots that go finish first, unless `cancelling`.
+    func setSlots(_ slots: Int, cancelling: Bool) {
+        guard running else { return }
+        change { await self.node.setSlots(slots, cancelling: cancelling) }
+    }
+
+    /// Why the model has fewer slots than asked for, when it does.
+    var slotProblem: String? { node.slotProblem }
+
     /// Runs `work` once the node's last start or stop is done.
     private func change(_ work: @escaping @MainActor () async -> Void) {
         let previous = changing

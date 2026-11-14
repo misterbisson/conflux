@@ -167,3 +167,67 @@ public struct CopyButton: View {
         }
     }
 }
+
+/// A host's slots, changed at once while it serves. Fewer slots than
+/// requests running asks whether to let the extra ones finish first, or stop
+/// them now, the newest first, so their gateways send them to other hosts.
+public struct LiveSlotsRow: View {
+    let title: String
+    let value: Int
+    let range: ClosedRange<Int>
+    let running: Int
+    let apply: (_ slots: Int, _ cancelling: Bool) -> Void
+
+    /// Fewer slots than requests running, and how many are left over, while
+    /// it asks.
+    @State private var shrinking: (to: Int, cut: Int)?
+
+    /// `running` is the requests running on the host now, none when it
+    /// isn't serving. `apply` takes the new slots, and whether to stop the
+    /// requests left over.
+    public init(_ title: String = "Slots", value: Int, in range: ClosedRange<Int>, running: Int,
+                apply: @escaping (_ slots: Int, _ cancelling: Bool) -> Void) {
+        self.title = title
+        self.value = value
+        self.range = range
+        self.running = running
+        self.apply = apply
+    }
+
+    public var body: some View {
+        StepperRow(title, value: Binding(get: { value }, set: change), in: range)
+            .confirmationDialog(shrinking.map(Self.question) ?? "",
+                                isPresented: Binding(get: { shrinking != nil }, set: { if !$0 { shrinking = nil } }),
+                                presenting: shrinking) { change in
+                let them = change.cut == 1 ? "It" : "Them"
+                Button("Let \(them) Finish") { apply(change.to, false) }
+                Button("Stop \(them) Now", role: .destructive) { apply(change.to, true) }
+                Button("Keep \(Self.slots(value).capitalized)", role: .cancel) {}
+            } message: { change in
+                Text(Self.explanation(cut: change.cut))
+            }
+    }
+
+    private func change(_ slots: Int) {
+        let cut = slots < value ? running - slots : 0
+        if cut > 0 {
+            shrinking = (slots, cut)
+        } else {
+            apply(slots, false)
+        }
+    }
+
+    static func slots(_ count: Int) -> String { "\(count) \(count == 1 ? "slot" : "slots")" }
+
+    static func question(_ change: (to: Int, cut: Int)) -> String {
+        change.to == 0 ? "Serve no slots?" : "Use \(slots(change.to))?"
+    }
+
+    static func explanation(cut: Int) -> String {
+        cut == 1
+            ? "A request is running in a slot that goes. It can finish there first, or stop now and go to "
+                + "another host with a free slot; with none, its client hears to try again shortly."
+            : "\(cut) requests are running in slots that go. They can finish there first, or stop now and go "
+                + "to other hosts with free slots; with none, their clients hear to try again shortly."
+    }
+}

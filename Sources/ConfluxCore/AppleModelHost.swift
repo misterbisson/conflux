@@ -18,20 +18,31 @@ import ImageIO
 /// Measured on an M2 MacBook Air: about 1 s to read a self-check image, and
 /// about 1.2 requests a second with two at once, with little more from four
 /// or eight. Hence two slots.
-public final class AppleModelHost: LocalHost, @unchecked Sendable {
+public final class AppleModelHost: ResizableHost, @unchecked Sendable {
     /// What clients name it, and what responses report.
     public static let modelID = "apple-on-device"
     public static let defaultSlots = 2
 
     public let id: String
-    public let slots: Int
     public let maxImageDimension: Int
     public let selfCheck: Bool
 
     private let lock = NSLock()
     private var state: HostAvailability = .starting("not started")
     private var identity: ModelInfo
-    private var running = 0
+    /// The slots asked for.
+    private var wanted: Int
+    /// Each request running, by ID.
+    private var requests: [UUID: Running] = [:]
+    /// Runs one request. Apple's model, but for tests.
+    private let generator: @Sendable (AppleModelRequest) async throws -> ChatCompletionResult
+
+    struct Running {
+        let started: Date
+        var work: Task<ChatCompletionResult, any Error>?
+        /// Its slot was taken away, which stopped it.
+        var evicted = false
+    }
     /// Counts starts and stops, so a check that finishes after a stop is
     /// thrown away.
     private var generation = 0
@@ -39,10 +50,17 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
     /// Intelligence is off. The framework sends no notice.
     private let recheck: Duration
 
-    public init(id: String = "apple", slots: Int = AppleModelHost.defaultSlots, maxImageDimension: Int = 1024,
-                selfCheck: Bool = true, recheck: Duration = .seconds(10)) {
+    public convenience init(id: String = "apple", slots: Int = AppleModelHost.defaultSlots,
+                            maxImageDimension: Int = 1024, selfCheck: Bool = true, recheck: Duration = .seconds(10)) {
+        self.init(id: id, slots: slots, maxImageDimension: maxImageDimension, selfCheck: selfCheck,
+                  recheck: recheck, generator: Self.generate)
+    }
+
+    init(id: String, slots: Int, maxImageDimension: Int, selfCheck: Bool, recheck: Duration,
+         generator: @escaping @Sendable (AppleModelRequest) async throws -> ChatCompletionResult) {
         self.id = id
-        self.slots = slots
+        wanted = max(0, slots)
+        self.generator = generator
         self.maxImageDimension = maxImageDimension
         self.selfCheck = selfCheck
         self.recheck = recheck
@@ -70,6 +88,49 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
         var bytes = [UInt8](repeating: 0, count: size)
         guard sysctlbyname("kern.osversion", &bytes, &size, nil, 0) == 0 else { return "unknown" }
         return String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+    }
+
+    /// The slots asked for, or more while requests run in slots taken
+    /// away: they count until they end, so the scheduler, which counts the
+    /// requests running, sees exactly the free slots.
+    public var slots: Int { lock.withLock { max(wanted, requests.count) } }
+
+    /// Runs `slots` requests at once from now on, without stopping. With
+    /// fewer than are running, the extra ones finish, and nothing new starts
+    /// until there's room; or, `cancelling`, the newest stop now, and the
+    /// host answers that their slots were taken away, so their gateways send
+    /// them elsewhere.
+    public func resize(to slots: Int, cancelling: Bool) async {
+        let stopping = lock.withLock { () -> [Task<ChatCompletionResult, any Error>] in
+            wanted = max(0, slots)
+            guard cancelling else { return [] }
+            let live = requests.filter { !$0.value.evicted }.sorted { $0.value.started > $1.value.started }
+            return live.prefix(max(0, live.count - wanted)).compactMap { id, _ in
+                requests[id]?.evicted = true
+                return requests[id]?.work
+            }
+        }
+        stopping.forEach { $0.cancel() }
+        changed()
+    }
+
+    private var observers: [@Sendable () -> Void] = []
+
+    public func observe(_ changed: @escaping @Sendable () -> Void) {
+        lock.withLock { observers.append(changed) }
+    }
+
+    private func changed() {
+        for observer in lock.withLock({ observers }) { observer() }
+    }
+
+    /// Requests running, for tests.
+    var running: Int { lock.withLock { requests.count } }
+
+    /// Makes it available without asking for Apple's model, for tests with
+    /// their own generator.
+    func serveWithoutChecking() {
+        lock.withLock { state = .available }
     }
 
     public var model: ModelInfo? {
@@ -182,16 +243,29 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
         } catch .unsuited(let message) {
             return Self.unsuited(message, code: "unsupported_by_model")
         }
+        let id = UUID()
         guard lock.withLock({ () -> Bool in
-            guard running < slots else { return false }
-            running += 1
+            guard requests.count < wanted else { return false }
+            requests[id] = Running(started: Date())
             return true
-        }) else { throw HostError.unavailable("every slot is busy") }
-        defer { lock.withLock { running -= 1 } }
+        }) else { throw HostError.busy("every slot is busy") }
+        defer { lock.withLock { requests[id] = nil } }
+        let generator = self.generator
+        let work = Task { try await Self.within(deadline) { try await generator(request) } }
+        // Taken away before it began.
+        if lock.withLock({ () -> Bool in
+            requests[id]?.work = work
+            return requests[id]?.evicted ?? false
+        }) { work.cancel() }
 
         do {
-            let result = try await Self.within(deadline) { try await Self.generate(request) }
+            // Cancelling the request's task stops it: a hedged copy that lost.
+            let result = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
             return HostReply(status: 200, body: result.body(model: Self.modelID))
+        } catch where lock.withLock({ requests[id]?.evicted ?? false }) && !Task.isCancelled {
+            // Not this request's fault, nor the host's: its gateway may send
+            // it to another host.
+            throw HostError.busy("its slot was taken away while it ran")
         } catch let error as Unreadable {
             return HostReply(status: 400, body: ChatCompletionResult.error(error.message))
         } catch is DeadlinePassed {

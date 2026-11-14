@@ -210,34 +210,10 @@ struct ContentView: View {
         }
     }
 
-    /// The model's slots, changed at once while conflux runs. Fewer slots
-    /// than requests running asks whether to stop the ones left over.
+    /// The model's slots, changed at once while conflux runs.
     var slotsRow: some View {
-        StepperRow("Slots", value: Binding(get: { host.slots }, set: setSlots), in: 0...32)
-            .confirmationDialog(shrinking.map { $0.to == 0 ? "Serve no slots on this Mac?" : "Use \($0.to) \($0.to == 1 ? "slot" : "slots")?" } ?? "",
-                                isPresented: Binding(get: { shrinking != nil }, set: { if !$0 { shrinking = nil } }),
-                                presenting: shrinking) { change in
-                let them = change.cut == 1 ? "It" : "Them"
-                Button("Let \(them) Finish") { model.setSlots(change.to) }
-                Button("Stop \(them) Now", role: .destructive) { model.setSlots(change.to, cancelling: true) }
-                Button("Keep \(host.slots) \(host.slots == 1 ? "Slot" : "Slots")", role: .cancel) {}
-            } message: { change in
-                Text(change.cut == 1
-                     ? "A request is running in a slot that goes. It can finish there first, or stop now and go to another host with a free slot; with none, its client hears to try again shortly."
-                     : "\(change.cut) requests are running in slots that go. They can finish there first, or stop now and go to other hosts with free slots; with none, their clients hear to try again shortly.")
-            }
-    }
-
-    /// Fewer slots than requests running, and what to do with the ones left
-    /// over, while it asks.
-    @State private var shrinking: (to: Int, cut: Int)?
-
-    func setSlots(_ slots: Int) {
-        let cut = model.running && slots < host.slots ? model.runningHere - slots : 0
-        if cut > 0 {
-            shrinking = (slots, cut)
-        } else {
-            model.setSlots(slots)
+        LiveSlotsRow(value: host.slots, in: 0...32, running: model.running ? model.runningHere : 0) {
+            model.setSlots($0, cancelling: $1)
         }
     }
 
@@ -302,8 +278,10 @@ struct ContentView: View {
                         LabeledContent("Typical request", value: String(format: "%.1f s", typical))
                     }
                 }
-                StepperRow("Slots", value: $model.settings.appleModel.slots, in: 1...8)
-                    .disabled(model.running)
+                LiveSlotsRow(value: model.settings.appleModel.slots, in: 1...8,
+                             running: model.running ? model.appleHost?.active ?? 0 : 0) {
+                    model.setAppleSlots($0, cancelling: $1)
+                }
             }
             Text("""
                 The model Apple Intelligence uses, served as \(AppleModelHost.modelID): text and images, in a system \
@@ -312,7 +290,8 @@ struct ContentView: View {
                 """)
                 .font(.caption).foregroundStyle(.secondary)
             if model.running {
-                Text("Stop conflux to change these.").font(.caption).foregroundStyle(.secondary)
+                Text("Stop conflux to turn it on or off. Its slots change while it runs.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

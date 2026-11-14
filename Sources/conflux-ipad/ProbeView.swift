@@ -449,12 +449,22 @@ struct ProbeView: View {
                     ForEach(pairProblems, id: \.self) { problem in
                         Text(problem).foregroundStyle(.red)
                     }
-                    StepperRow("Slots", value: $slots, in: 1...4)
-                    Picker("Context per slot", selection: $contextPerSlot) {
-                        ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: contextPerSlot),
-                                id: \.self) {
-                            Text("\($0.formatted()) tokens").tag($0)
-                        }
+                }
+                .disabled(server.running || probe.running)
+                // Left enabled while serving: it applies at once.
+                LiveSlotsRow(value: slots, in: 1...4, running: server.running ? server.host?.active ?? 0 : 0) {
+                    slots = $0
+                    server.setSlots($0, cancelling: $1)
+                }
+                .disabled(probe.running)
+                if server.running, let problem = server.slotProblem {
+                    Text("Running \(server.host?.slots ?? 0) of \(slots) slots: \(problem).")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+                Picker("Context per slot", selection: $contextPerSlot) {
+                    ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: contextPerSlot),
+                            id: \.self) {
+                        Text("\($0.formatted()) tokens").tag($0)
                     }
                 }
                 .disabled(server.running || probe.running)
@@ -489,7 +499,8 @@ struct ProbeView: View {
                 }
                 .disabled(server.running || probe.running || model == nil)
                 if server.running {
-                    Text("Stop serving to change these.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Stop serving to change the rest. Slots change while it serves.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
         } header: {

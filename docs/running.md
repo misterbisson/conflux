@@ -31,7 +31,8 @@ the same span. The history is kept in memory, from when conflux opened.
 **Drain** finishes what's running and takes nothing new. **Pause** takes
 nothing new straight away. **Stop** ends serving and unloads the model.
 
-The slots change while conflux runs; the other model settings need a stop.
+The slots change while conflux runs, the model's and Apple's model's; the
+other model settings need a stop.
 More slots are made without reloading the model. Fewer free idle slots at
 once. When requests are running in slots that go, conflux asks whether to let
 them finish first or stop them now. A stopped request goes to another host
@@ -328,7 +329,9 @@ iPad is doing, in type big enough to read across a room: its state, the slots
 in use and how many Macs are connected. Below that, the same chart as the
 Mac's shows its own requests or tokens over the last hour or day, and under
 it the memory left before iPadOS would end conflux, the thermal state, and
-whether it's charging, over the same span, while it serves.
+whether it's charging, over the same span, while it serves. The slots change
+while it serves, as on a Mac, down to one: more slots take more memory, so
+**Check whether it fits** first. The rest needs **Stop serving**.
 
 - **Which Macs.** With **Find my Macs through iCloud Keychain** on, the iPad
   lists itself in iCloud Keychain's device list, and trusts the Macs listed

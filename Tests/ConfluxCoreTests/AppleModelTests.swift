@@ -162,6 +162,75 @@ import Testing
 
 /// A request one host declines goes to another that serves an accepted
 /// model, and the client sees the decline only when there's none.
+/// Apple's model's slots change while it serves. Its generator here holds
+/// each request until the test lets them go, and stops when cancelled.
+@Suite struct AppleModelSlotsTests {
+    final class Hold: @unchecked Sendable {
+        private let lock = NSLock()
+        private var open = false
+        func release() { lock.withLock { open = true } }
+        var isOpen: Bool { lock.withLock { open } }
+    }
+
+    func serving(slots: Int, until hold: Hold) -> AppleModelHost {
+        let host = AppleModelHost(id: "apple", slots: slots, maxImageDimension: 1024, selfCheck: false,
+                                  recheck: .seconds(10)) { _ in
+            while !hold.isOpen { try await Task.sleep(for: .milliseconds(5)) }
+            return ChatCompletionResult(text: "fine", finishReason: "stop", promptTokens: 1, completionTokens: 1,
+                                        promptMs: 0, predictedMs: 0)
+        }
+        host.serveWithoutChecking()
+        return host
+    }
+
+    func ask(_ host: AppleModelHost) -> Task<HostReply, any Error> {
+        Task { try await host.complete(Data(#"{"messages":[{"role":"user","content":"hi"}]}"#.utf8), timeout: 30) }
+    }
+
+    @Test func moreSlotsTakeMoreAtOnce() async throws {
+        let hold = Hold()
+        let host = serving(slots: 1, until: hold)
+        let first = ask(host)
+        #expect(await eventually { host.running == 1 })
+        await #expect(throws: HostError.busy("every slot is busy")) { try await self.ask(host).value }
+        await host.resize(to: 2, cancelling: false)
+        let second = ask(host)
+        #expect(await eventually { host.running == 2 })
+        hold.release()
+        #expect(try await first.value.status == 200)
+        #expect(try await second.value.status == 200)
+    }
+
+    /// The extra requests finish, and count as slots until they do.
+    @Test func fewerSlotsLetRunningRequestsFinish() async throws {
+        let hold = Hold()
+        let host = serving(slots: 2, until: hold)
+        let running = [ask(host), ask(host)]
+        #expect(await eventually { host.running == 2 })
+        await host.resize(to: 1, cancelling: false)
+        #expect(host.slots == 2)
+        await #expect(throws: HostError.busy("every slot is busy")) { try await self.ask(host).value }
+        hold.release()
+        for task in running { #expect(try await task.value.status == 200) }
+        #expect(host.slots == 1)
+    }
+
+    /// Or the newest stop, and hear that their slot was taken away.
+    @Test func fewerSlotsCanStopTheNewest() async throws {
+        let hold = Hold()
+        let host = serving(slots: 2, until: hold)
+        let older = ask(host)
+        #expect(await eventually { host.running == 1 })
+        let newer = ask(host)
+        #expect(await eventually { host.running == 2 })
+        await host.resize(to: 1, cancelling: true)
+        await #expect(throws: HostError.busy("its slot was taken away while it ran")) { try await newer.value }
+        hold.release()
+        #expect(try await older.value.status == 200)
+        #expect(host.slots == 1)
+    }
+}
+
 @Suite struct RetryElsewhereTests {
     let any = ModelChoice(model: "any", preference: nil)
     static let declined = HostReply(status: 400, body: ChatCompletionResult.error("declined", code: "content_filter"),

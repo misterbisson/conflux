@@ -232,12 +232,16 @@ public final class ConfluxNode: @unchecked Sendable {
         await scheduler.setLimit(limit.reason == nil ? nil : limit.slots, reason: limit.reason, for: host.id)
     }
 
-    /// Changes how many requests this device's model runs at once, without
-    /// stopping (`LlamaHost.resize(to:cancelling:)`). None frees the model
-    /// and leaves requests to peers' hosts. Does nothing without a model, or
-    /// with a runtime whose slots can't change, such as `llama-server`.
-    public func setSlots(_ slots: Int, cancelling: Bool) async {
-        let (host, monitor) = lock.withLock { (self.host, self.host.flatMap { monitors[$0.id] }) }
+    /// Changes how many requests one of this device's hosts runs at once,
+    /// without stopping: its model's (`LlamaHost.resize(to:cancelling:)`),
+    /// where none frees the model and leaves requests to peers' hosts, or
+    /// Apple's model's. Does nothing without that host, or with a runtime
+    /// whose slots can't change, such as `llama-server`.
+    public func setSlots(_ slots: Int, cancelling: Bool, for hostID: String = ConfluxNode.localHostID) async {
+        let (host, monitor) = lock.withLock { () -> ((any LocalHost)?, ResourceMonitor?) in
+            let host = [self.host as (any LocalHost)?, apple].compactMap { $0 }.first { $0.id == hostID }
+            return (host, monitors[hostID])
+        }
         guard let host = host as? any ResizableHost else { return }
         await host.resize(to: slots, cancelling: cancelling)
         if let monitor { await Self.limit(host, under: monitor.reading, in: scheduler) }
