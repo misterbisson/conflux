@@ -425,7 +425,10 @@ device, `apple` for Apple's model.
   device serves, the first first. A gateway follows that list: each host
   after the first becomes a host of its own in the gateway's scheduler,
   `peer-<short ID>-<host>` beside the first's `peer-<short ID>`, and leaves
-  when the list drops it. With `Conflux-After: <generation>` and `Conflux-Wait:
+  when the list drops it. The list changes while the device serves, as its
+  owner turns a model on or off: a host turned off leaves the list at once,
+  so gateways send it nothing new, and finishes what it runs, or stops it
+  at once, each request going to another host. With `Conflux-After: <generation>` and `Conflux-Wait:
   <seconds>` (5 at most), the host holds the request until its status has
   changed since that generation, or the wait is over. The gateway always
   has one of these open, waiting a second, so it hears of a freed slot at

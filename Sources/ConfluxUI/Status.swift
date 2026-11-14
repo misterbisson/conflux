@@ -105,6 +105,37 @@ public func stopWarning(running: Int, waiting: Int) -> String? {
     return work + " Stopping cuts \(running + waiting == 1 ? "it" : "them") off."
 }
 
+/// A model being turned off while requests run on it, and what to ask:
+/// whether they finish there first, as when slots are cut, or stop now and
+/// go to other hosts.
+public struct TurningOff: Identifiable, Equatable, Sendable {
+    public enum Model: Sendable { case custom, apple }
+
+    public let model: Model
+    public let running: Int
+    public var id: Model { model }
+
+    public init(_ model: Model, running: Int) {
+        self.model = model
+        self.running = running
+    }
+
+    public var title: String {
+        model == .custom ? "Stop serving the custom model?" : "Stop serving Apple's model?"
+    }
+
+    public var message: String {
+        running == 1
+            ? "A request is running on it. It can finish there first, or stop now and go to another host with a "
+                + "free slot; with none, its client hears to try again shortly."
+            : "\(running) requests are running on it. They can finish there first, or stop now and go to other "
+                + "hosts with free slots; with none, their clients hear to try again shortly."
+    }
+
+    public var finish: String { running == 1 ? "Let It Finish" : "Let Them Finish" }
+    public var stopNow: String { running == 1 ? "Stop It Now" : "Stop Them Now" }
+}
+
 /// A setting stepped up and down, laid out as the pickers around it are: its
 /// name on the left, and its value on the right beside the control.
 public struct StepperRow: View {
