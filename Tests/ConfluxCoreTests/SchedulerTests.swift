@@ -159,6 +159,33 @@ import Testing
         #expect(host.peakConcurrency == 1)
     }
 
+    @Test func ofTheFreeHostsTheQuickestTakesTheRequest() async {
+        // The slower host joined first, so it would win a tie.
+        let slow = FakeHost(id: "slow")
+        let quick = FakeHost(id: "quick")
+        let scheduler = await Scheduler.with([slow, quick])
+        await scheduler.setTypical(12, for: "slow")
+        await scheduler.setTypical(11, for: "quick")
+        for _ in 0..<3 {
+            let outcome = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
+            if case .completed = outcome {} else { Issue.record("\(outcome)") }
+            await scheduler.setTypical(11, for: "quick") // Not what the fake measured.
+        }
+        #expect(quick.callCount == 3)
+        #expect(slow.callCount == 0)
+    }
+
+    @Test func aHostNotYetMeasuredGetsARequest() async {
+        let measured = FakeHost(id: "measured")
+        let new = FakeHost(id: "new")
+        let scheduler = await Scheduler.with([measured, new])
+        await scheduler.setTypical(1, for: "measured")
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
+        if case .completed = outcome {} else { Issue.record("\(outcome)") }
+        #expect(new.callCount == 1)
+        #expect(measured.callCount == 0)
+    }
+
     @Test func doesNotSendWhatCannotFinishInTime() async {
         let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 0.6))
         let scheduler = await Scheduler.with([host])

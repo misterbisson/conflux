@@ -830,8 +830,9 @@ public actor Scheduler {
         var mayWait = false
     }
 
-    /// The most preferred host with a free slot whose typical time fits.
-    /// Failing that, a fast host on another device to send the request
+    /// The most preferred host with a free slot whose typical time fits,
+    /// and of those the quickest. A host not yet measured counts as
+    /// quickest, so it gets a request and a typical time. Failing that, a fast host on another device to send the request
     /// ahead to, where it waits for that host's next free slot.
     ///
     /// Fast is judged against the quickest host the request could use, and
@@ -853,7 +854,11 @@ public actor Scheduler {
                   let rank = rank(entry, for: choice, excluding: excluding, remaining: remaining) else { return nil }
             return (entry, rank)
         }
-        if let best = candidates.min(by: { ($0.rank, -$0.entry.free) < ($1.rank, -$1.entry.free) }) {
+        // Otherwise every tie goes to the host that joined first, slow or
+        // not, while a quicker one sits idle.
+        if let best = candidates.min(by: {
+            ($0.rank, $0.entry.typical ?? 0, -$0.entry.free) < ($1.rank, $1.entry.typical ?? 0, -$1.entry.free)
+        }) {
             return Pick(id: best.entry.host.id, mayWait: fast(best.entry))
         }
 
