@@ -182,20 +182,24 @@ public final class LlamaHost: ManagedHost, ResizableHost, @unchecked Sendable {
     /// that go have finished, or, `cancelling`, those requests stop at once,
     /// the newest first, and their gateways send them elsewhere. None stops
     /// taking work, and the model is freed when its last request ends; more
-    /// than none again loads it.
-    public func resize(to slots: Int, cancelling: Bool) async {
+    /// than none again loads it. Resting, it says `reason`, or that it
+    /// serves no slots.
+    public func resize(to slots: Int, cancelling: Bool, because reason: String?) async {
         enum Step { case nothing, resize(LlamaEngine), unload(LlamaEngine?), load }
         let step = lock.withLock { () -> Step in
             wanted = max(0, slots)
             if stopped { return .nothing }
             if wanted == 0 {
-                guard !resting else { return .nothing }
+                guard !resting else {
+                    state = .paused(reason ?? Self.noSlots)
+                    return .nothing
+                }
                 let loaded = engine
                 generation += 1
                 engine = nil
                 resting = true
                 shortfall = nil
-                state = .paused(Self.noSlots)
+                state = .paused(reason ?? Self.noSlots)
                 return .unload(loaded)
             }
             if resting {
@@ -309,7 +313,15 @@ public protocol LocalHost: InferenceHost {
 
 /// A local host whose slots can change while it serves.
 public protocol ResizableHost: LocalHost {
-    func resize(to slots: Int, cancelling: Bool) async
+    /// None rests the host, saying `reason` if given, or that it serves no
+    /// slots.
+    func resize(to slots: Int, cancelling: Bool, because reason: String?) async
+}
+
+extension ResizableHost {
+    public func resize(to slots: Int, cancelling: Bool) async {
+        await resize(to: slots, cancelling: cancelling, because: nil)
+    }
 }
 
 /// A local host running a model file the person chose, with llama.cpp.

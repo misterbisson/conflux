@@ -312,6 +312,21 @@ struct LlamaHostIntegrationTests {
         #expect(try await ask(host, #","max_tokens":8"#).status == 200)
     }
 
+    /// Rested by memory relief, it says why, and loads again with slots.
+    @Test func restsSayingWhy() async throws {
+        let host = try await started(slots: 1)
+        defer { host.stop() }
+        await host.resize(to: 0, cancelling: true, because: MemoryRelief.reason)
+        #expect(host.slots == 0)
+        #expect(await host.availability == .paused(MemoryRelief.reason))
+        // Its owner choosing none, meanwhile, says so instead.
+        await host.resize(to: 0, cancelling: false)
+        #expect(await host.availability == .paused(LlamaHost.noSlots))
+        await host.resize(to: 1, cancelling: false)
+        #expect(await host.availability == .available)
+        #expect(try await ask(host, #","max_tokens":8"#).status == 200)
+    }
+
     /// Stopped, it stays stopped whatever its slots.
     @Test func stoppedStaysStopped() async throws {
         let host = try await started(slots: 1)

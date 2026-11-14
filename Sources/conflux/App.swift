@@ -66,6 +66,11 @@ final class AppModel: ObservableObject {
     /// conflux's memory footprint: with the model run in the process, the
     /// model's memory.
     @Published private(set) var memory = TimeSeries()
+    /// The Mac's memory pressure, and what resource policy is doing about
+    /// it.
+    @Published private(set) var memoryStatus: MemoryStatus?
+    /// Memory pressure as a level, the highest in each reading.
+    @Published private(set) var pressure = TimeSeries(keeping: .highest)
     /// The thermal state as a level, the highest in each reading.
     @Published private(set) var heat = TimeSeries(keeping: .highest)
     /// The Heat tile's Cool down box, and what resource policy is doing.
@@ -116,6 +121,8 @@ final class AppModel: ObservableObject {
                     self.refused = self.node.refusedConnections
                     self.waiting.append(Double(snapshot.queued))
                     self.memory.append(Double(ProcessMemory.footprint.now))
+                    self.memoryStatus = self.node.memoryStatus
+                    if let status = self.memoryStatus { self.pressure.append(Double(status.level)) }
                     self.heat.append(Double(Thermal.level))
                     self.heatStatus = self.node.heatStatus
                     // A day of minutes changes once a minute at most, and

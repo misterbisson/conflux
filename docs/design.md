@@ -133,7 +133,27 @@ A host refuses work before it hurts the device. It watches:
 - **Memory pressure**, not just free memory. Unified memory is shared by the
   CPU, the GPU and the rest of the system. Sources: `DispatchSource` memory
   pressure events, `os_proc_available_memory()` on iPadOS, Metal's
-  `recommendedMaxWorkingSetSize`.
+  `recommendedMaxWorkingSetSize`. A warning halves a host's slots, and
+  critical pressure pauses it. Pausing frees nothing, though: the model's
+  weights and each slot's context stay loaded, and most of that memory is
+  wired for the GPU, which the system can neither compress nor page out. So
+  when pressure stays critical for 5 seconds, a host whose slots can change
+  (the in-process runtime, on a Mac or an iPad) unloads its model, stopping
+  what runs so gateways send it elsewhere, and says why. Once pressure has
+  been normal for a minute it loads the model again with its owner's
+  slots. A model that brings pressure back to critical within 10 minutes of
+  loading waits twice as long the next time, up to 30 minutes
+  (`MemoryRelief`). `llama-server` can't change its slots, so it's only
+  paused.
+
+  On an iPad, `os_proc_available_memory()` is a limit for conflux alone.
+  With the increased-memory-limit entitlement it can be nearly all of the
+  iPad's memory, more than the device can spare once a model is wired. An
+  8 GB iPad Pro serving a 4B vision model ran the whole device short:
+  iPadOS ended hundreds of other processes, and then conflux, while conflux's
+  own limit still showed room. So the iPad's fit estimate counts on no more
+  than the iPad's memory less 3.5 GB (`ModelFit.systemReserve`), and the
+  iPad shows the device's memory pressure beside its own headroom.
 - **Thermal state** (`ProcessInfo.thermalState`). Fanless devices, meaning
   every iPad and MacBook Air, throttle under sustained load. A host lowers its
   slot count as it heats up, keeping at least one, and pauses at `.critical`.

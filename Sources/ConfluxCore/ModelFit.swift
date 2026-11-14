@@ -53,6 +53,19 @@ public struct ModelFit: Sendable, Equatable {
     /// and Metal rounding buffers up, and memory freed but not returned.
     public static let reserve = 0.25
 
+    /// The device memory kept for iPadOS and the apps it keeps, whatever it
+    /// allows conflux.
+    ///
+    /// The increased-memory-limit entitlement can let conflux use more than
+    /// the device can spare once a model is loaded: its weights and context
+    /// are wired for the GPU, and iPadOS can neither compress nor page them
+    /// out. An 8 GB iPad Pro serving a 4B vision model, well inside the
+    /// 6 GB a quarter's reserve left it, ran the whole device short: iPadOS
+    /// ended hundreds of other processes, and then conflux. So on an 8 GB
+    /// iPad a model and its context can likely use 4.5 GB, and a larger
+    /// iPad keeps the same room.
+    public static let systemReserve: UInt64 = 3584 << 20
+
     /// The room any loaded model takes beyond its files and context: the app
     /// itself, llama.cpp and Metal, and the projector's work on an image.
     public static let base: UInt64 = 512 << 20
@@ -68,10 +81,13 @@ public struct ModelFit: Sendable, Equatable {
     public static let typicalContext: UInt64 = 512 << 20
 
     /// How much of `allowed` a model can likely use: the smaller of it and
-    /// the device's memory, less `reserve`.
+    /// the device's memory, less `reserve`, and no more than the device's
+    /// memory less `systemReserve`.
     public static func usable(allowed: UInt64, physicalMemory: UInt64) -> UInt64 {
-        let ceiling = physicalMemory > 0 ? min(allowed, physicalMemory) : allowed
-        return UInt64(Double(ceiling) * (1 - reserve))
+        guard physicalMemory > 0 else { return UInt64(Double(allowed) * (1 - reserve)) }
+        let share = UInt64(Double(min(allowed, physicalMemory)) * (1 - reserve))
+        let spare = physicalMemory > systemReserve ? physicalMemory - systemReserve : 0
+        return min(share, spare)
     }
 
     /// The largest model, with its projector, that likely loads with one

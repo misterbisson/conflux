@@ -71,7 +71,7 @@ struct ContentView: View {
     @AppStorage("activityRange") private var range = ActivityRange.hour
 
     /// The Mac's side of things on the chart's span: work waiting at the
-    /// gateway, the model's memory, and heat.
+    /// gateway, the model's memory, the Mac's memory pressure, and heat.
     var resources: some View {
         HStack(alignment: .top, spacing: 16) {
             ResourceTile("Waiting", value: "\(model.snapshot?.queued ?? 0)") {
@@ -83,6 +83,9 @@ struct ContentView: View {
                          value: ProcessMemory.gigabytes(UInt64(model.memory.latest ?? 0))
                             + " of \(installed / 1_073_741_824) GB") {
                 Sparkline(model.memory.bins(range), color: .purple, ceiling: Double(installed))
+            }
+            if let status = model.memoryStatus {
+                MemoryPressureTile(status, bins: model.pressure.bins(range))
             }
             HeatTile(model.heatStatus, bins: model.heat.bins(range), setCoolDown: model.setCoolDown)
         }
