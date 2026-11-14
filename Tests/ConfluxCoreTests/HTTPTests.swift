@@ -233,6 +233,29 @@ import Testing
 }
 
 @Suite struct SelfCheckTests {
+    /// Cancelling the task that started a check, partway through, as
+    /// memory relief's timer did to a model it was loading again, doesn't
+    /// stop the check or fail a model that reads its input.
+    @Test func runsToItsEndWhenItsCallerIsCancelled() async throws {
+        let (asked, asking) = AsyncStream<Void>.makeStream()
+        let caller = Task {
+            await SelfCheck.run(vision: false) { body in
+                asking.yield()
+                try await Task.sleep(for: .milliseconds(50))
+                let request = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+                let message = (request?["messages"] as? [[String: Any]])?.first
+                let prompt = ((message?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+                let text = prompt.components(separatedBy: ": ").last ?? ""
+                let answer = ["choices": [["message": ["role": "assistant", "content": text]]]]
+                return HostReply(status: 200, body: try JSONSerialization.data(withJSONObject: answer))
+            }
+        }
+        var probes = asked.makeAsyncIterator()
+        _ = await probes.next()
+        caller.cancel()
+        #expect(await caller.value == nil)
+    }
+
     @Test func matching() {
         #expect(SelfCheck.passes(answer: "The text says: k7-mp3.", expected: "K7MP3"))
         #expect(SelfCheck.passes(answer: "K 7 M P 3", expected: "K7MP3"))

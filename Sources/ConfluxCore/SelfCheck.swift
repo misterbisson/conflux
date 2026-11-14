@@ -98,8 +98,18 @@ public enum SelfCheck {
     /// model reads them every time, while one that reads its input badly
     /// gets some right by luck, and a single probe wouldn't tell the two
     /// apart.
+    ///
+    /// The check runs to its end even if the task that called it is
+    /// cancelled. That cancellation says nothing about the model, and a
+    /// probe it stopped would leave the host Failed until a person changed
+    /// something.
     public static func run(vision: Bool, probes: Int = 3,
-                           complete: (Data) async throws -> HostReply) async -> String? {
+                           complete: @escaping @Sendable (Data) async throws -> HostReply) async -> String? {
+        await Task { await check(vision: vision, probes: probes, complete: complete) }.value
+    }
+
+    private static func check(vision: Bool, probes: Int,
+                              complete: (Data) async throws -> HostReply) async -> String? {
         var misses: [String] = []
         for _ in 0..<probes {
             do {
