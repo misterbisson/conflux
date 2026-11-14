@@ -727,7 +727,20 @@ public actor Scheduler {
             account()
         } else {
             if entry.capacity == 0 {
-                return .unavailable(retryAfter: 30, message: entry.state.detail ?? "this device isn't taking work")
+                switch entry.state {
+                case .paused, .draining, .busy:
+                    // Held back on purpose: paused or draining, resting, or
+                    // limited to no slots by resource policy, as an iPad is
+                    // at critical memory pressure. It answered, with no slot
+                    // to give, so the gateway that sent this learns as much
+                    // from the slots in the answer and sends it elsewhere,
+                    // without counting this host as not answering. Its
+                    // status said so already, but a gateway can send before
+                    // that reaches it.
+                    return .busy(retryAfter: 30)
+                default:
+                    return .unavailable(retryAfter: 30, message: entry.state.detail ?? "this device isn't taking work")
+                }
             }
             guard prefetch, let held = await hold(hostID, deadline: deadline, remaining: remaining) else {
                 if Task.isCancelled { return .cancelled }

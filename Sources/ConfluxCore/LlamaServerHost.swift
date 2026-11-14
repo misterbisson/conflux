@@ -76,7 +76,12 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
 
     /// Identifies the model, starts `llama-server`, waits for it to load, and
     /// runs the self-check. Returns once the host is available or has failed.
+    /// Cancelling the task that calls it doesn't stop it (`LocalHost.start`).
     public func start() async {
+        await Task { await self.load() }.value
+    }
+
+    private func load() async {
         lock.withLock { stopping = false; exits = [] }
         guard let executable = LlamaServerHost.locate(config.executable) else {
             return set(.failed("llama-server not found; install llama.cpp (brew install llama.cpp) or set its path"))

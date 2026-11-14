@@ -305,9 +305,12 @@ struct ProbeView: View {
     /// Each of this iPad's hosts that has served, the model file's first.
     private var activitySeries: [ActivitySeries] {
         let both = server.activity[ConfluxNode.localHostID] != nil && server.activity[ConfluxNode.appleHostID] != nil
-        return [(ConfluxNode.localHostID, both ? "Model file" : "This iPad"),
-                (ConfluxNode.appleHostID, "Apple's model")].compactMap { id, name in
-            server.activity[id].map { ActivitySeries(id: id, name: name, minutes: $0) }
+        return [(ConfluxNode.localHostID, both ? "Model file" : "This iPad", server.host),
+                (ConfluxNode.appleHostID, "Apple's model", server.appleHost)].compactMap { id, name, host in
+            server.activity[id].map {
+                ActivitySeries(id: id, name: name, minutes: $0, model: host?.model?.id,
+                               typicalSeconds: host?.typicalSeconds)
+            }
         }
     }
 
