@@ -207,8 +207,18 @@ swift run -c release conflux serve --identity b --port 8092 --peer "$(swift run 
 | Failed | Can't serve until something changes: see the reason shown, and the log |
 
 When the Mac gets hot or short of memory, or Low Power Mode is on, the host
-halves its slots. At critical heat or memory pressure it pauses until things
-recover.
+halves its slots, keeping at least one. At critical heat or memory pressure it
+pauses until things recover.
+
+**Cool down**, the box in the Heat tile, rests the host at serious heat too,
+until it's back to fair, rather than letting it stay hot. It's off until you
+check it, and it takes effect at once. A device that serves for hours while
+charging stays hot, and heat ages a battery. The tile says what's happening
+after the heat: "resting" while Cool down holds the host back, "halved" while
+conflux has taken slots itself, and "paused" while conflux has paused it,
+when the box is checked and can't be changed, since unchecking it couldn't
+resume anything. iPadOS and macOS don't tell apps when they slow the chip
+down, so the tile shows only what conflux does.
 
 ## If the self-check fails
 
@@ -343,6 +353,11 @@ whether it's charging, over the same span, while it serves.
   awake while it serves.
 - **Only while charging**, by default. Unplugged, it pauses, until it's
   plugged in again or **Serve on battery** is on.
+- **Resting when hot**, with **Cool down** checked in the Heat tile: at
+  serious heat it pauses until it's back to fair ([What the states
+  mean](#what-the-states-mean)). An iPad serves one request at a time, and
+  halving one slot leaves one, so without it an iPad serves on at serious
+  heat.
 - **The first time**, iPadOS asks whether conflux may find devices on the
   local network. Allowing it lets iroh connect to the Macs directly rather
   than through a relay.

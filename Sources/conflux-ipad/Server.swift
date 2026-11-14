@@ -44,6 +44,8 @@ final class Server {
     private(set) var memoryLeft = TimeSeries(keeping: .lowest)
     /// The thermal state as a level, the highest in each reading.
     private(set) var heat = TimeSeries(keeping: .highest)
+    /// The Heat tile's Cool down box, and what resource policy is doing.
+    private(set) var heatStatus = HeatStatus(box: .off)
     /// 0 charging, 1 on battery: the worse in each reading.
     private(set) var power = TimeSeries(keeping: .highest)
 
@@ -59,6 +61,8 @@ final class Server {
         /// set means a Mac forgot it.
         var listedID: String?
         var servesOnBattery = false
+        /// Rest at serious heat, until it's back to fair.
+        var coolDown = false
     }
 
     private var foreground = true
@@ -110,7 +114,8 @@ final class Server {
         let config = ModelConfig(runtime: .inProcess, model: model.path, projector: projector?.path, slots: slots,
                                  contextPerSlot: contextPerSlot, selfCheck: true)
         let node = NodeSettings(host: config, requireToken: false, peers: settings.peers,
-                                iCloudKeychain: settings.iCloudKeychain, gateway: false)
+                                iCloudKeychain: settings.iCloudKeychain, gateway: false,
+                                coolDown: settings.coolDown)
         let directory = settings.iCloudKeychain ? directory : nil
         guard directory != nil || !settings.peers.isEmpty else {
             problem = "No Mac to serve. Turn on iCloud Keychain, or add a Mac's ID below."
@@ -172,6 +177,7 @@ final class Server {
                     self.snapshot = await self.node.scheduler.snapshot()
                     self.memoryLeft.append(Double(Memory.available))
                     self.heat.append(Double(Thermal.level))
+                    self.heatStatus = self.node.heatStatus
                     self.power.append(self.charging ? 0 : 1)
                     if tick % 5 == 0 {
                         self.activity = await self.node.scheduler.activity(
@@ -255,6 +261,14 @@ final class Server {
         Task { await node.setIntent(intent) }
     }
 
+    /// Rests this iPad's model at serious heat, or stops, at once while it
+    /// serves.
+    func setCoolDown(_ on: Bool) {
+        settings.coolDown = on
+        heatStatus.box = on ? .on : .off
+        Task { await node.setCoolDown(on) }
+    }
+
     func setServesOnBattery(_ on: Bool) {
         settings.servesOnBattery = on
         applyIntent()
@@ -333,6 +347,20 @@ final class Server {
     func removePeer(_ id: String) {
         settings.peers.removeAll { $0 == id }
         macsChanged()
+    }
+}
+
+extension Server.Settings {
+    // Settings saved before a field existed still load, rather than starting
+    // over without the Macs added by hand.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = Self()
+        peers = try values.decodeIfPresent([String].self, forKey: .peers) ?? defaults.peers
+        iCloudKeychain = try values.decodeIfPresent(Bool.self, forKey: .iCloudKeychain) ?? defaults.iCloudKeychain
+        listedID = try values.decodeIfPresent(String.self, forKey: .listedID)
+        servesOnBattery = try values.decodeIfPresent(Bool.self, forKey: .servesOnBattery) ?? defaults.servesOnBattery
+        coolDown = try values.decodeIfPresent(Bool.self, forKey: .coolDown) ?? defaults.coolDown
     }
 }
 

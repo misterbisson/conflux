@@ -27,10 +27,14 @@ public struct NodeSettings: Sendable, Equatable, Codable {
     /// serves its model to the Macs' gateways, and uses nobody's host
     /// (docs/plan.md, Phase 3).
     public var gateway: Bool
+    /// Whether this device's hosts rest at serious heat, until it's back to
+    /// fair (`ResourcePolicy`). Off until the owner turns it on.
+    public var coolDown: Bool
 
     public init(host: ModelConfig? = nil, port: UInt16 = 8090, requireToken: Bool = true, peers: [String] = [],
                 iCloudKeychain: Bool = true, listedID: String? = nil,
-                appleModel: AppleModelSettings = AppleModelSettings(), gateway: Bool = true) {
+                appleModel: AppleModelSettings = AppleModelSettings(), gateway: Bool = true,
+                coolDown: Bool = false) {
         self.host = host
         self.port = port
         self.requireToken = requireToken
@@ -39,6 +43,7 @@ public struct NodeSettings: Sendable, Equatable, Codable {
         self.listedID = listedID
         self.appleModel = appleModel
         self.gateway = gateway
+        self.coolDown = coolDown
     }
 
     // Settings saved before a field existed still load.
@@ -52,6 +57,7 @@ public struct NodeSettings: Sendable, Equatable, Codable {
         listedID = try values.decodeIfPresent(String.self, forKey: .listedID)
         appleModel = try values.decodeIfPresent(AppleModelSettings.self, forKey: .appleModel) ?? AppleModelSettings()
         gateway = try values.decodeIfPresent(Bool.self, forKey: .gateway) ?? true
+        coolDown = try values.decodeIfPresent(Bool.self, forKey: .coolDown) ?? false
     }
 }
 
@@ -121,6 +127,8 @@ public final class ConfluxNode: @unchecked Sendable {
     private var apple: AppleModelHost?
     /// Each local host's resource monitor, by host ID.
     private var monitors: [String: ResourceMonitor] = [:]
+    /// Whether local hosts rest at serious heat (`NodeSettings.coolDown`).
+    private var coolDown = false
     private var boundPort: UInt16?
     private var service: HTTPServer?
     private var mesh: Mesh?
@@ -174,7 +182,10 @@ public final class ConfluxNode: @unchecked Sendable {
                 boundPort = port
             }
         }
-        lock.withLock { usesPeers = settings.gateway }
+        lock.withLock {
+            usesPeers = settings.gateway
+            coolDown = settings.coolDown
+        }
         await scheduler.startRefreshing()
 
         // With no slots, a host that can't change its slots isn't started:
@@ -218,18 +229,38 @@ public final class ConfluxNode: @unchecked Sendable {
         let monitor = ResourceMonitor()
         lock.withLock { monitors[host.id] = monitor }
         await scheduler.add(host)
-        let scheduler = self.scheduler
-        monitor.start { reading in
-            Task { await Self.limit(host, under: reading, in: scheduler) }
+        monitor.start { [weak self] reading in
+            Task { await self?.limit(host, under: reading) }
         }
         Task { await host.start() }
     }
 
     /// Holds a host to what resource policy allows of the slots it has now,
     /// or lifts the limit when nothing limits it.
-    private static func limit(_ host: any LocalHost, under reading: ResourceReading, in scheduler: Scheduler) async {
-        let limit = ResourcePolicy.limit(slots: host.slots, reading: reading)
+    private func limit(_ host: any LocalHost, under reading: ResourceReading) async {
+        let limit = ResourcePolicy.limit(slots: host.slots, reading: reading, coolDown: lock.withLock { coolDown })
         await scheduler.setLimit(limit.reason == nil ? nil : limit.slots, reason: limit.reason, for: host.id)
+    }
+
+    /// Rests this device's hosts at serious heat, or stops resting them,
+    /// while they serve.
+    public func setCoolDown(_ on: Bool) async {
+        let watched = lock.withLock { () -> [(any LocalHost, ResourceMonitor)] in
+            coolDown = on
+            return [host as (any LocalHost)?, apple].compactMap { host in
+                host.flatMap { host in monitors[host.id].map { (host, $0) } }
+            }
+        }
+        for (host, monitor) in watched { await limit(host, under: monitor.reading) }
+    }
+
+    /// What the Heat tile shows for this device's hosts now.
+    public var heatStatus: HeatStatus {
+        let (hosts, reading, coolDown) = lock.withLock {
+            ([host as (any LocalHost)?, apple].compactMap { $0 }, monitors.values.first?.reading, coolDown)
+        }
+        return ResourcePolicy.heat(slots: hosts.map(\.slots), reading: reading ?? ResourceMonitor().reading,
+                                   coolDown: coolDown)
     }
 
     /// Changes how many requests this device's model runs at once, without
@@ -240,7 +271,7 @@ public final class ConfluxNode: @unchecked Sendable {
         let (host, monitor) = lock.withLock { (self.host, self.host.flatMap { monitors[$0.id] }) }
         guard let host = host as? any ResizableHost else { return }
         await host.resize(to: slots, cancelling: cancelling)
-        if let monitor { await Self.limit(host, under: monitor.reading, in: scheduler) }
+        if let monitor { await limit(host, under: monitor.reading) }
     }
 
     /// Why this device's model has fewer slots than asked for, when it does.

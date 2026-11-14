@@ -68,6 +68,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var memory = TimeSeries()
     /// The thermal state as a level, the highest in each reading.
     @Published private(set) var heat = TimeSeries(keeping: .highest)
+    /// The Heat tile's Cool down box, and what resource policy is doing.
+    @Published private(set) var heatStatus = HeatStatus(box: .off)
     /// This Mac's endpoint ID, for other devices' peer lists.
     let endpointID: String?
     /// iCloud Keychain's device directory. Only a signed app has one: built
@@ -115,6 +117,7 @@ final class AppModel: ObservableObject {
                     self.waiting.append(Double(snapshot.queued))
                     self.memory.append(Double(ProcessMemory.footprint.now))
                     self.heat.append(Double(Thermal.level))
+                    self.heatStatus = self.node.heatStatus
                     // A day of minutes changes once a minute at most, and
                     // the chart's latest bar fills in within a few seconds.
                     if tick % 5 == 0 {
@@ -406,6 +409,14 @@ final class AppModel: ObservableObject {
             await previous?.value
             await node.setSlots(slots, cancelling: cancelling)
         }
+    }
+
+    /// Rests this Mac's models at serious heat, or stops, at once while
+    /// conflux runs.
+    func setCoolDown(_ on: Bool) {
+        settings.coolDown = on
+        heatStatus.box = on ? .on : .off
+        Task { [node] in await node.setCoolDown(on) }
     }
 
     /// Goes back to the starter model, keeping the other model settings.
