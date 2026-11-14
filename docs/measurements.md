@@ -130,7 +130,7 @@ they come with less control than the results above.
   - an M2 with 24 GB
   - a 13-inch MacBook Pro, M1 (2020)
   - an iPad Pro, M1 (`iPad13,4`)
-  - an `iPad15,6`
+  - a 13-inch iPad Air, M3 (`iPad15,6`)
 
   Each found the others through iCloud Keychain and connected directly, with
   round trips of 10 to 60 ms. They joined over the run: one host at first,
@@ -167,7 +167,7 @@ divided by it.
 | MacBook Pro, M4 Pro | 6.0 s | 600 | none | 0.0 s |
 | M2, 24 GB | 8.7 s | 414 | 18 | 3.4 s |
 | MacBook Pro, M1 | 9.9 s | 364 | 1 | 0.7 s |
-| `iPad15,6` | 14.5 s | 248 | 3 | 0.8 s |
+| iPad Air, M3 | 14.5 s | 248 | 3 | 0.8 s |
 | iPad Pro, M1 | 14.6 s | 247 | 2 | 0.5 s |
 | **All five** | | **1,873** | | |
 
@@ -209,7 +209,8 @@ A few minutes later, near the end of the run:
   difference.
 - **Fanless costs time.** The same M1 chip took about 1.5 times as long in
   an iPad as in a MacBook Pro with a fan. Some of that may be iPadOS's
-  limits rather than heat.
+  limits rather than heat. The M3 iPad Air, two chip generations newer, was
+  no faster than the M1 iPad Pro: 14.5 s against 14.6 s.
 - **This run can't say what the image's token count is worth.** On an M2
   with 24 GB, Qwen3-VL at 1,024 tokens per image took 11.8 s a request
   through the gateway (above). Gemma, at 256, took 8.7 s here, but with much
@@ -218,5 +219,5 @@ A few minutes later, near the end of the run:
 - **Hedging hasn't paid off yet.** All 6 hedges lost. That's little work
   wasted, but worth watching over longer runs.
 
-Not covered: closing a lid mid-run, each host measured alone, a benchmark
-with a known workload, and the `iPad15,6`'s chip.
+Not covered: closing a lid mid-run, each host measured alone, and a
+benchmark with a known workload.
