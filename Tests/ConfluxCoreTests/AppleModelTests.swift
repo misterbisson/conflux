@@ -358,8 +358,72 @@ import Testing
         #expect(model.id == "model-b")
         #expect(picky.callCount == 1)
         #expect(other.callCount == 1)
+        if case .completed(let reply, _) = outcome { #expect(reply.declinedBy == ["apple-on-device"]) }
         let snapshot = await scheduler.snapshot()
         #expect(snapshot.hosts.allSatisfy { $0.failures.total == 0 })
+    }
+
+    /// A decline isn't a failure, but it costs a slot and time, so it's
+    /// counted apart: on the host that declined, by reason, and for the
+    /// mesh, with the request that another host then answered.
+    @Test func aDeclineIsCountedWhereItHappened() async throws {
+        let tooLong = HostReply(status: 400, body: ChatCompletionResult.error("long", code: "context_length_exceeded"),
+                                retryElsewhere: true)
+        let replies = [Self.declined, tooLong]
+        let picky = FakeHost(id: "picky", model: "apple-on-device") { call in
+            try await Task.sleep(for: .milliseconds(20))
+            return replies[(call - 1) % replies.count]
+        }
+        let other = FakeHost(id: "other", model: "model-b", behavior: FakeHost.reply(after: 0.05))
+        let scheduler = await Scheduler.with([picky, other])
+        await scheduler.setTypical(0.01, for: "picky")
+        await scheduler.setTypical(1, for: "other")
+        for _ in 0..<2 {
+            let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(10), key: nil)
+            guard case .completed = outcome else {
+                Issue.record("\(outcome)")
+                return
+            }
+        }
+        let snapshot = await scheduler.snapshot()
+        let declining = try #require(snapshot.hosts.first { $0.id == "picky" })
+        #expect(declining.declined.content == 1)
+        #expect(declining.declined.length == 1)
+        #expect(declining.declined.unsupported == 0)
+        #expect(declining.declined.seconds >= 0.04)
+        #expect(declining.failures.total == 0)
+        #expect(declining.completed == 0)
+        let answering = try #require(snapshot.hosts.first { $0.id == "other" })
+        #expect(answering.declined.total == 0)
+        #expect(snapshot.declined.total == 2)
+        #expect(snapshot.rerouted == 2)
+        #expect(snapshot.rejected == 0)
+    }
+
+    /// A decline passed on to the client is counted as declined by its host,
+    /// but nothing was rerouted.
+    @Test func aDeclinePassedOnIsNotRerouted() async {
+        let picky = FakeHost(id: "picky", model: "apple-on-device") { _ in Self.declined }
+        let scheduler = await Scheduler.with([picky])
+        _ = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(10), key: nil)
+        let snapshot = await scheduler.snapshot()
+        #expect(snapshot.hosts.first?.declined.content == 1)
+        #expect(snapshot.rerouted == 0)
+        #expect(snapshot.rejected == 1)
+    }
+
+    /// A quick refusal mustn't make its host look quick: that would draw
+    /// more requests for it to decline.
+    @Test func aDeclineDoesNotMoveTheTypicalTime() async throws {
+        let picky = FakeHost(id: "picky", model: "apple-on-device") { _ in Self.declined }
+        let other = FakeHost(id: "other", model: "model-b")
+        let scheduler = await Scheduler.with([picky, other])
+        await scheduler.setTypical(5, for: "picky")
+        await scheduler.setTypical(10, for: "other")
+        _ = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: nil)
+        #expect(picky.callCount == 1)
+        let snapshot = await scheduler.snapshot()
+        #expect(snapshot.hosts.first { $0.id == "picky" }?.typicalSeconds == 5)
     }
 
     @Test func theDeclineIsPassedOnWhenNoOtherHostCould() async {
@@ -371,6 +435,7 @@ import Testing
             return
         }
         #expect(reply == Self.declined)
+        #expect(reply.declinedBy.isEmpty)
         #expect(model.id == "apple-on-device")
     }
 
@@ -383,13 +448,27 @@ import Testing
         await scheduler.setTypical(0.01, for: "first")
         await scheduler.setTypical(1, for: "second")
         let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(10), key: nil)
-        guard case .rejected(_, let model) = outcome else {
+        guard case .rejected(let reply, let model) = outcome else {
             Issue.record("\(outcome)")
             return
         }
         #expect(first.callCount == 1)
         #expect(second.callCount == 1)
         #expect(model.id == "model-b")
+        // The model the body names isn't named again.
+        #expect(reply.declinedBy == ["apple-on-device"])
+    }
+
+    /// The client reads the models that declined in a header, and only when
+    /// there were some.
+    @Test func theResponseNamesTheModelsThatDeclined() throws {
+        let model = ModelInfo(id: "model-b", capabilities: [.text], fingerprint: "fake-model-b")
+        var reply = HostReply(status: 200, body: Data("{}".utf8))
+        #expect(Gateway.answer(reply, from: model).header(ContractHeader.declined) == nil)
+        reply.declinedBy = ["apple-on-device", "model-c"]
+        let response = Gateway.answer(reply, from: model)
+        #expect(response.header("conflux-declined") == "apple-on-device, model-c")
+        #expect(response.header("Content-Type") == "application/json")
     }
 
     @Test func onlyHostsServingAnAcceptedModelAreTried() async {

@@ -575,6 +575,11 @@ struct ContentView: View {
                 LabeledContent("Host failures", value: Self.describe(snapshot.failures))
                 LabeledContent("Answered busy · unavailable", value: "\(snapshot.busy) · \(snapshot.unavailable)")
                     .help("Answers of 429, no slot in time, and 503, hosts failed or none up")
+                if snapshot.declined.total > 0 {
+                    LabeledContent("Declined", value: Self.describe(snapshot.declined, rerouted: snapshot.rerouted))
+                        .help("Requests a model declined that another might take, the slot time they took, "
+                              + "and how many another host then answered")
+                }
                 if snapshot.hedged > 0 {
                     LabeledContent("Hedged", value: "\(snapshot.hedged), \(snapshot.hedgeWins) answered first")
                         .help("Copies of straggling requests sent to an idle host at the end of a batch")
@@ -586,6 +591,8 @@ struct ContentView: View {
                     Utilization is the share of slot time spent running requests, and waiting is how long \
                     requests waited here for a slot, both over the last ten minutes. Idle while work waited is \
                     time a host had a free slot while work it could run waited here: it should stay near zero. \
+                    Declined requests are ones a model refused that another might take, such as content Apple's \
+                    model declines: they're sent on to another host, but the time they took is spent. \
                     A peer's host that leaves and comes back keeps its counts.
                     """)
                     .font(.caption).foregroundStyle(.secondary)
@@ -617,6 +624,7 @@ struct ContentView: View {
                          "idle with work \(Self.seconds(host.idleWithWorkSeconds))",
                          host.prefetched > 0 ? "\(host.prefetched) sent ahead" : nil,
                          host.failures.total > 0 ? Self.describe(host.failures) : nil,
+                         host.declined.total > 0 ? "declined \(Self.describe(host.declined))" : nil,
                          // This Mac's hosts leave and come back with Stop and Start.
                          host.rejoined > 0 && host.id.hasPrefix("peer-")
                              ? "rejoined \(host.rejoined) \(host.rejoined == 1 ? "time" : "times")" : nil]
@@ -634,6 +642,19 @@ struct ContentView: View {
         let now = "\(queued) now"
         guard let wait else { return now }
         return "\(now) · waited \(seconds(wait.p50)) median, \(seconds(wait.p95)) p95"
+    }
+
+    /// Declines by reason, and the slot time they took.
+    static func describe(_ declined: DeclineCounts) -> String {
+        let reasons = [(declined.content, "content"), (declined.length, "too long"),
+                       (declined.unsupported, "unsupported")]
+            .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
+        return (reasons + [seconds(declined.seconds)]).joined(separator: ", ")
+    }
+
+    /// The mesh's declines, and how many another host then answered.
+    static func describe(_ declined: DeclineCounts, rerouted: Int) -> String {
+        "\(describe(declined)) · \(rerouted) answered elsewhere"
     }
 
     static func describe(_ failures: FailureCounts) -> String {

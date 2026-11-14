@@ -116,6 +116,10 @@ public struct HostReply: Sendable, Equatable {
     /// host that serves an accepted model, and passes this on only when
     /// there's none.
     public var retryElsewhere: Bool
+    /// Set by the gateway, not the host: the models that declined the
+    /// request before this answer, in the order they did, each once. The
+    /// client reads them in `Conflux-Declined`.
+    public var declinedBy: [String] = []
 
     public init(status: Int, body: Data, model: ModelInfo? = nil, retryElsewhere: Bool = false) {
         self.status = status

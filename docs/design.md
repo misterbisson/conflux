@@ -265,7 +265,9 @@ answers it the moment its slots change ([The host protocol](#the-host-protocol))
 A freed slot reaches the gateway in half a round trip, and its next request
 follows at once. When more than one host has a free slot, the request goes
 to the quickest by typical time, or to one not yet timed, so it gets a
-typical time. Two things close the remaining gap:
+typical time. A host's typical time is of the requests it completed: a
+refusal, often quick, would make it look faster than it is and send it more
+to refuse. Two things close the remaining gap:
 
 - **One request ahead, on fast hosts.** When no host has a free slot, the
   gateway sends a request ahead to a fast host, where it waits for that
@@ -345,6 +347,16 @@ USE method asks of a resource, a host's slots here, with throughput:
   for the tail it hides.
 - **Errors**: failures by kind (not answering, server error, busy, out of
   the client's time), for the mesh and by host.
+- **Declines**: requests a host refused that another might take, by reason
+  (content the model declined, too long for it, something it doesn't do),
+  and the seconds they took, for the mesh and by host; and for the mesh,
+  how many another host then answered (`rerouted`). They aren't failures
+  and don't count against a host, but each holds a slot and spends the
+  request's time for nothing, so a mesh that sends many requests to a
+  model that declines them is slower than its utilization suggests. The
+  declined time is already in utilization, as busy slot-seconds. Each
+  response names the models that declined it first, in `Conflux-Declined`
+  ([clients.md](clients.md#record-which-model-answered-per-response)).
 - Completions, and completions per hour.
 
 The window shows them, and so does `GET /health` for a client with the token

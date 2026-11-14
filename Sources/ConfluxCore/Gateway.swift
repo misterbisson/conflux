@@ -7,6 +7,9 @@ public enum ContractHeader {
     public static let models = "Conflux-Models"
     public static let idempotencyKey = "Idempotency-Key"
     public static let retryAfter = "Retry-After"
+    /// On a response, the models that declined the request before the one
+    /// the response names, in the order they did: `model-a, model-b`.
+    public static let declined = "Conflux-Declined"
 }
 
 /// The OpenAI-compatible API clients talk to, on loopback.
@@ -79,6 +82,10 @@ public final class Gateway: Sendable {
              "deadline": counts.deadline]
         }
         func seconds(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+        func declined(_ counts: DeclineCounts) -> [String: Any] {
+            ["content": counts.content, "length": counts.length, "unsupported": counts.unsupported,
+             "seconds": seconds(counts.seconds)]
+        }
         /// A fraction, 0 to 1, to three places.
         func fraction(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
         func percentiles(_ value: Percentiles) -> [String: Any] {
@@ -88,7 +95,7 @@ public final class Gateway: Sendable {
             var entry: [String: Any] = [
                 "id": host.id, "state": host.state.label.lowercased(), "slots": host.slots,
                 "capacity": host.capacity, "active": host.active, "completed": host.completed,
-                "per_hour": host.perHour, "failures": failures(host.failures),
+                "per_hour": host.perHour, "failures": failures(host.failures), "declined": declined(host.declined),
                 "idle_with_work_seconds": seconds(host.idleWithWorkSeconds),
                 "held": host.held, "prefetched": host.prefetched, "rejoined": host.rejoined,
             ]
@@ -103,6 +110,7 @@ public final class Gateway: Sendable {
         var mesh: [String: Any] = [
             "queued": snapshot.queued, "completed": snapshot.completed, "per_hour": snapshot.perHour,
             "failures": failures(snapshot.failures),
+            "declined": declined(snapshot.declined), "rerouted": snapshot.rerouted,
             "answered": ["rejected": snapshot.rejected, "busy": snapshot.busy,
                          "unavailable": snapshot.unavailable],
             "idle_with_work_seconds": seconds(snapshot.idleWithWorkSeconds),
@@ -150,12 +158,8 @@ public final class Gateway: Sendable {
         let key = request.header(ContractHeader.idempotencyKey).flatMap { $0.isEmpty ? nil : $0 }
 
         switch await scheduler.submit(request.body, choice: choice, deadline: deadline, key: key) {
-        case .completed(let reply, let model):
-            return HTTPResponse(status: reply.status, headers: [("Content-Type", "application/json")],
-                                body: Gateway.attribute(reply.body, to: model))
-        case .rejected(let reply, let model):
-            return HTTPResponse(status: reply.status, headers: [("Content-Type", "application/json")],
-                                body: Gateway.attribute(reply.body, to: model))
+        case .completed(let reply, let model), .rejected(let reply, let model):
+            return Gateway.answer(reply, from: model)
         case .busy(let retryAfter):
             return Gateway.error(429, "every slot is busy; try again shortly", type: "rate_limit_error",
                                  code: "busy", headers: [(ContractHeader.retryAfter, String(retryAfter))])
@@ -169,6 +173,16 @@ public final class Gateway: Sendable {
             return Gateway.error(503, "the request was cancelled", type: "server_error", code: "unavailable",
                                  headers: [(ContractHeader.retryAfter, "1")])
         }
+    }
+
+    /// A runtime's answer, passed on: attributed to the model that ran, and
+    /// naming any that declined it first.
+    static func answer(_ reply: HostReply, from model: ModelInfo) -> HTTPResponse {
+        var headers = [("Content-Type", "application/json")]
+        if !reply.declinedBy.isEmpty {
+            headers.append((ContractHeader.declined, reply.declinedBy.joined(separator: ", ")))
+        }
+        return HTTPResponse(status: reply.status, headers: headers, body: Gateway.attribute(reply.body, to: model))
     }
 
     /// Sets `model` and `system_fingerprint` to what actually ran, whatever

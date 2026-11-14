@@ -18,7 +18,7 @@ The gateway serves a subset of the OpenAI API on loopback, at
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time; `utilization`, busy slot-seconds over offered ones in the last ten minutes, 0 to 1; the mesh's `wait_seconds`, how long requests waited for a slot, and each host's `request_seconds`, how long they took, each as `p50`, `p95` and `count` over the last ten minutes; each host's `rejoined`, the times it left and came back, keeping its counts; and each host's `hardware`: `chip`, `performance_cores`, `efficiency_cores`, `gpu_cores`, `memory_bytes` and `model_identifier`, whichever it reported ([design.md](design.md#monitoring)). Nothing that identifies a device |
+| `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time; `utilization`, busy slot-seconds over offered ones in the last ten minutes, 0 to 1; the mesh's `wait_seconds`, how long requests waited for a slot, and each host's `request_seconds`, how long they took, each as `p50`, `p95` and `count` over the last ten minutes; `declined`, for the mesh and each host, the requests a model refused that another might take, as `content`, `length` and `unsupported` counts and the `seconds` they took, and the mesh's `rerouted`, how many of those another host then answered; each host's `rejoined`, the times it left and came back, keeping its counts; and each host's `hardware`: `chip`, `performance_cores`, `efficiency_cores`, `gpu_cores`, `memory_bytes` and `model_identifier`, whichever it reported ([design.md](design.md#monitoring)). Nothing that identifies a device |
 | `GET /v1/models` | Every model currently served in the mesh, plus aliases |
 | `POST /v1/chat/completions` | One request, including image input |
 
@@ -62,6 +62,17 @@ A refusal names its model too. When a model refuses a request, the `400`
 carries `model` and `system_fingerprint` beside `error`, naming the model that
 refused. If several refused it in turn, that's the last of them. Errors from
 the gateway itself, such as `429` and `503`, name no model, because none ran.
+
+When models declined a request before the one the response names, and the
+gateway sent it on, the response says which in `Conflux-Declined`, in the
+order they declined, each once:
+
+```
+Conflux-Declined: apple-on-device
+```
+
+A response without it was answered, or refused, by the first model that
+tried.
 
 | Field | Contents |
 |---|---|
@@ -146,7 +157,11 @@ that way, the gateway tries another host serving a model the request
 accepts, so accepting more than one model avoids the refusal. With nowhere
 else to go, the client gets `400` with `error.code` set to `content_filter`
 or `context_length_exceeded`, as OpenAI's API names them, and `model` naming
-the model that refused.
+the model that refused. A refusal that went elsewhere still took its time,
+so the response names the models that declined in `Conflux-Declined`, and
+`/health` counts them, as `declined` and `rerouted`. A client that sees the
+same model decline the same kind of request again and again saves that time
+by leaving the model out of what that kind of request accepts.
 
 ### Ask for a schema
 
