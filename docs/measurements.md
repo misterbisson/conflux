@@ -114,3 +114,84 @@ a message's text and image parts the way llama.cpp does.
   host's slot count.
 - The mesh's gain comes from adding devices, not from batching on small ones.
   That's the case Phase 2 is for.
+
+## Mesh: three Macs and two iPads
+
+The first numbers from a real mesh, read from the app's window while a client
+ran its own work through the gateway. They aren't a `conflux-bench` run, so
+they come with less control than the results above.
+
+- **Devices:** the gateway's Mac (48 GB), a second Mac, an M1 MacBook Pro
+  (2020), an iPad Pro with M1 (`iPad13,4`) and an `iPad15,6`. Every one
+  found the others through iCloud Keychain and connected directly, with
+  round trips of 10 to 60 ms.
+- **Model:** Gemma 3 4B-it, Q4_K_M, with its F16 projector
+  ([Gemma Terms of Use](https://ai.google.dev/gemma/terms)), on every host
+- **Runtime:** llama.cpp build 12110, in-process, conflux 0.8.0
+- **Settings:** 1 slot on every host, 4,096 tokens of context, largest image
+  side 1,024 px, self-check on
+- **Workload:** a client's own images, about 1,600 px on the longest side,
+  which hosts scale to 1,024 px. Gemma reads each as 256 tokens, so a request
+  is about 350 to 430 prompt tokens, and the answers are short, 15 to 25
+  generated tokens. The client kept up to 8 requests in flight.
+- **Date:** 2026-11-13
+
+### Each host
+
+From the gateway's Monitoring section, partway through the run, with 1,788
+requests completed since the gateway started. The ceiling is what one slot
+could do at the host's typical request time: 3,600 s divided by it.
+
+| Host | Typical request | Ceiling | Per hour | Idle with work |
+|---|---|---|---|---|
+| Gateway's Mac, 48 GB | 6.0 s | 600 | 384 | 0.0 s |
+| Second Mac | 8.7 s | 414 | 312 | 3.4 s |
+| M1 MacBook Pro | 9.9 s | 364 | 228 | 0.7 s |
+| `iPad15,6` | 14.5 s | 248 | 210 | 0.8 s |
+| iPad Pro, M1 | 14.6 s | 247 | 168 | 0.5 s |
+| **Mesh** | | **1,873** | **1,302** | |
+
+A peer's typical time is measured at the gateway, so it includes the round
+trip, which is too small to matter here.
+
+### The mesh
+
+| Point in the run | Completed | Per hour | Idle while work waited |
+|---|---|---|---|
+| Early | 1,639 | 408 | 3.3 s |
+| Middle (the table above) | 1,788 | 1,302 | 5.6 s |
+| Late | 1,893 | 1,932 | 7.0 s |
+
+Across the run, 3 requests got a busy answer from a host, none came back
+busy or unavailable to the client, 6 were hedged onto a second host, and no
+hedge answered first. The window showed 1 to 2 failed requests.
+
+### What this shows
+
+- **The mesh reached the sum of its hosts.** Late in the run, the mesh
+  completed 1,932 an hour, against about 1,870 for the hosts' ceilings
+  added together. Phase 2 asks for the mesh's throughput to come close to
+  the sum of each host's own. The ceilings are worked out from typical
+  times, not measured alone, so this is close rather than exact. Earlier,
+  at 70% of the ceilings, idle-with-work time stayed near zero, so the
+  hosts weren't waiting on the scheduler. Most likely the client hadn't yet
+  sent work fast enough to fill five slots.
+- **Idle-with-work time stays near zero.** 7.0 s in total over about 250
+  requests and five hosts. Fast hosts took requests ahead as designed: the
+  second Mac took 18.
+- **Image reading sets the pace, and GPU compute sets image reading.** With
+  short answers, almost all of a request is reading the image. The 48 GB
+  Mac is about 1.65 times as fast as the M1 MacBook Pro, closer to the
+  difference in GPU compute than to the difference in memory bandwidth.
+- **Fanless costs time.** The same M1 chip took about 1.5 times as long in
+  an iPad as in a MacBook Pro with a fan. Some of that may be iPadOS's
+  limits rather than heat.
+- **The image's token count is the main lever.** Gemma's 256 tokens per
+  image, against Qwen3-VL's 1,024, is a large part of why these requests
+  are faster than the M2 results above. That only holds for work that
+  Gemma's smaller view of each image reads correctly.
+- **Hedging hasn't paid off yet.** All 6 hedges lost. That's little work
+  wasted, but worth watching over longer runs.
+
+Not covered: closing a lid mid-run, a mesh benchmark with a known workload,
+and the chips of the second Mac and the `iPad15,6`.
