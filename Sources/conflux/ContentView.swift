@@ -475,6 +475,7 @@ struct ContentView: View {
             let live = connected ? host : nil
             let parts = [source(of: peer),
                          model.running ? status.map(\.path.label) : nil,
+                         host?.hardware?.summary,
                          live?.model?.id,
                          live.flatMap { $0.capacity > 0 ? "\($0.active) busy of \($0.capacity)" : nil },
                          host.flatMap { $0.completed > 0 ? "\($0.completed) completed" : nil }].compactMap { $0 }
@@ -540,7 +541,8 @@ struct ContentView: View {
                 Spacer()
                 Text("\(Int(host.perHour.rounded())) per hour").monospacedDigit()
             }
-            let parts = ["\(host.completed) completed",
+            let parts = [host.hardware?.summary,
+                         "\(host.completed) completed",
                          host.typicalSeconds.map { String(format: "typical %.1f s", $0) },
                          "idle with work \(Self.seconds(host.idleWithWorkSeconds))",
                          host.prefetched > 0 ? "\(host.prefetched) sent ahead" : nil,

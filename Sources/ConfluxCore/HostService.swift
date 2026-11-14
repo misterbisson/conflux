@@ -60,8 +60,11 @@ struct HostStatus: Codable, Equatable {
     /// Counts the host's status changes, for `Conflux-After`. Nil from
     /// hosts before host pull, which answer at once.
     var generation: Int?
+    /// What kind of device it is: chip, cores and memory, nothing that
+    /// identifies it. Nil from hosts before it was added.
+    var hardware: HardwareInfo?
 
-    init(_ host: HostSnapshot?, generation: Int? = nil) {
+    init(_ host: HostSnapshot?, generation: Int? = nil, hardware: HardwareInfo? = HardwareInfo.current) {
         self.protocol = HostProtocol.version
         model = host?.model
         capacity = host?.capacity ?? 0
@@ -70,6 +73,7 @@ struct HostStatus: Codable, Equatable {
         freeSeconds = host?.freeSeconds
         held = host?.held ?? 0
         self.generation = generation
+        self.hardware = hardware
         switch host?.state {
         case nil:
             (availability, detail) = ("offline", "this device isn't serving a model")

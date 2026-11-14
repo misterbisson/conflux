@@ -105,7 +105,8 @@ throughput, and never hits a client timeout while the mesh is busy.
   compatible work waits. *Built*: in the window's Monitoring section and in
   `/health` for clients with the token. Peers count their own free time, so
   a gateway sees the round trips its peers sit idle for
-  ([design.md](design.md#monitoring)).
+  ([design.md](design.md#monitoring)). Each host reports its hardware class,
+  chip, cores and memory, so results can name each device's chip.
 
 **Done when:**
 

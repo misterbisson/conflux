@@ -83,6 +83,10 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         }
     }
 
+    /// What the peer last said about its hardware, kept while it's away:
+    /// a device doesn't change kind.
+    public var hardware: HardwareInfo? { lock.withLock { status?.hardware } }
+
     public func observe(_ changed: @escaping @Sendable () -> Void) {
         lock.withLock { self.changed = changed }
     }

@@ -108,3 +108,18 @@ import Testing
         #expect(Machine.swapUsedMB() != nil)
     }
 }
+
+@Suite struct MachineTests {
+    @Test func namesTheGPUCoresWhenKnown() {
+        #expect(Machine(chip: "Apple M4 Pro", gpuCores: 20, memoryGB: 48, os: "test").description
+            == "Apple M4 Pro, 20-core GPU, 48 GB")
+        #expect(Machine(chip: "Apple M2", memoryGB: 24, os: "test").description == "Apple M2, 24 GB")
+    }
+
+    /// Reports from before GPU cores were recorded still read.
+    @Test func readsAReportWithoutGPUCores() throws {
+        let older = #"{"chip": "Apple M2", "memoryGB": 24, "os": "test"}"#
+        let machine = try JSONDecoder().decode(Machine.self, from: Data(older.utf8))
+        #expect(machine == Machine(chip: "Apple M2", memoryGB: 24, os: "test"))
+    }
+}

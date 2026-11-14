@@ -284,11 +284,15 @@ final class Probe {
     // MARK: Sharing
 
     /// The results as a Markdown table, to paste into
-    /// docs/measurements.md. Device kind and memory only: nothing that
+    /// docs/measurements.md. Device kind, chip and memory only: nothing that
     /// identifies this iPad or its owner.
     var summary: String {
+        let hardware = HardwareInfo.current
+        let chip = [hardware.chip, hardware.cpuCores, hardware.gpuCores.map { "\($0)-core GPU" }]
+            .compactMap { $0 }.joined(separator: ", ")
         var lines = [
-            "conflux memory probe: \(Memory.machine), iPadOS \(UIDevice.current.systemVersion), "
+            "conflux memory probe: \(Memory.machine)\(chip.isEmpty ? "" : " (\(chip))"), "
+                + "iPadOS \(UIDevice.current.systemVersion), "
                 + "\(Memory.gigabytes(ProcessInfo.processInfo.physicalMemory)) of memory, "
                 + "\(Memory.gigabytes(limitAtLaunch)) allowed at launch",
             "",

@@ -413,6 +413,12 @@ struct ProbeView: View {
     private var device: some View {
         Section("This iPad") {
             LabeledContent("Model", value: Memory.machine)
+            if let chip = HardwareInfo.current.chip {
+                LabeledContent("Chip", value: chip)
+            }
+            if let cores = HardwareInfo.current.cpuCores {
+                LabeledContent("CPU", value: cores)
+            }
             LabeledContent("iPadOS", value: UIDevice.current.systemVersion)
             LabeledContent("Memory", value: Memory.gigabytes(ProcessInfo.processInfo.physicalMemory))
             LabeledContent("Allowed at launch", value: Memory.gigabytes(probe.limitAtLaunch))

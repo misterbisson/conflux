@@ -312,6 +312,26 @@ host's activity by the minute: requests completed and failed, and the tokens
 read and written, from the `usage` and `timings` in each answer. The status
 charts show it. It's kept in memory, and a host that leaves keeps its history.
 
+Each host also says what kind of device it runs on, so a measurement can name
+every device's chip without anyone looking it up, and throughput can be read
+against GPU cores and memory. The window's Mesh and Monitoring rows show it,
+as `M4 Pro, 16-core GPU, 48 GB`, and `/health` gives it in full. A host
+reports, in its status's `hardware`:
+
+| Field | On a Mac | On an iPad |
+|---|---|---|
+| `chip` | `machdep.cpu.brand_string`, such as `Apple M4 Pro` | Metal's name for the GPU, without ` GPU`, such as `Apple M1`, when the CPU's brand string doesn't name the chip |
+| `performance_cores`, `efficiency_cores` | `hw.perflevel0.physicalcpu`, `hw.perflevel1.physicalcpu` | the same |
+| `gpu_cores` | IOKit: the `AGXAccelerator`'s `gpu-core-count` | left out: iPadOS has no IOKit for apps |
+| `memory_bytes` | `hw.memsize` | the same |
+| `model_identifier` | `hw.model`, such as `Mac16,8` | `hw.machine`, such as `iPad13,4` |
+
+A field the system doesn't give is left out, never guessed from a table of
+models. It's the class of hardware only: no serial number, hostname,
+hardware UUID or anything else that tells one device, or its owner, from
+another of the same kind. The field is optional, so hosts from before it
+was added still work, and show no hardware.
+
 Idle-with-work is measured where it happens. For this Mac's own host, the
 gateway holds the slots, and the count is exact: seconds the host had a free
 slot while a request it could run waited. A host on another device may have
@@ -369,8 +389,8 @@ apple-iroh lets conflux name its own ALPN.
 - `GET /conflux/0/host`: the host's model, availability, the slots it takes
   work in now, how many are busy, how many requests are held waiting for a
   slot (`held`), its typical request time, how many seconds it has had a free
-  slot since it started (`free_seconds`), and `generation`, which counts its
-  status changes. With `Conflux-After: <generation>` and `Conflux-Wait:
+  slot since it started (`free_seconds`), the hardware it runs on
+  (`hardware`, below), and `generation`, which counts its status changes. With `Conflux-After: <generation>` and `Conflux-Wait:
   <seconds>` (5 at most), the host holds the request until its status has
   changed since that generation, or the wait is over. The gateway always
   has one of these open, waiting a second, so it hears of a freed slot at

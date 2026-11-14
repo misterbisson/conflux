@@ -2,7 +2,10 @@
 
 Results from [phase-0.md](phase-0.md)'s procedure, one device class at a
 time. Each entry names the chip, memory, model and runtime. Raw reports stay
-on the machine that made them.
+on the machine that made them. Each host reports its chip, GPU cores and
+memory, and the window's Mesh and Monitoring rows show them
+([design.md](design.md#monitoring)), as does `conflux-bench`'s report and the
+iPad's Share results.
 
 ## M2, 24 GB (fanless)
 
