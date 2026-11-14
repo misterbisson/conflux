@@ -205,15 +205,15 @@ contribution is measured against the effort of keeping it there.
   the one it means in `Conflux-Host`, without a new protocol version
   ([design.md](design.md#the-host-protocol)). It follows `response_format`
   with its guided generation, and sends a schema asking for what that can't
-  enforce, such as a `pattern`, to another host.
+  enforce, such as a `pattern`, to another host. An iPad serves it too,
+  beside its model file or alone ([running.md](running.md#on-an-ipad)).
+  It runs outside the app's memory limit, which may make the 8 GB iPad Pro
+  a useful host.
 
-  *Left*, in order:
-  1. Measurements: how many tokens an image costs, throughput against
-     Qwen3-VL-4B on the same images, both models at once on one Mac,
-     whether it slows in the background, and how often the default
-     guardrails decline ordinary images.
-  2. Apple's model in the iPad probe. It runs outside the app's memory
-     limit, which may make the 8 GB iPad Pro a useful host.
+  *Left*: measurements: how many tokens an image costs, throughput against
+  Qwen3-VL-4B on the same images, both models at once on one Mac, how an
+  iPad compares, whether it slows in the background, and how often the
+  default guardrails decline ordinary images.
 - **A starter model in the app**, so a first request works before anyone
   has found a model. *Built*: SmolVLM-256M-Instruct (Apache 2.0), Q8_0 with
   its Q8_0 projector, about 280 MB together, served until the person chooses
