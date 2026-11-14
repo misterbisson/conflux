@@ -508,8 +508,10 @@ public actor Scheduler {
         let first: UUID
         var copies: [UUID: (lease: Lease, model: ModelInfo, started: Date)] = [:]
         var hedged = false
-        /// Hosts where a copy failed while another ran on.
+        /// Hosts where a copy failed, or was declined, while another ran on.
         var failed: Set<String> = []
+        /// The models that declined a copy while another ran on, in order.
+        var declinedBy: [String] = []
         let continuation: CheckedContinuation<Answer, Never>
     }
 
@@ -519,6 +521,8 @@ public actor Scheduler {
         let model: ModelInfo
         let result: Result<HostReply, HostError>
         let failed: Set<String>
+        /// The models that declined a copy while another ran on.
+        let declinedBy: [String]
     }
 
     private var attempts: [UUID: Attempt] = [:]
@@ -772,6 +776,7 @@ public actor Scheduler {
             let answer = await attempt(body, lease: lease, model: model, choice: choice, tried: tried,
                                        remaining: remaining)
             tried.formUnion(answer.failed)
+            for declining in answer.declinedBy where !declinedBy.contains(declining) { declinedBy.append(declining) }
             let hostID = answer.host
             switch answer.result {
             case .success(var reply):
@@ -1197,16 +1202,32 @@ public actor Scheduler {
     private func settle(_ id: UUID, lease: Lease, result: Result<HostReply, HostError>) {
         copies[lease.id] = nil
         guard var attempt = attempts[id], let copy = attempt.copies.removeValue(forKey: lease.id) else { return }
-        if case .failure(let error) = result, !attempt.copies.isEmpty {
-            if error != .cancelled { attempt.failed.insert(lease.host) }
-            attempts[id] = attempt
-            return
+        if !attempt.copies.isEmpty {
+            switch result {
+            case .failure(let error):
+                if error != .cancelled { attempt.failed.insert(lease.host) }
+                attempts[id] = attempt
+                return
+            case .success(let reply) where reply.retryElsewhere && !(200..<300).contains(reply.status):
+                // Declined here, often quickly, by a copy's host: the other
+                // copy may yet answer, so it runs on rather than being
+                // cancelled for a refusal.
+                attempt.failed.insert(lease.host)
+                let declining = (reply.model ?? copy.model).id
+                if !attempt.declinedBy.contains(declining) { attempt.declinedBy.append(declining) }
+                attempts[id] = attempt
+                return
+            case .success:
+                break
+            }
         }
         attempts[id] = nil
         for other in attempt.copies.values { cancel(other.lease) }
-        if case .success = result, lease.id != attempt.first { hedgeWinCount += 1 }
+        if case .success(let reply) = result, (200..<300).contains(reply.status), lease.id != attempt.first {
+            hedgeWinCount += 1
+        }
         attempt.continuation.resume(returning: Answer(host: lease.host, model: copy.model, result: result,
-                                                      failed: attempt.failed))
+                                                      failed: attempt.failed, declinedBy: attempt.declinedBy))
     }
 
     /// Stops a copy. A host on another device is told, and answers the copy

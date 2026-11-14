@@ -311,7 +311,9 @@ never looks like a dead one. See [clients.md](clients.md).
   first answer goes to the client and the other copy is cancelled: a host
   this gateway runs stops its task, and a peer's host is told by request ID
   ([The host protocol](#the-host-protocol)). A cancelled copy isn't a
-  failure. A copy that fails while the other runs waits for the other. Both
+  failure. A copy that fails while the other runs waits for the other, and
+  so does a copy a model declines: a refusal, often quick, isn't the answer
+  while the other copy may still give one. Both
   copies run inside the client's deadline, so the answer still comes in
   time, and a request with an `Idempotency-Key` still has one result. As
   soon as any request has to wait, copies still running are cancelled and

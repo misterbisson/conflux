@@ -52,6 +52,36 @@ import Testing
         #expect(await scheduler.snapshot().hosts.allSatisfy { $0.failures.total == 0 })
     }
 
+    /// A copy that's declined, often at once, doesn't settle the request:
+    /// the first copy runs on and answers, rather than being cancelled and
+    /// starting over.
+    @Test func aDeclinedCopyLeavesTheOtherRunning() async throws {
+        let slow = FakeHost(id: "slow", behavior: FakeHost.reply(after: 2))
+        let picky = FakeHost(id: "picky", model: "apple-on-device") { _ in
+            HostReply(status: 400, body: ChatCompletionResult.error("declined", code: "content_filter"),
+                      retryElsewhere: true)
+        }
+        let scheduler = await Scheduler.with([slow, picky])
+        await scheduler.setTypical(0.1, for: "slow")
+        await scheduler.setTypical(1, for: "picky")
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: nil)
+        guard case .completed(let reply, let model) = outcome else {
+            Issue.record("\(outcome)")
+            return
+        }
+        #expect(model.id == "model-a")
+        #expect(reply.declinedBy == ["apple-on-device"])
+        #expect(picky.callCount == 1)
+        // Not cancelled and run again.
+        #expect(slow.callCount == 1)
+        let snapshot = await scheduler.snapshot()
+        #expect(snapshot.hedged == 1)
+        #expect(snapshot.hedgeWins == 0)
+        #expect(snapshot.rerouted == 1)
+        #expect(snapshot.hosts.first { $0.id == "picky" }?.declined.content == 1)
+        #expect(snapshot.hosts.allSatisfy { $0.failures.total == 0 })
+    }
+
     /// Work that waits, even for another model, means it isn't the tail.
     @Test func neverHedgesWhileWorkWaits() async throws {
         let slow = FakeHost(id: "slow", model: "model-a", behavior: FakeHost.reply(after: 3))
