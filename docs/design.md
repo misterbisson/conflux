@@ -227,7 +227,9 @@ dials back, so the host can't ask for work on a connection of its own.
 Instead the gateway keeps a status request open to each host, and the host
 answers it the moment its slots change ([The host protocol](#the-host-protocol)).
 A freed slot reaches the gateway in half a round trip, and its next request
-follows at once. Two things close the remaining gap:
+follows at once. When more than one host has a free slot, the request goes
+to the quickest by typical time, or to one not yet timed, so it gets a
+typical time. Two things close the remaining gap:
 
 - **One request ahead, on fast hosts.** When no host has a free slot, the
   gateway sends a request ahead to a fast host, where it waits for that

@@ -7,7 +7,8 @@ import Testing
 /// wins, the other copy is cancelled, and the client sees one result.
 ///
 /// Typical times are set, not measured, so when a request straggles doesn't
-/// depend on how fast the machine running the tests is. Straggling hosts
+/// depend on how fast the machine running the tests is. The straggler's is
+/// the shorter, so the request goes there first. Straggling hosts
 /// take far longer than the copy, and tests wait on state, not for a time.
 @Suite struct HedgingTests {
     let any = ModelChoice(model: "any", preference: nil)
@@ -17,6 +18,7 @@ import Testing
         let quick = FakeHost(id: "quick", behavior: FakeHost.reply(after: 0.1))
         let scheduler = await Scheduler.with([slow, quick])
         await scheduler.setTypical(0.1, for: "slow")
+        await scheduler.setTypical(1, for: "quick")
         let start = Date()
         let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: nil)
         if case .completed = outcome {} else { Issue.record("\(outcome)") }
@@ -40,6 +42,7 @@ import Testing
         let slower = FakeHost(id: "slower", behavior: FakeHost.reply(after: 30))
         let scheduler = await Scheduler.with([slow, slower])
         await scheduler.setTypical(0.1, for: "slow")
+        await scheduler.setTypical(1, for: "slower")
         let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: nil)
         if case .completed = outcome {} else { Issue.record("\(outcome)") }
         let snapshot = await scheduler.snapshot()
@@ -55,6 +58,7 @@ import Testing
         let idle = FakeHost(id: "idle", model: "model-b")
         let scheduler = await Scheduler.with([slow, idle])
         await scheduler.setTypical(1, for: "slow") // Straggling after 2 s.
+        await scheduler.setTypical(2, for: "idle")
         let onlyA = ModelChoice(model: "model-a", preference: nil)
         async let straggling = scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: nil)
         #expect(await eventually { await scheduler.snapshot().hosts.first { $0.id == "slow" }?.active == 1 })
@@ -76,6 +80,7 @@ import Testing
         }
         let scheduler = await Scheduler.with([slow, other])
         await scheduler.setTypical(0.1, for: "slow")
+        await scheduler.setTypical(1, for: "other")
         async let straggling = scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: nil)
         #expect(await eventually { await scheduler.snapshot().hedged == 1 })
         let late = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: nil)
@@ -97,6 +102,7 @@ import Testing
         let quick = FakeHost(id: "quick")
         let scheduler = await Scheduler.with([slow, quick], config: config)
         await scheduler.setTypical(0.1, for: "slow")
+        await scheduler.setTypical(1, for: "quick")
         _ = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
         #expect(await scheduler.snapshot().hedged == 0)
         #expect(quick.callCount == 0)
@@ -109,6 +115,7 @@ import Testing
         let quick = FakeHost(id: "quick", behavior: FakeHost.reply(after: 0.1))
         let scheduler = await Scheduler.with([slow, quick])
         await scheduler.setTypical(0.1, for: "slow")
+        await scheduler.setTypical(1, for: "quick")
         async let a = scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: "k")
         async let b = scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(60), key: "k")
         let (first, second) = await (a, b)
@@ -189,6 +196,7 @@ func attempt<T: Sendable>(_ body: @Sendable () async throws -> T) async -> Resul
         await gateway.add(slow.remote)
         await gateway.add(quick.remote)
         await gateway.setTypical(0.1, for: slow.remote.id)
+        await gateway.setTypical(1, for: quick.remote.id)
         let outcome = await gateway.submit(Data("{}".utf8), choice: ModelChoice(model: "any", preference: nil),
                                            deadline: Date().addingTimeInterval(60), key: nil)
         if case .completed = outcome {} else { Issue.record("\(outcome)") }
