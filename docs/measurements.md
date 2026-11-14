@@ -124,10 +124,17 @@ The first numbers from a real mesh, read from the app's window while a client
 ran its own work through the gateway. They aren't a `conflux-bench` run, so
 they come with less control than the results above.
 
-- **Devices:** the gateway's Mac (48 GB), a second Mac, an M1 MacBook Pro
-  (2020), an iPad Pro with M1 (`iPad13,4`) and an `iPad15,6`. Every one
-  found the others through iCloud Keychain and connected directly, with
-  round trips of 10 to 60 ms.
+- **Devices:**
+  - the gateway: a 14-inch MacBook Pro, M4 Pro (12-core CPU, 16-core GPU),
+    48 GB
+  - an M2 with 24 GB
+  - a 13-inch MacBook Pro, M1 (2020)
+  - an iPad Pro, M1 (`iPad13,4`)
+  - an `iPad15,6`
+
+  Each found the others through iCloud Keychain and connected directly, with
+  round trips of 10 to 60 ms. They joined over the run: one host at first,
+  then two, then three, and all five only near the end.
 - **Model:** Gemma 3 4B-it, Q4_K_M, with its F16 projector
   ([Gemma Terms of Use](https://ai.google.dev/gemma/terms)), on every host
 - **Runtime:** llama.cpp build 12110, in-process, conflux 0.8.0
@@ -139,62 +146,77 @@ they come with less control than the results above.
   generated tokens. The client kept up to 8 requests in flight.
 - **Date:** 2026-11-13
 
+### How the window counts
+
+- **Per hour** is the requests completed in the last 10 minutes, times 6. A
+  host that joined less than 10 minutes ago shows less than its rate, and so
+  does a mesh that gained hosts in that time.
+- **Typical request** is measured at the gateway, from sending a request to
+  its answer, and weighted towards the last few. For a request a host took
+  ahead, it includes waiting there for the slot, so it overstates how long
+  that host takes to run one.
+
 ### Each host
 
-From the gateway's Monitoring section, partway through the run, with 1,788
-requests completed since the gateway started. The ceiling is what one slot
-could do at the host's typical request time: 3,600 s divided by it.
+From the gateway's Monitoring section, once all five were serving. The
+ceiling is what one slot could do at the host's typical time: 3,600 s
+divided by it.
 
-| Host | Typical request | Ceiling | Per hour | Idle with work |
+| Host | Typical request | Ceiling per hour | Taken ahead | Idle with work |
 |---|---|---|---|---|
-| Gateway's Mac, 48 GB | 6.0 s | 600 | 384 | 0.0 s |
-| Second Mac | 8.7 s | 414 | 312 | 3.4 s |
-| M1 MacBook Pro | 9.9 s | 364 | 228 | 0.7 s |
-| `iPad15,6` | 14.5 s | 248 | 210 | 0.8 s |
-| iPad Pro, M1 | 14.6 s | 247 | 168 | 0.5 s |
-| **Mesh** | | **1,873** | **1,302** | |
+| MacBook Pro, M4 Pro | 6.0 s | 600 | none | 0.0 s |
+| M2, 24 GB | 8.7 s | 414 | 18 | 3.4 s |
+| MacBook Pro, M1 | 9.9 s | 364 | 1 | 0.7 s |
+| `iPad15,6` | 14.5 s | 248 | 3 | 0.8 s |
+| iPad Pro, M1 | 14.6 s | 247 | 2 | 0.5 s |
+| **All five** | | **1,873** | | |
 
-A peer's typical time is measured at the gateway, so it includes the round
-trip, which is too small to matter here.
+The M2's typical time is the least reliable. It took far more requests ahead
+than any other host, so more of its time is waiting for its own slot.
 
 ### The mesh
 
-| Point in the run | Completed | Per hour | Idle while work waited |
-|---|---|---|---|
-| Early | 1,639 | 408 | 3.3 s |
-| Middle (the table above) | 1,788 | 1,302 | 5.6 s |
-| Late | 1,893 | 1,932 | 7.0 s |
+A few minutes later, near the end of the run:
 
-Across the run, 3 requests got a busy answer from a host, none came back
-busy or unavailable to the client, 6 were hedged onto a second host, and no
-hedge answered first. The window showed 1 to 2 failed requests.
+- **1,932 per hour**, 322 requests in the last 10 minutes. Those 10 minutes
+  include time before all five hosts had joined. The gateway's own Mac did
+  552 an hour of that, 92% of its ceiling.
+- **7.0 s idle while work waited**, in total since the gateway started.
+- 3 busy answers from hosts, none busy or unavailable to the client, 6
+  requests hedged onto a second host with no hedge answering first, and 1 to
+  2 failed requests.
 
 ### What this shows
 
-- **The mesh reached the sum of its hosts.** Late in the run, the mesh
-  completed 1,932 an hour, against about 1,870 for the hosts' ceilings
-  added together. Phase 2 asks for the mesh's throughput to come close to
-  the sum of each host's own. The ceilings are worked out from typical
-  times, not measured alone, so this is close rather than exact. Earlier,
-  at 70% of the ceilings, idle-with-work time stayed near zero, so the
-  hosts weren't waiting on the scheduler. Most likely the client hadn't yet
-  sent work fast enough to fill five slots.
-- **Idle-with-work time stays near zero.** 7.0 s in total over about 250
-  requests and five hosts. Fast hosts took requests ahead as designed: the
-  second Mac took 18.
-- **Image reading sets the pace, and GPU compute sets image reading.** With
-  short answers, almost all of a request is reading the image. The 48 GB
-  Mac is about 1.65 times as fast as the M1 MacBook Pro, closer to the
-  difference in GPU compute than to the difference in memory bandwidth.
+- **The mesh reached roughly the sum of its hosts.** It completed 1,932 an
+  hour against 1,873 for the ceilings added together, though the count
+  includes time with fewer hosts. Both numbers are rough: the count is below
+  the five-host rate, and the ceilings are below what the hosts can do,
+  since typical times include waits for requests taken ahead. That is
+  consistent with Phase 2's first target, not proof of it. Proof needs each
+  host measured alone and then together, over runs long enough to fill the
+  count: the mesh benchmark [plan.md](plan.md) still lists.
+- **Idle-with-work time stays near zero.** 7.0 s in total, over a run that
+  ended with five hosts. Fast hosts took requests ahead as designed: the M2
+  took 18.
+- **The GPU sets the pace.** With short answers, almost all of a request is
+  reading the image, and the M4 Pro's GPU stayed fully busy while its CPU
+  cores didn't. The M4 Pro was about 1.65 times as fast as the M1 MacBook
+  Pro. It has twice the M1's GPU cores and four times its memory bandwidth
+  (273 GB/s against 68), so the gain follows compute rather than bandwidth,
+  and falls short even of the core count. Work outside the GPU in each
+  request, such as decoding and scaling the image, may be some of the
+  difference.
 - **Fanless costs time.** The same M1 chip took about 1.5 times as long in
   an iPad as in a MacBook Pro with a fan. Some of that may be iPadOS's
   limits rather than heat.
-- **The image's token count is the main lever.** Gemma's 256 tokens per
-  image, against Qwen3-VL's 1,024, is a large part of why these requests
-  are faster than the M2 results above. That only holds for work that
-  Gemma's smaller view of each image reads correctly.
+- **This run can't say what the image's token count is worth.** On an M2
+  with 24 GB, Qwen3-VL at 1,024 tokens per image took 11.8 s a request
+  through the gateway (above). Gemma, at 256, took 8.7 s here, but with much
+  shorter answers and with waits for requests taken ahead, so the two don't
+  compare. Both models on one device, one request at a time, would.
 - **Hedging hasn't paid off yet.** All 6 hedges lost. That's little work
   wasted, but worth watching over longer runs.
 
-Not covered: closing a lid mid-run, a mesh benchmark with a known workload,
-and the chips of the second Mac and the `iPad15,6`.
+Not covered: closing a lid mid-run, each host measured alone, a benchmark
+with a known workload, and the `iPad15,6`'s chip.
