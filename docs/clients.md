@@ -152,8 +152,9 @@ the model that refused.
 
 A client that parses the answer should send its JSON Schema as
 `response_format`, `{"type": "json_schema", "json_schema": {"schema": …}}`.
-Hosts that run models with llama.cpp then constrain the model to the schema
-as it writes, so the answer parses and matches, whatever the model's size.
+Hosts then constrain the model to the schema as it writes, so the answer
+parses and matches, whatever the model's size: llama.cpp's hosts with a
+grammar, and Apple's model with its guided generation.
 Asked in words alone, a small model writes JSON of its own shape, or doesn't
 stop. `{"type": "json_object"}` asks for any JSON object.
 
@@ -176,10 +177,20 @@ stop. `{"type": "json_object"}` asks for any JSON object.
   `date`, `time`, `date-time` and `uuid` formats. A number's bounds and other
   formats are left to the model, as llama.cpp leaves them.
 - **`pattern` needs `llama-server`.** Hosts in the app don't enforce it yet,
-  and neither does Apple's model, which takes no schema yet. Either declines
-  with `400` and `error.code` set to `unsupported_by_model`, and the gateway
-  tries another host serving a model the request accepts, such as one
-  running `conflux serve --runtime llama-server`.
+  and neither does Apple's model. Either declines with `400` and
+  `error.code` set to `unsupported_by_model`, and the gateway tries another
+  host serving a model the request accepts, such as one running
+  `conflux serve --runtime llama-server`.
+- **Apple's model enforces less.** It takes objects with their properties
+  listed, `required`, `items`, `minItems`, `maxItems`, `enum`, a string,
+  integer or null `const`, `anyOf`, `oneOf`, a list of types, `$ref` within
+  the schema, and an integer's `minimum` and `maximum`, and it shows each
+  property's `description` to the model. It declines, in the same way, a
+  string's `pattern`, `minLength`, `maxLength` or `format`, `allOf`,
+  `prefixItems`, a schema that refers to itself, and an object, or any
+  value, whose shape the schema leaves open, `{"type": "json_object"}`
+  included. A schema with only what it takes can be answered by Apple's
+  model as well as by llama.cpp's hosts.
 
 ### Send images at the size the model needs
 

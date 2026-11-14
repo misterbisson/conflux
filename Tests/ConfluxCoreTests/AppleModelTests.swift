@@ -62,15 +62,169 @@ import Testing
     /// Another host may do what Apple's model doesn't.
     @Test func marksWhatAnotherHostMightRun() {
         let message = ["role": "user", "content": "Hi"]
-        #expect(throws: AppleModelRequest.Failure.unsuited("Apple's model here doesn't take response_format yet")) {
+        #expect(throws: AppleModelRequest.Failure.unsuited(
+            "Apple's model here doesn't take a schema that allows any JSON object")) {
             try AppleModelRequest.parse(body(["messages": [message],
                                               "response_format": ["type": "json_schema", "json_schema": [:]]]))
         }
         #expect(throws: AppleModelRequest.Failure.unsuited("Apple's model here doesn't take tools")) {
             try AppleModelRequest.parse(body(["messages": [message], "tools": [["type": "function"]]]))
         }
-        #expect((try? AppleModelRequest.parse(body(["messages": [message],
-                                                     "response_format": ["type": "text"]]))) != nil)
+        let text = try? AppleModelRequest.parse(body(["messages": [message], "response_format": ["type": "text"]]))
+        #expect(text != nil && text?.schema == nil)
+    }
+
+    @Test func takesASchema() throws {
+        let request = try AppleModelRequest.parse(Data(#"""
+            {"messages":[{"role":"user","content":"Hi"}],
+             "response_format":{"type":"json_schema","json_schema":{"name":"reading","strict":true,"schema":
+               {"type":"object","properties":{"label":{"type":"string"},"count":{"type":"integer"}},
+                "required":["label"]}}}}
+            """#.utf8))
+        #expect(request.schema == .object(name: "reading", properties: [
+            .init(name: "label", schema: .string, optional: false),
+            .init(name: "count", schema: .integer(minimum: nil, maximum: nil), optional: true),
+        ]))
+    }
+}
+
+/// `response_format` schemas, as Apple's guided generation takes them.
+@Suite struct AppleModelSchemaTests {
+    func schema(_ json: String, name: String? = nil) throws(AppleModelRequest.Failure) -> AppleModelSchema? {
+        let named = name.map { #","name":"\#($0)""# } ?? ""
+        let body = #"{"response_format":{"type":"json_schema","json_schema":{"schema":\#(json)\#(named)}}}"#
+        return try AppleModelSchema.parse(Data(body.utf8))
+    }
+
+    func unsuited(_ json: String) -> Bool {
+        do {
+            _ = try schema(json)
+            return false
+        } catch {
+            if case .unsuited = error { return true }
+            return false
+        }
+    }
+
+    /// The model writes properties in the schema's order, so it's kept.
+    @Test func keepsThePropertiesInOrder() throws {
+        let parsed = try schema(#"""
+            {"type":"object","additionalProperties":false,"required":["zebra","apple","mood"],"properties":{
+              "zebra":{"type":"string","description":"what it shows"},
+              "apple":{"type":"integer","minimum":1,"maximum":5},
+              "mood":{"type":"string","enum":["calm","busy"]},
+              "tags":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},
+              "score":{"type":"number"},
+              "done":{"type":"boolean"}}}
+            """#, name: "Reading")
+        #expect(parsed == .object(name: "Reading", properties: [
+            .init(name: "zebra", description: "what it shows", schema: .string, optional: false),
+            .init(name: "apple", schema: .integer(minimum: 1, maximum: 5), optional: false),
+            .init(name: "mood", schema: .strings(name: "Reading.mood", ["calm", "busy"]), optional: false),
+            .init(name: "tags", schema: .array(.string, minimum: 1, maximum: 3), optional: true),
+            .init(name: "score", schema: .number, optional: true),
+            .init(name: "done", schema: .boolean, optional: true),
+        ]))
+    }
+
+    @Test func choicesConstantsAndNull() throws {
+        let parsed = try schema(#"""
+            {"type":"object","required":["kind","note","size","level"],"properties":{
+              "kind":{"const":"photo"},
+              "note":{"type":["string","null"]},
+              "size":{"anyOf":[{"type":"integer"},{"enum":["small","large"]}]},
+              "level":{"enum":[1,"high",null]}}}
+            """#)
+        #expect(parsed == .object(name: "Answer", properties: [
+            .init(name: "kind", schema: .constant("photo"), optional: false),
+            .init(name: "note", schema: .choice(name: "Answer.note", [.string, .null]), optional: false),
+            .init(name: "size", schema: .choice(name: "Answer.size", [
+                .integer(minimum: nil, maximum: nil), .strings(name: "Answer.size.2", ["small", "large"]),
+            ]), optional: false),
+            .init(name: "level", schema: .choice(name: "Answer.level", [
+                .integer(minimum: 1, maximum: 1), .constant("high"), .null,
+            ]), optional: false),
+        ]))
+    }
+
+    /// Each use of a reference gets a name of its own: Apple's model needs
+    /// every name to be unique.
+    @Test func referencesAreExpandedWhereUsed() throws {
+        let parsed = try schema(#"""
+            {"type":"object","required":["a","b"],"$defs":{"Item":{"type":"object","required":["n"],
+              "properties":{"n":{"type":"string"}}}},
+             "properties":{"a":{"$ref":"#/$defs/Item"},"b":{"$ref":"#/$defs/Item"}}}
+            """#)
+        let item = { (name: String) in
+            AppleModelSchema.object(name: name, properties: [.init(name: "n", schema: .string, optional: false)])
+        }
+        #expect(parsed == .object(name: "Answer", properties: [
+            .init(name: "a", schema: item("Answer.a"), optional: false),
+            .init(name: "b", schema: item("Answer.b"), optional: false),
+        ]))
+    }
+
+    @Test func textAsksForNoSchema() throws {
+        #expect(try AppleModelSchema.parse(Data(#"{"messages":[]}"#.utf8)) == nil)
+        #expect(try AppleModelSchema.parse(Data(#"{"response_format":{"type":"text"}}"#.utf8)) == nil)
+    }
+
+    /// What a llama.cpp host enforces and Apple's model can't goes there.
+    @Test func leavesToAnotherHostWhatItCantEnforce() {
+        #expect(unsuited(#"{"type":"object","properties":{"d":{"type":"string","pattern":"^[0-9]+$"}}}"#))
+        #expect(unsuited(#"{"type":"object","properties":{"d":{"type":"string","format":"date"}}}"#))
+        #expect(unsuited(#"{"type":"object","properties":{"d":{"type":"string","maxLength":10}}}"#))
+        #expect(unsuited(#"{"type":"object","properties":{"d":{"allOf":[{"type":"string"}]}}}"#))
+        #expect(unsuited(#"{"type":"array","prefixItems":[{"type":"string"},{"type":"integer"}]}"#))
+        #expect(unsuited(#"{"type":"object"}"#))
+        #expect(unsuited(#"{"type":"object","additionalProperties":{"type":"string"}}"#))
+        #expect(unsuited(#"{"type":"object","properties":{"d":{}}}"#))
+        #expect(unsuited(#"{"type":"object","properties":{"d":{"const":true}}}"#))
+        #expect(unsuited(##"{"$defs":{"N":{"type":"object","properties":{"next":{"$ref":"#/$defs/N"}}}},"$ref":"#/$defs/N"}"##))
+        #expect(throws: AppleModelRequest.Failure.unsuited(
+            "Apple's model here doesn't take a schema that allows any JSON object")) {
+            try AppleModelSchema.parse(Data(#"{"response_format":{"type":"json_object"}}"#.utf8))
+        }
+    }
+
+    /// Malformed for one host is malformed for every host.
+    @Test func refusesAMalformedSchema() {
+        #expect(throws: AppleModelRequest.Failure.invalid("JSON schema error at #/properties/d: unrecognized type text")) {
+            try schema(#"{"type":"object","properties":{"d":{"type":"text"}}}"#)
+        }
+        #expect(throws: AppleModelRequest.Failure.self) {
+            try AppleModelSchema.parse(Data(#"{"response_format":{"type":"yaml"}}"#.utf8))
+        }
+    }
+
+    /// Building the framework's schema needs no Apple Intelligence, so CI
+    /// checks that what this writes is a schema the framework accepts.
+    @Test func theFrameworkAcceptsTheSchema() throws {
+        let parsed = try #require(try schema(#"""
+            {"type":"object","required":["kind","mood","items"],"$defs":{"Item":{"type":"object",
+              "properties":{"n":{"type":["string","null"]}}}},
+             "properties":{"kind":{"const":"photo"},"mood":{"enum":["calm","busy"]},
+              "items":{"type":"array","items":{"$ref":"#/$defs/Item"},"maxItems":2},
+              "more":{"type":"array","items":{"$ref":"#/$defs/Item"}},
+              "count":{"type":"integer","minimum":0}}}
+            """#, name: "Reading"))
+        let generation = try GenerationSchema(root: AppleModelHost.dynamic(parsed), dependencies: [])
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(generation)) as? [String: Any]
+        #expect(encoded?["title"] as? String == "Reading")
+        #expect(encoded?["x-order"] as? [String] == ["kind", "mood", "items", "more", "count"])
+        #expect(encoded?["required"] as? [String] == ["kind", "mood", "items"])
+    }
+
+    /// The answer keeps the order the model wrote it in.
+    @Test func writesTheAnswerInOrder() {
+        let content = GeneratedContent(kind: .structure(properties: [
+            "zebra": GeneratedContent(kind: .string("a \"quoted\" word")),
+            "apple": GeneratedContent(kind: .number(3)),
+            "score": GeneratedContent(kind: .number(0.25)),
+            "tags": GeneratedContent(kind: .array([GeneratedContent(kind: .bool(true)), GeneratedContent(kind: .null)])),
+        ], orderedKeys: ["zebra", "apple", "score", "tags"]))
+        #expect(AppleModelHost.json(content)
+            == #"{"zebra":"a \"quoted\" word","apple":3,"score":0.25,"tags":[true,null]}"#)
     }
 }
 
@@ -156,6 +310,28 @@ import Testing
         let body = try JSONSerialization.data(withJSONObject: ["messages": [["role": "user", "content": long]]])
         let tooLong = try await host.complete(body, timeout: 60)
         #expect(tooLong.status == 400 && tooLong.retryElsewhere, "\(String(decoding: tooLong.body, as: UTF8.self))")
+
+        // An answer in the schema's shape, its properties in order.
+        let shaped = try await host.complete(Data(#"""
+            {"messages":[{"role":"user","content":"Describe a calm beach at noon."}],"temperature":0,
+             "response_format":{"type":"json_schema","json_schema":{"name":"scene","schema":{"type":"object",
+               "required":["summary","mood","people","tags"],"properties":{
+                 "summary":{"type":"string"},"mood":{"enum":["calm","busy"]},
+                 "people":{"type":"integer","minimum":0,"maximum":20},
+                 "tags":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3}}}}}}
+            """#.utf8), timeout: 60)
+        #expect(shaped.status == 200, "\(String(decoding: shaped.body, as: UTF8.self))")
+        let shapedObject = try JSONSerialization.jsonObject(with: shaped.body) as? [String: Any]
+        let message = (shapedObject?["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any]
+        let content = try #require(message?["content"] as? String)
+        let shapedAnswer = try OrderedJSON.parse(Data(content.utf8))
+        guard case .object(let members) = shapedAnswer else {
+            Issue.record("not an object: \(content)")
+            return
+        }
+        #expect(members.map { $0.key } == ["summary", "mood", "people", "tags"], "\(content)")
+        #expect(["calm", "busy"].contains(shapedAnswer["mood"]?.string ?? ""), "\(content)")
+        #expect((0...20).contains(shapedAnswer["people"]?.integer ?? -1), "\(content)")
         host.stop()
     }
 }

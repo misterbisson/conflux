@@ -101,8 +101,10 @@ some content, and it takes only short requests. Those go to the model file's
 host, or a peer's, when the client accepts that model: with
 `Conflux-Models: apple-on-device, <model ID>`, for example. A request that
 only Apple's model may run gets the refusal, a `400` with code
-`content_filter` or `context_length_exceeded`. Requests with
-`response_format` or tools go elsewhere the same way, for now.
+`content_filter` or `context_length_exceeded`. It follows a
+`response_format` schema with its guided generation, but a schema that asks
+for what it can't enforce, such as a `pattern`, goes elsewhere the same way
+([clients.md](clients.md#ask-for-a-schema)), and so do requests with tools.
 
 Peers see one host per device so far: the model file's, or Apple's model
 when there's no model file.
