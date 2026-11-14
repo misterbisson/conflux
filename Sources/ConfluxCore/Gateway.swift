@@ -79,32 +79,38 @@ public final class Gateway: Sendable {
              "deadline": counts.deadline]
         }
         func seconds(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+        /// A fraction, 0 to 1, to three places.
+        func fraction(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+        func percentiles(_ value: Percentiles) -> [String: Any] {
+            ["p50": seconds(value.p50), "p95": seconds(value.p95), "count": value.count]
+        }
         let hosts = snapshot.hosts.map { host -> [String: Any] in
             var entry: [String: Any] = [
                 "id": host.id, "state": host.state.label.lowercased(), "slots": host.slots,
                 "capacity": host.capacity, "active": host.active, "completed": host.completed,
                 "per_hour": host.perHour, "failures": failures(host.failures),
                 "idle_with_work_seconds": seconds(host.idleWithWorkSeconds),
-                "held": host.held, "prefetched": host.prefetched,
+                "held": host.held, "prefetched": host.prefetched, "rejoined": host.rejoined,
             ]
             if let model = host.model { entry["model"] = model.id }
             if let detail = host.state.detail { entry["detail"] = detail }
             if let typical = host.typicalSeconds { entry["typical_seconds"] = seconds(typical) }
+            if let request = host.requestSeconds { entry["request_seconds"] = percentiles(request) }
+            if let utilization = host.utilization { entry["utilization"] = fraction(utilization) }
             if let hardware = host.hardware.map(Gateway.hardware), !hardware.isEmpty { entry["hardware"] = hardware }
             return entry
         }
-        return [
-            "status": "ok",
-            "mesh": [
-                "queued": snapshot.queued, "completed": snapshot.completed, "per_hour": snapshot.perHour,
-                "failures": failures(snapshot.failures),
-                "answered": ["rejected": snapshot.rejected, "busy": snapshot.busy,
-                             "unavailable": snapshot.unavailable],
-                "idle_with_work_seconds": seconds(snapshot.idleWithWorkSeconds),
-                "hedged": snapshot.hedged, "hedge_wins": snapshot.hedgeWins,
-            ] as [String: Any],
-            "hosts": hosts,
+        var mesh: [String: Any] = [
+            "queued": snapshot.queued, "completed": snapshot.completed, "per_hour": snapshot.perHour,
+            "failures": failures(snapshot.failures),
+            "answered": ["rejected": snapshot.rejected, "busy": snapshot.busy,
+                         "unavailable": snapshot.unavailable],
+            "idle_with_work_seconds": seconds(snapshot.idleWithWorkSeconds),
+            "hedged": snapshot.hedged, "hedge_wins": snapshot.hedgeWins,
         ]
+        if let utilization = snapshot.utilization { mesh["utilization"] = fraction(utilization) }
+        if let wait = snapshot.waitSeconds { mesh["wait_seconds"] = percentiles(wait) }
+        return ["status": "ok", "mesh": mesh, "hosts": hosts]
     }
 
     /// A host's hardware for `/health`: only the fields it reported.

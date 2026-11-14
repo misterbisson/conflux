@@ -18,7 +18,7 @@ The gateway serves a subset of the OpenAI API on loopback, at
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time, and each host's `hardware`: `chip`, `performance_cores`, `efficiency_cores`, `gpu_cores`, `memory_bytes` and `model_identifier`, whichever it reported ([design.md](design.md#monitoring)). Nothing that identifies a device |
+| `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time; `utilization`, busy slot-seconds over offered ones in the last ten minutes, 0 to 1; the mesh's `wait_seconds`, how long requests waited for a slot, and each host's `request_seconds`, how long they took, each as `p50`, `p95` and `count` over the last ten minutes; each host's `rejoined`, the times it left and came back, keeping its counts; and each host's `hardware`: `chip`, `performance_cores`, `efficiency_cores`, `gpu_cores`, `memory_bytes` and `model_identifier`, whichever it reported ([design.md](design.md#monitoring)). Nothing that identifies a device |
 | `GET /v1/models` | Every model currently served in the mesh, plus aliases |
 | `POST /v1/chat/completions` | One request, including image input |
 

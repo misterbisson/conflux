@@ -60,6 +60,13 @@ struct HostStatus: Codable, Equatable {
     /// this to measure the time the host sat idle while its work waited.
     /// Optional: hosts before it was added don't send it.
     var freeSeconds: Double?
+    /// Slot-seconds the host has spent running requests, from any gateway,
+    /// and slot-seconds it has offered, since it started, counted by the
+    /// host. A gateway takes the difference between two statuses as the
+    /// host's utilization over that time. Optional: hosts before they were
+    /// added don't send them.
+    var busySlotSeconds: Double?
+    var slotSeconds: Double?
     /// Requests sent ahead, waiting for a slot. Nil from hosts before host
     /// pull.
     var held: Int?
@@ -87,6 +94,8 @@ struct HostStatus: Codable, Equatable {
         active = host?.active ?? 0
         typicalSeconds = host?.typicalSeconds
         freeSeconds = host?.freeSeconds
+        busySlotSeconds = host?.busySlotSeconds
+        slotSeconds = host?.slotSeconds
         held = host?.held ?? 0
         self.generation = generation
         self.hardware = hardware
