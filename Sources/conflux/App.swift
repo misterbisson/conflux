@@ -244,7 +244,8 @@ final class AppModel: ObservableObject {
     var servesStarter: Bool { starter != nil && (settings.host?.model.isEmpty ?? true) }
 
     var canStart: Bool {
-        !(settings.host?.model.isEmpty ?? true) || starter != nil || settings.appleModel.enabled || !trusted.isEmpty
+        (settings.servesModelFile && (!(settings.host?.model.isEmpty ?? true) || starter != nil))
+            || settings.appleModel.enabled || !trusted.isEmpty
     }
 
     /// Every device this Mac trusts: added by hand, listed in iCloud
@@ -346,34 +347,45 @@ final class AppModel: ObservableObject {
 
     func removePeer(_ id: String) { settings.peers.removeAll { $0 == id } }
 
-    func start() {
-        problem = nil
-        var settings = settings
+    /// The model file as the node runs it: the starter model when none is
+    /// chosen, and chosen files opened through their bookmarks. Nil when
+    /// there's none to serve.
+    private func modelFileToServe() throws -> ModelConfig? {
+        var config: ModelConfig?
         if settings.host?.model.isEmpty ?? true {
             // None chosen: the starter model, if the app has one. It's inside
             // the app, so it needs no bookmark.
-            settings.host = starter.map { StarterModel.serving($0, from: settings.host ?? ModelConfig(model: "")) }
+            config = starter.map { StarterModel.serving($0, from: settings.host ?? ModelConfig(model: "")) }
         } else if var host = settings.host {
             // In the sandbox, the model files open only through the bookmarks
             // made when they were chosen.
+            let paths = try access.open([host.model] + (host.projector.map { [$0] } ?? []))
+            host.model = paths[0]
+            if host.projector != nil { host.projector = paths[1] }
+            // Keep a moved file's new path.
+            if host.model != settings.host?.model || host.projector != settings.host?.projector {
+                settings.host?.model = host.model
+                settings.host?.projector = host.projector
+            }
+            config = host
+        }
+        // The app runs models in-process: a sandboxed app can't run
+        // llama-server. `conflux serve --runtime llama-server` can.
+        config?.runtime = .inProcess
+        return config
+    }
+
+    func start() {
+        problem = nil
+        var settings = settings
+        if settings.servesModelFile {
             do {
-                let paths = try access.open([host.model] + (host.projector.map { [$0] } ?? []))
-                host.model = paths[0]
-                if host.projector != nil { host.projector = paths[1] }
+                settings.host = try modelFileToServe()
             } catch {
                 problem = error.localizedDescription
                 return
             }
-            // Keep a moved file's new path.
-            if host.model != settings.host?.model || host.projector != settings.host?.projector {
-                self.settings.host?.model = host.model
-                self.settings.host?.projector = host.projector
-            }
-            settings.host = host
         }
-        // The app runs models in-process: a sandboxed app can't run
-        // llama-server. `conflux serve --runtime llama-server` can.
-        settings.host?.runtime = .inProcess
         Task {
             do {
                 port = try await node.start(settings, directory: directory)
@@ -382,6 +394,43 @@ final class AppModel: ObservableObject {
             } catch {
                 problem = "Couldn't start the gateway on port \(settings.port): \(error.localizedDescription)"
             }
+        }
+    }
+
+    /// Turns the model file on or off. While conflux runs, it starts at once,
+    /// or stops taking requests and goes once those it runs have finished,
+    /// or, `cancelling`, at once, each going to another host.
+    func setServesModelFile(_ on: Bool, cancelling: Bool = false) {
+        guard on != settings.servesModelFile else { return }
+        settings.servesModelFile = on
+        guard running else { return }
+        problem = nil
+        let config: ModelConfig?
+        do {
+            config = on ? try modelFileToServe() : nil
+        } catch {
+            problem = error.localizedDescription
+            settings.servesModelFile = false
+            return
+        }
+        let intent = intent
+        Task {
+            await node.setModelFile(config, cancelling: cancelling)
+            await node.setIntent(intent)
+        }
+    }
+
+    /// Turns Apple's model on or off, at once while conflux runs, as
+    /// `setServesModelFile` does.
+    func setAppleModel(_ on: Bool, cancelling: Bool = false) {
+        guard on != settings.appleModel.enabled else { return }
+        settings.appleModel.enabled = on
+        guard running else { return }
+        let apple = on ? settings.appleModel : nil
+        let intent = intent
+        Task {
+            await node.setAppleModel(apple, cancelling: cancelling)
+            await node.setIntent(intent)
         }
     }
 
@@ -414,7 +463,7 @@ final class AppModel: ObservableObject {
 
     /// Whether this Mac's model is set to no slots: it runs no requests
     /// itself, and its gateway sends them all to peers.
-    var servesNoSlots: Bool { settings.host?.slots == 0 }
+    var servesNoSlots: Bool { settings.servesModelFile && settings.host?.slots == 0 }
 
     /// Requests running on this Mac's model now, slots being removed
     /// included.

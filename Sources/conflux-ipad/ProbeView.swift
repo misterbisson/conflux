@@ -33,6 +33,7 @@ struct ProbeView: View {
             Form {
                 serving
                 choice
+                appleModel
                 modelFiles
                 fromMacs
                 mesh
@@ -48,6 +49,15 @@ struct ProbeView: View {
             }
             .navigationTitle("conflux")
             .refreshable { probe.reload() }
+            .confirmationDialog(turningOff?.title ?? "",
+                                isPresented: Binding(get: { turningOff != nil }, set: { if !$0 { turningOff = nil } }),
+                                titleVisibility: .visible, presenting: turningOff) { change in
+                Button(change.finish) { set(change.model, on: false, cancelling: false) }
+                Button(change.stopNow, role: .destructive) { set(change.model, on: false, cancelling: true) }
+                Button("Keep Serving", role: .cancel) {}
+            } message: { change in
+                Text(change.message)
+            }
         }
         .fileImporter(isPresented: $choosing, allowedContentTypes: [.gguf], allowsMultipleSelection: true) { result in
             switch result {
@@ -244,17 +254,32 @@ struct ProbeView: View {
                     if server.running {
                         // Now; how it's gone is below.
                         let connected = server.peers.filter { $0.path != .none }.count
+                        let own = server.ownHosts
                         StatusFigures([
-                            ("\(server.host?.active ?? 0) of \(server.host?.capacity ?? 0)", "busy"),
+                            ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy"),
                             ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
                         ])
-                        ActivityPanel(series: [ActivitySeries(id: ConfluxNode.localHostID, name: "This iPad",
-                                                              minutes: server.activity)],
-                                      typicalSeconds: server.host?.typicalSeconds, metric: $metric, range: $range)
+                        ActivityPanel(series: activitySeries, typicalSeconds: primaryHost?.typicalSeconds,
+                                      metric: $metric, range: $range)
                         resources
                     }
                 }
                 .padding(.vertical, 8)
+            }
+            if !server.running {
+                Button {
+                    server.start(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot)
+                } label: {
+                    Text(serveLabel)
+                }
+                // Starting would cut off the Mac a model is coming from.
+                .disabled(probe.running || macModels.active || !canServe)
+            }
+            // Left enabled while serving: it applies at once.
+            Toggle(isOn: Binding(get: { server.settings.servesOnBattery },
+                                 set: { server.setServesOnBattery($0) })) {
+                Text("Serve on battery")
+                Text("Otherwise it serves only while charging, and pauses when unplugged.")
             }
             if server.running {
                 Button("Stop serving", role: .destructive, action: askToStop)
@@ -271,15 +296,35 @@ struct ProbeView: View {
                 Text(problem).foregroundStyle(.red)
             }
         } footer: {
-            Text("This iPad serves its model to your Macs' conflux gateways over iroh. It runs no gateway of its "
-                + "own, and clients send it nothing directly.")
+            Text("This iPad serves its models to your Macs' conflux gateways over iroh. It runs no gateway of its "
+                + "own, and clients send it nothing directly. Keep conflux open while it serves: in the background "
+                + "iPadOS suspends it, and the Macs send their work elsewhere.")
         }
     }
+
+    /// Each of this iPad's hosts that has served, the model file's first.
+    private var activitySeries: [ActivitySeries] {
+        let both = server.activity[ConfluxNode.localHostID] != nil && server.activity[ConfluxNode.appleHostID] != nil
+        return [(ConfluxNode.localHostID, both ? "Model file" : "This iPad", server.host),
+                (ConfluxNode.appleHostID, "Apple's model", server.appleHost)].compactMap { id, name, host in
+            server.activity[id].map {
+                ActivitySeries(id: id, name: name, minutes: $0, model: host?.model?.id,
+                               typicalSeconds: host?.typicalSeconds)
+            }
+        }
+    }
+
+    /// Whether either model is turned on.
+    private var servesAny: Bool { server.settings.modelFile || server.settings.appleModel }
+
+    /// The host the headline speaks for: the model file's, or Apple's model
+    /// when it serves alone.
+    private var primaryHost: HostSnapshot? { server.host ?? server.appleHost }
 
     /// Stops at once when no request is running here. Otherwise it asks
     /// first. An iPad runs no gateway, so nothing waits here.
     private func askToStop() {
-        if let warning = stopWarning(running: server.host?.active ?? 0, waiting: 0) {
+        if let warning = stopWarning(running: server.ownHosts.reduce(0) { $0 + $1.active }, waiting: 0) {
             stopping = warning
         } else {
             server.stop()
@@ -288,24 +333,26 @@ struct ProbeView: View {
 
     private var headline: String {
         guard server.running else { return "Not serving" }
-        guard let host = server.host else { return "Starting" }
+        guard servesAny else { return "Serving nothing" }
+        guard let host = primaryHost else { return "Starting" }
         if server.held != nil, case .paused = host.state { return "Paused" }
         return host.state.label
     }
 
     private var headlineDetail: String? {
-        guard server.running else { return "Choose a model below, and serve it to your Macs." }
+        guard server.running else { return "Choose what to serve below, and serve it to your Macs." }
+        guard servesAny else { return "Turn on the custom model or Apple's model below." }
         if let held = server.held { return held }
-        switch server.host?.state {
+        switch primaryHost?.state {
         case .starting(let why)?, .failed(let why)?, .paused(let why)?: return why
         default: break
         }
-        if let model = server.host?.model?.id { return model }
-        return nil
+        let models = server.ownHosts.compactMap { $0.model?.id }
+        return models.isEmpty ? nil : models.joined(separator: " and ")
     }
 
     private var headlineColor: Color {
-        guard server.running, let state = server.host?.state else { return .secondary }
+        guard server.running, let state = primaryHost?.state else { return .secondary }
         return state.color
     }
 
@@ -439,9 +486,104 @@ struct ProbeView: View {
         }
     }
 
+    /// A model turned off while requests run on it, while it asks what to
+    /// do with them.
+    @State private var turningOff: TurningOff?
+
+    /// Turns a model on or off, at once while serving. Off with requests
+    /// running on it asks first whether they finish there.
+    private func turn(_ which: TurningOff.Model, on: Bool) {
+        let running = (which == .custom ? server.host : server.appleHost)?.active ?? 0
+        if !on, server.running, running > 0 {
+            turningOff = TurningOff(which, running: running)
+        } else {
+            set(which, on: on, cancelling: false)
+        }
+    }
+
+    private func set(_ which: TurningOff.Model, on: Bool, cancelling: Bool) {
+        switch which {
+        case .custom:
+            server.setModelFile(on, model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot,
+                                cancelling: cancelling)
+        case .apple:
+            server.setAppleModel(on, cancelling: cancelling)
+        }
+    }
+
+    /// What Serve would serve: the custom model, Apple's, or both.
+    private var serveLabel: String {
+        switch (server.settings.modelFile, server.settings.appleModel) {
+        case (true, true): "Serve this model and Apple's to my Macs"
+        case (false, true): "Serve Apple's model to my Macs"
+        default: "Serve this model to my Macs"
+        }
+    }
+
+    private var canServe: Bool {
+        (server.settings.modelFile && model != nil) || server.settings.appleModel
+    }
+
+    /// Apple's on-device model, served beside the model file or alone. It
+    /// runs in a system process, outside conflux's memory limit.
+    private var appleModel: some View {
+        Section {
+            // Read once a second: Apple Intelligence can be turned on, or
+            // its model finish downloading, while conflux is open.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                let unavailable = AppleModelHost.unavailableReason
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: Binding(get: { server.settings.appleModel },
+                                         set: { turn(.apple, on: $0) })) {
+                        Text("Serve Apple's on-device model")
+                        if let unavailable, !server.running {
+                            Text(unavailable.prefix(1).uppercased() + unavailable.dropFirst() + ".")
+                        }
+                    }
+                    if server.running, server.settings.appleModel {
+                        if let apple = server.appleHost {
+                            LabeledContent("State") {
+                                HStack {
+                                    Circle().fill(apple.state.color).frame(width: 8, height: 8)
+                                    Text(apple.state.label)
+                                }
+                            }
+                            if let detail = apple.state.detail {
+                                Text(detail).font(.footnote).foregroundStyle(.secondary)
+                            }
+                            LabeledContent("Slots", value: "\(apple.active) busy of \(apple.capacity)")
+                            if let typical = apple.typicalSeconds {
+                                LabeledContent("Typical request", value: String(format: "%.1f s", typical))
+                            }
+                        } else {
+                            Text("Starting").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Apple's model")
+        } footer: {
+            Text("The model Apple Intelligence uses, served to your Macs as \(AppleModelHost.modelID): text and "
+                + "images. It runs in a system process, so it takes none of the memory iPadOS lets conflux use, "
+                + "and it serves beside the custom model or alone. It needs Apple Intelligence turned on in "
+                + "Settings. It declines some content and takes only short requests; those go to another host.")
+        }
+    }
+
+    /// A model file, run by llama.cpp in conflux. Off, the section folds to
+    /// its switch, as Apple's model's does, and keeps the choices for when
+    /// it's on again.
     private var choice: some View {
         Section {
-            if probe.models.isEmpty {
+            Toggle(isOn: Binding(get: { server.settings.modelFile }, set: { turn(.custom, on: $0) })) {
+                Text("Serve a custom model")
+            }
+            if !server.settings.modelFile {
+                Text("A GGUF model file, run by llama.cpp in conflux: the starter model included with conflux, or "
+                    + "one added under Model files. Off, this iPad serves only Apple's model, when that's on.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else if probe.models.isEmpty {
                 Text("No model yet. Add one under Model files.")
                     .foregroundStyle(.secondary)
             } else {
@@ -474,20 +616,6 @@ struct ProbeView: View {
                 Link(destination: Self.measurements) {
                     Label("Models measured on iPads", systemImage: "arrow.up.right.square")
                 }
-                // Left enabled while serving: it applies at once.
-                Toggle(isOn: Binding(get: { server.settings.servesOnBattery },
-                                     set: { server.setServesOnBattery($0) })) {
-                    Text("Serve on battery")
-                    Text("Otherwise it serves only while charging, and pauses when unplugged.")
-                }
-                Button {
-                    guard let model else { return }
-                    server.start(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot)
-                } label: {
-                    Text("Serve this model to my Macs")
-                }
-                // Starting would cut off the Mac a model is coming from.
-                .disabled(server.running || probe.running || model == nil || macModels.active)
                 Button {
                     guard let model else { return }
                     Task { await probe.check(model: model, projector: projector, slots: slots,
@@ -505,18 +633,18 @@ struct ProbeView: View {
                 }
             }
         } header: {
-            Text("Model")
+            Text("Custom Model")
         } footer: {
-            VStack(alignment: .leading, spacing: 6) {
-                if probe.models.first.map(Probe.included) == true {
-                    Text("The starter model is included with conflux. Add others under Model files.")
+            if server.settings.modelFile {
+                VStack(alignment: .leading, spacing: 6) {
+                    if probe.models.first.map(Probe.included) == true {
+                        Text("The starter model is included with conflux. Add others under Model files.")
+                    }
+                    Text("Slots are how many requests this iPad runs at once, and each one takes memory for its "
+                        + "context. More slots don't always mean more speed.")
+                    Text("A check loads the model alone and records the memory it took. If iPadOS ends it, the "
+                        + "next launch records the model as killed: too big for this iPad, or for these slots.")
                 }
-                Text("Slots are how many requests this iPad runs at once, and each one takes memory for its "
-                    + "context. More slots don't always mean more speed.")
-                Text("Keep conflux open while it serves: in the background iPadOS suspends it, and the Macs send "
-                    + "their work elsewhere. A check loads the model alone and records the memory it took. If "
-                    + "iPadOS ends it, the next launch records the model as killed: too big for this iPad, or for "
-                    + "these slots.")
             }
         }
     }

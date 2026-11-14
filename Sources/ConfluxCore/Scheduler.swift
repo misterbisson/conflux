@@ -400,6 +400,24 @@ public actor Scheduler {
         order.removeAll { $0 == hostID }
     }
 
+    /// Stops sending a host work and removes it once the requests it runs
+    /// have finished, or, `cancelling`, stops them at once, and each goes to
+    /// another host that serves a model it accepts, as when slots are cut.
+    /// Returns once it's removed.
+    public func retire(hostID: String, cancelling: Bool) async {
+        guard entries[hostID] != nil else { return }
+        entries[hostID]?.intent = .draining
+        if cancelling {
+            for lease in entries[hostID].map({ Array($0.active.keys) }) ?? [] { copies[lease]?.cancel() }
+        }
+        dispatch()
+        while let active = entries[hostID]?.active, !active.isEmpty {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        remove(hostID: hostID)
+        dispatch()
+    }
+
     public func setIntent(_ intent: OwnerIntent, for hostID: String) {
         entries[hostID]?.intent = intent
         dispatch()

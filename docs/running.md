@@ -20,7 +20,7 @@ join the mesh as hosts later in Phase 3 ([plan.md](plan.md)).
 swift run -c release conflux
 ```
 
-Choose the model and projector, or keep the
+Under **Custom Model**, choose the model and projector, or keep the
 [starter model](#the-starter-model), set the slots, and press **Start**. The
 window shows the host's state and what's running. Below it, a chart shows
 requests completed, or tokens written, for each minute of the last hour or
@@ -36,6 +36,14 @@ More slots are made without reloading the model. Fewer free idle slots at
 once. When requests are running in slots that go, conflux asks whether to let
 them finish first or stop them now. A stopped request goes to another host
 with a free slot, and with none, its client gets `429` and tries again.
+
+**Serve a custom model** turns the model file on and off. Off, the section
+folds to that switch, keeps the files and settings for later, and the Mac
+serves only [Apple's model](#apples-on-device-model), when that's on. Each
+model's switch works while conflux runs, as the slots do: on, the model
+starts at once; off, it takes nothing new, and when requests are running on
+it, conflux asks whether to let them finish first or stop them now, each
+going to another host. Peers' gateways see the change at their next look.
 
 **No slots** makes the Mac gateway only: it runs no requests itself, frees the
 model's memory once its last request ends, and sends every request to its
@@ -89,7 +97,7 @@ build, both runtimes give the same answers ([design.md](design.md#runtimes)).
 ### Apple's on-device model
 
 The model Apple Intelligence uses can be served alongside the model file, as
-`apple-on-device`. Turn on **Serve Apple's on-device model too** in the
+`apple-on-device`. Turn on **Serve Apple's on-device model** in the
 window, or add `--apple-model` to `conflux serve`. It needs Apple
 Intelligence turned on in System Settings; until it is, or while Apple's
 model downloads, the host says so and waits.
@@ -347,14 +355,30 @@ mesh with no model while conflux is open, so a Mac sees it as serving none.
   one model. **Delete** deletes each, and the folder with the last of them.
   A pair that's already here, the starter model's included, is marked so.
 
-**Serving.** Choose the model, its projector, the slots and the context, and
-press **Serve this model to my Macs**. The top of the screen says what the
+**Serving.** Under **Custom Model**, choose the model, its projector, the
+slots and the context, and press **Serve this model to my Macs**, at the
+top. The top of the screen says what the
 iPad is doing, in type big enough to read across a room: its state, the slots
 in use and how many Macs are connected. Below that, the same chart as the
 Mac's shows its own requests or tokens over the last hour or day, and under
 it the memory left before iPadOS would end conflux, the whole iPad's memory
 pressure, the thermal state, and whether it's charging, over the same span,
 while it serves.
+
+**Apple's model.** Turn on **Serve Apple's on-device model**, and the iPad
+serves Apple's on-device model to its Macs as `apple-on-device`, as a Mac
+does ([Apple's on-device model](#apples-on-device-model)): beside the model
+file, or alone, with **Serve a custom model** off under **Custom Model**,
+which folds that section to its switch. Both switches work while it
+serves, as a Mac's do: off with requests running asks whether to let them
+finish first or stop them now. **Serve** sits at the top, beside **Stop
+serving**. Apple's model runs in a system process, so it takes none of the memory
+iPadOS lets conflux use, and an iPad too small for a useful model file can
+still serve it. It needs an iPad that runs Apple Intelligence, with Apple
+Intelligence turned on in Settings; until then the switch says why, and
+while it serves, its own row shows its state. The same rules hold for it as
+for the model file: only in the foreground, and only while charging unless
+**Serve on battery** is on.
 
 - **Which Macs.** With **Find my Macs through iCloud Keychain** on, the iPad
   lists itself in iCloud Keychain's device list, and trusts the Macs listed

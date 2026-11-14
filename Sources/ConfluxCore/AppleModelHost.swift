@@ -112,6 +112,16 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
         }
     }
 
+    /// Why this device can't serve Apple's model right now, or nil when it
+    /// can: for a window to say so before anyone turns it on.
+    public static var unavailableReason: String? {
+        let model = SystemLanguageModel.default
+        switch readiness(model.availability, readsImages: model.capabilities.contains(.vision)) {
+        case .ready: return nil
+        case .waiting(let why), .never(let why): return why
+        }
+    }
+
     /// Waits for Apple's model to be available, then runs the self-check.
     /// Returns once the host is available or has failed, or was stopped.
     public func start() async {

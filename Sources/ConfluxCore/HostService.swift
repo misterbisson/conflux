@@ -123,12 +123,42 @@ struct HostStatus: Codable, Equatable {
 /// get around the gateway's token.
 final class HostService: Sendable {
     let scheduler: Scheduler
+    /// What this device serves now, which changes as its owner turns a
+    /// model on or off while it serves.
+    private let served: Served
+
+    final class Served: @unchecked Sendable {
+        private let lock = NSLock()
+        private var hostIDs: [String]
+        private var files: [PeerFile.Role: String]
+
+        init(hostIDs: [String], files: [PeerFile.Role: String]) {
+            self.hostIDs = hostIDs
+            self.files = files
+        }
+
+        var now: (hostIDs: [String], files: [PeerFile.Role: String]) { lock.withLock { (hostIDs, files) } }
+
+        func set(hostIDs: [String], files: [PeerFile.Role: String]) {
+            lock.withLock {
+                self.hostIDs = hostIDs
+                self.files = files
+            }
+        }
+    }
+
     /// This device's hosts, the one it answers for by default first: none
-    /// when it serves no model and only uses peers'.
-    let hostIDs: [String]
+    /// when it serves no model and only uses peers'. Peers' gateways read the
+    /// list in each status, and follow it as it changes.
+    var hostIDs: [String] { served.now.hostIDs }
     /// The files this device's host serves, by role: the only files it
     /// sends, whatever a request names.
-    let files: [PeerFile.Role: String]
+    var files: [PeerFile.Role: String] { served.now.files }
+
+    /// Changes what this device serves, while it runs.
+    func update(hostIDs: [String], files: [PeerFile.Role: String]) {
+        served.set(hostIDs: hostIDs, files: files)
+    }
     /// Completions running or waiting, by request ID, so a gateway can cancel
     /// them, and IDs cancelled before their request arrived.
     private let running = Running()
@@ -173,8 +203,7 @@ final class HostService: Sendable {
 
     init(scheduler: Scheduler, hostIDs: [String], files: [PeerFile.Role: String] = [:]) {
         self.scheduler = scheduler
-        self.hostIDs = hostIDs
-        self.files = files
+        served = Served(hostIDs: hostIDs, files: files)
     }
 
     convenience init(scheduler: Scheduler, hostID: String?, files: [PeerFile.Role: String] = [:]) {

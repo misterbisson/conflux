@@ -4,6 +4,9 @@ import Foundation
 public struct NodeSettings: Sendable, Equatable, Codable {
     /// The model this Mac serves, or nil to serve none.
     public var host: ModelConfig?
+    /// Whether to serve `host`'s model file. Off keeps its settings for
+    /// later, and serves Apple's model alone, or none.
+    public var servesModelFile: Bool
     /// The gateway's port on 127.0.0.1.
     public var port: UInt16
     /// Whether clients must send the bearer token. Turning it off lets any
@@ -34,8 +37,9 @@ public struct NodeSettings: Sendable, Equatable, Codable {
     public init(host: ModelConfig? = nil, port: UInt16 = 8090, requireToken: Bool = true, peers: [String] = [],
                 iCloudKeychain: Bool = true, listedID: String? = nil,
                 appleModel: AppleModelSettings = AppleModelSettings(), gateway: Bool = true,
-                coolDown: Bool = false) {
+                coolDown: Bool = false, servesModelFile: Bool = true) {
         self.host = host
+        self.servesModelFile = servesModelFile
         self.port = port
         self.requireToken = requireToken
         self.peers = peers
@@ -50,6 +54,7 @@ public struct NodeSettings: Sendable, Equatable, Codable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         host = try values.decodeIfPresent(ModelConfig.self, forKey: .host)
+        servesModelFile = try values.decodeIfPresent(Bool.self, forKey: .servesModelFile) ?? true
         port = try values.decodeIfPresent(UInt16.self, forKey: .port) ?? 8090
         requireToken = try values.decodeIfPresent(Bool.self, forKey: .requireToken) ?? true
         peers = try values.decodeIfPresent([String].self, forKey: .peers) ?? []
@@ -151,6 +156,8 @@ public final class ConfluxNode: @unchecked Sendable {
     private var ownerSlots = 0
     private var boundPort: UInt16?
     private var service: HTTPServer?
+    /// What peers' gateways are told this device serves.
+    private var hostService: HostService?
     private var mesh: Mesh?
     /// Each peer's hosts, in the scheduler.
     private var remotes: [PeerHosts] = []
@@ -211,7 +218,7 @@ public final class ConfluxNode: @unchecked Sendable {
 
         // With no slots, a host that can't change its slots isn't started:
         // there'd be nothing it could do.
-        if let config = settings.host, case let host = Self.host(for: config),
+        if settings.servesModelFile, let config = settings.host, case let host = Self.host(for: config),
            config.slots > 0 || host is any ResizableHost {
             lock.withLock {
                 self.host = host
@@ -346,6 +353,71 @@ public final class ConfluxNode: @unchecked Sendable {
         if let monitor { await limit(host, under: monitor.reading) }
     }
 
+    /// Starts serving a model file while the node runs, or, with nil, stops
+    /// serving it: it takes no new requests, and goes once those it runs
+    /// have finished, or, `cancelling`, at once, each going to another host.
+    /// Peers' gateways hear of it at their next status.
+    public func setModelFile(_ config: ModelConfig?, cancelling: Bool = false) async {
+        if let old = lock.withLock({ () -> (any ManagedHost)? in
+            defer {
+                if let host { monitors.removeValue(forKey: host.id)?.stop() }
+                host = nil
+                reliefCheck?.cancel(); reliefCheck = nil; relief = MemoryRelief()
+            }
+            return host
+        }) {
+            announce()
+            await scheduler.retire(hostID: old.id, cancelling: cancelling)
+            old.stop()
+        }
+        guard let config, case let host = Self.host(for: config), config.slots > 0 || host is any ResizableHost
+        else { return }
+        lock.withLock {
+            self.host = host
+            ownerSlots = config.slots
+        }
+        await serve(host)
+        announce()
+    }
+
+    /// Starts serving Apple's on-device model while the node runs, or, with
+    /// nil, stops serving it, as `setModelFile` does.
+    public func setAppleModel(_ settings: AppleModelSettings?, cancelling: Bool = false) async {
+        if let old = lock.withLock({ () -> AppleModelHost? in
+            defer {
+                if let apple { monitors.removeValue(forKey: apple.id)?.stop() }
+                apple = nil
+            }
+            return apple
+        }) {
+            announce()
+            await scheduler.retire(hostID: old.id, cancelling: cancelling)
+            old.stop()
+        }
+        guard let settings, settings.enabled else { return }
+        let apple = AppleModelHost(id: Self.appleHostID, slots: settings.slots, selfCheck: settings.selfCheck)
+        lock.withLock { self.apple = apple }
+        await serve(apple)
+        announce()
+    }
+
+    /// The model file's files, for peers to copy: the starter model's
+    /// included. None for Apple's model.
+    private var servedFiles: [PeerFile.Role: String] {
+        var files: [PeerFile.Role: String] = [:]
+        if let config = lock.withLock({ host?.config }) {
+            files[.model] = config.model
+            files[.projector] = config.projector
+        }
+        return files
+    }
+
+    /// Tells peers' gateways, through the host service, which hosts and
+    /// files this device serves now.
+    private func announce() {
+        lock.withLock { hostService }?.update(hostIDs: localHosts.map(\.id), files: servedFiles)
+    }
+
     /// Why this device's model has fewer slots than asked for, when it does.
     public var slotProblem: String? { (lock.withLock { host } as? LlamaHost)?.slotProblem }
 
@@ -430,12 +502,8 @@ public final class ConfluxNode: @unchecked Sendable {
         // so peers hear "serves no model" rather than nothing.
         // And the files of the model it serves, the starter model's
         // included, for peers to copy. None for Apple's model.
-        var files: [PeerFile.Role: String] = [:]
-        if let config = lock.withLock({ host?.config }) {
-            files[.model] = config.model
-            files[.projector] = config.projector
-        }
-        let handler = HostService(scheduler: scheduler, hostIDs: localHosts.map(\.id), files: files)
+        let handler = HostService(scheduler: scheduler, hostIDs: localHosts.map(\.id), files: servedFiles)
+        lock.withLock { hostService = handler }
         let service: HTTPServer
         let exposure: Mesh.Exposure
         if let path = Self.hostSocket {
@@ -593,7 +661,7 @@ public final class ConfluxNode: @unchecked Sendable {
 
     private func stopMesh() async {
         let (service, mesh, remotes) = lock.withLock { () -> (HTTPServer?, Mesh?, [PeerHosts]) in
-            defer { self.service = nil; self.mesh = nil; self.remotes = [] }
+            defer { self.service = nil; self.hostService = nil; self.mesh = nil; self.remotes = [] }
             return (self.service, self.mesh, self.remotes)
         }
         for remote in remotes { await remote.stop() }

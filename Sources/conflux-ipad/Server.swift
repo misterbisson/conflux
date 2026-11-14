@@ -37,8 +37,9 @@ final class Server {
     private(set) var listed: [ListedDevice] = []
     /// Why it isn't taking work while running, if it isn't.
     private(set) var held: String?
-    /// This iPad's host's last day by the minute, for the activity chart.
-    private(set) var activity: [ActivityMinute] = []
+    /// This iPad's hosts' last day by the minute, for the activity chart:
+    /// its model file's and Apple's model's.
+    private(set) var activity: [String: [ActivityMinute]] = [:]
     /// What this process can still allocate before iPadOS ends it, the
     /// least in each reading. Taken while it serves.
     private(set) var memoryLeft = TimeSeries(keeping: .lowest)
@@ -68,6 +69,10 @@ final class Server {
         var servesOnBattery = false
         /// Rest at serious heat, until it's back to fair.
         var coolDown = false
+        /// Serve a model file: the starter model or one chosen.
+        var modelFile = true
+        /// Serve Apple's on-device model, with the model file or alone.
+        var appleModel = false
     }
 
     private var foreground = true
@@ -96,7 +101,12 @@ final class Server {
         if let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 
+    /// This iPad's model file's host.
     var host: HostSnapshot? { snapshot?.hosts.first { $0.id == ConfluxNode.localHostID } }
+    /// This iPad's host for Apple's on-device model.
+    var appleHost: HostSnapshot? { snapshot?.hosts.first { $0.id == ConfluxNode.appleHostID } }
+    /// Both, the model file's first.
+    var ownHosts: [HostSnapshot] { [host, appleHost].compactMap { $0 } }
 
     /// Every Mac this iPad trusts: added by hand, listed in iCloud Keychain,
     /// or both.
@@ -114,12 +124,25 @@ final class Server {
 
     // MARK: Serving
 
-    func start(model: URL, projector: URL?, slots: Int, contextPerSlot: Int) {
+    static func config(model: URL?, projector: URL?, slots: Int, contextPerSlot: Int) -> ModelConfig? {
+        model.map {
+            ModelConfig(runtime: .inProcess, model: $0.path, projector: projector?.path, slots: slots,
+                        contextPerSlot: contextPerSlot, selfCheck: true)
+        }
+    }
+
+    /// Serves the model file, Apple's model, or both, as they're turned on.
+    func start(model: URL?, projector: URL?, slots: Int, contextPerSlot: Int) {
         problem = nil
-        let config = ModelConfig(runtime: .inProcess, model: model.path, projector: projector?.path, slots: slots,
-                                 contextPerSlot: contextPerSlot, selfCheck: true)
+        let config = settings.modelFile
+            ? Self.config(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot) : nil
+        guard config != nil || settings.appleModel else {
+            problem = "Turn on a custom model or Apple's model, below."
+            return
+        }
         let node = NodeSettings(host: config, requireToken: false, peers: settings.peers,
-                                iCloudKeychain: settings.iCloudKeychain, gateway: false,
+                                iCloudKeychain: settings.iCloudKeychain,
+                                appleModel: AppleModelSettings(enabled: settings.appleModel), gateway: false,
                                 coolDown: settings.coolDown)
         let directory = settings.iCloudKeychain ? directory : nil
         guard directory != nil || !settings.peers.isEmpty else {
@@ -142,6 +165,34 @@ final class Server {
             }
         }
         poll()
+    }
+
+    /// Turns the model file on or off. While serving, it starts at once, or
+    /// stops taking requests and goes once those it runs have finished, or,
+    /// `cancelling`, at once, each going to another host.
+    func setModelFile(_ on: Bool, model: URL?, projector: URL?, slots: Int, contextPerSlot: Int,
+                      cancelling: Bool = false) {
+        guard on != settings.modelFile else { return }
+        settings.modelFile = on
+        guard running else { return }
+        let config = on ? Self.config(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot)
+                        : nil
+        Task {
+            await node.setModelFile(config, cancelling: cancelling)
+            applyIntent()
+        }
+    }
+
+    /// Turns Apple's model on or off, at once while serving, as
+    /// `setModelFile` does.
+    func setAppleModel(_ on: Bool, cancelling: Bool = false) {
+        guard on != settings.appleModel else { return }
+        settings.appleModel = on
+        guard running else { return }
+        Task {
+            await node.setAppleModel(on ? AppleModelSettings(enabled: true) : nil, cancelling: cancelling)
+            applyIntent()
+        }
     }
 
     func stop() {
@@ -187,8 +238,8 @@ final class Server {
                     self.heatStatus = self.node.heatStatus
                     self.power.append(self.charging ? 0 : 1)
                     if tick % 5 == 0 {
-                        self.activity = await self.node.scheduler.activity(
-                            since: Date().addingTimeInterval(-86400))[ConfluxNode.localHostID] ?? []
+                        self.activity = await self.node.scheduler.activity(since: Date().addingTimeInterval(-86400))
+                            .filter { [ConfluxNode.localHostID, ConfluxNode.appleHostID].contains($0.key) }
                     }
                     tick += 1
                 }
@@ -368,6 +419,8 @@ extension Server.Settings {
         listedID = try values.decodeIfPresent(String.self, forKey: .listedID)
         servesOnBattery = try values.decodeIfPresent(Bool.self, forKey: .servesOnBattery) ?? defaults.servesOnBattery
         coolDown = try values.decodeIfPresent(Bool.self, forKey: .coolDown) ?? defaults.coolDown
+        modelFile = try values.decodeIfPresent(Bool.self, forKey: .modelFile) ?? defaults.modelFile
+        appleModel = try values.decodeIfPresent(Bool.self, forKey: .appleModel) ?? defaults.appleModel
     }
 }
 

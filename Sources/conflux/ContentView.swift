@@ -171,15 +171,61 @@ struct ContentView: View {
 
     // MARK: Model
 
+    /// A model file, run by llama.cpp in this process. Off, the section
+    /// folds to its switch, as Apple's model's does, and keeps the files and
+    /// settings for when it's on again.
     @ViewBuilder var modelSection: some View {
-        Section("Model") {
-            Group { modelFiles }.disabled(model.running)
-            slotsRow
-            Group { modelOptions }.disabled(model.running)
-            slotsHelp
-            if model.running {
-                Text("Stop conflux to change the rest.").font(.caption).foregroundStyle(.secondary)
+        Section("Custom Model") {
+            Toggle("Serve a custom model", isOn: Binding(get: { model.settings.servesModelFile },
+                                                         set: { turn(.custom, on: $0) }))
+            if model.settings.servesModelFile {
+                Group { modelFiles }.disabled(model.running)
+                slotsRow
+                Group { modelOptions }.disabled(model.running)
+                slotsHelp
+                if model.running {
+                    Text("Stop conflux to change the rest.").font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("""
+                    A GGUF model file, run by llama.cpp in conflux's own process: the starter model included \
+                    with conflux, or one you choose. Off, this Mac serves only Apple's model, when that's on, \
+                    and its gateway still uses peers' models.
+                    """)
+                    .font(.caption).foregroundStyle(.secondary)
             }
+        }
+        .confirmationDialog(turningOff?.title ?? "", isPresented: Binding(get: { turningOff != nil },
+                                                                         set: { if !$0 { turningOff = nil } }),
+                            presenting: turningOff) { change in
+            Button(change.finish) { set(change.model, on: false, cancelling: false) }
+            Button(change.stopNow, role: .destructive) { set(change.model, on: false, cancelling: true) }
+            Button("Keep Serving", role: .cancel) {}
+        } message: { change in
+            Text(change.message)
+        }
+    }
+
+    /// A model turned off while requests run on it, while it asks what to
+    /// do with them.
+    @State private var turningOff: TurningOff?
+
+    /// Turns a model on or off, at once while conflux runs. Off with
+    /// requests running on it asks first whether they finish there, as
+    /// cutting slots does.
+    func turn(_ which: TurningOff.Model, on: Bool) {
+        let running = which == .custom ? model.runningHere : model.appleHost?.active ?? 0
+        if !on, model.running, running > 0 {
+            turningOff = TurningOff(which, running: running)
+        } else {
+            set(which, on: on, cancelling: false)
+        }
+    }
+
+    func set(_ which: TurningOff.Model, on: Bool, cancelling: Bool) {
+        switch which {
+        case .custom: model.setServesModelFile(on, cancelling: cancelling)
+        case .apple: model.setAppleModel(on, cancelling: cancelling)
         }
     }
 
@@ -285,8 +331,8 @@ struct ContentView: View {
 
     @ViewBuilder var appleSection: some View {
         Section("Apple's model") {
-            Toggle("Serve Apple's on-device model too", isOn: $model.settings.appleModel.enabled)
-                .disabled(model.running)
+            Toggle("Serve Apple's on-device model", isOn: Binding(get: { model.settings.appleModel.enabled },
+                                                                  set: { turn(.apple, on: $0) }))
             if model.settings.appleModel.enabled {
                 if let apple = model.appleHost, model.running {
                     LabeledContent("State") {
@@ -312,8 +358,8 @@ struct ContentView: View {
                 some content and takes only short requests; those go to another host when there is one.
                 """)
                 .font(.caption).foregroundStyle(.secondary)
-            if model.running {
-                Text("Stop conflux to change these.").font(.caption).foregroundStyle(.secondary)
+            if model.running, model.settings.appleModel.enabled {
+                Text("Stop conflux to change its slots.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
