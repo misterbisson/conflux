@@ -474,10 +474,13 @@ struct ContentView: View {
                 }
             }
             let live = connected ? host : nil
+            // Each model it serves: Apple's model alongside its model file,
+            // say.
+            let models = connected ? status.map(model.peerHosts)?.compactMap(\.model?.id) ?? [] : []
             let parts = [source(of: peer),
                          model.running ? status.map(\.path.label) : nil,
                          host?.hardware?.summary,
-                         live?.model?.id,
+                         models.isEmpty ? nil : models.joined(separator: " and "),
                          live.flatMap { $0.capacity > 0 ? "\($0.active) busy of \($0.capacity)" : nil },
                          host.flatMap { $0.completed > 0 ? "\($0.completed) completed" : nil }].compactMap { $0 }
             Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
@@ -533,9 +536,10 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 if let name = model.peerName(of: host) {
-                    Text(name).lineLimit(1).truncationMode(.middle)
+                    Text(RemoteHost.hostOnPeer(in: host.id).map { "\(name), \(AppModel.otherHostName($0))" } ?? name)
+                        .lineLimit(1).truncationMode(.middle)
                 } else if host.id.hasPrefix("peer-") {
-                    Text(host.id.dropFirst("peer-".count) + "…").font(.body.monospaced())
+                    Text(model.hostName(host.id)).font(.body.monospaced())
                 } else {
                     Text("This Mac")
                 }

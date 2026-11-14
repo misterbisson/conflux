@@ -35,6 +35,12 @@ public enum HostProtocol {
     /// The files of the model the host serves, listed (`PeerFileList`), and
     /// each by its role below it: `…/files/model`, `…/files/projector`.
     public static let filesPath = "/conflux/0/files"
+    /// On a status request, a completion or a cancel: which of the device's
+    /// hosts it's for, by the ID its status lists in `hosts`. Without it,
+    /// the device's first host: its model file's, or Apple's model when it
+    /// has no model file. Hosts before it was added ignore it, so a gateway
+    /// sends it only to a host whose status listed `hosts`.
+    public static let hostHeader = "Conflux-Host"
 }
 
 /// What a host tells gateways about itself, polled every second.
@@ -63,9 +69,19 @@ struct HostStatus: Codable, Equatable {
     /// What kind of device it is: chip, cores and memory, nothing that
     /// identifies it. Nil from hosts before it was added.
     var hardware: HardwareInfo?
+    /// The ID of the host this status describes, on its device. Nil from
+    /// hosts before a device could serve more than one to its peers.
+    var host: String?
+    /// Every host the device serves to its peers, by ID, the one it answers
+    /// for by default first. A gateway asks for the others by name, with
+    /// `Conflux-Host`. Nil from hosts before it was added.
+    var hosts: [String]?
 
-    init(_ host: HostSnapshot?, generation: Int? = nil, hardware: HardwareInfo? = HardwareInfo.current) {
+    init(_ host: HostSnapshot?, generation: Int? = nil, hardware: HardwareInfo? = HardwareInfo.current,
+         hosts: [String]? = nil) {
         self.protocol = HostProtocol.version
+        self.host = host?.id
+        self.hosts = hosts
         model = host?.model
         capacity = host?.capacity ?? 0
         active = host?.active ?? 0
@@ -101,15 +117,15 @@ struct HostStatus: Codable, Equatable {
     }
 }
 
-/// Serves this device's own host to other devices' gateways. It listens on
+/// Serves this device's own hosts to other devices' gateways. It listens on
 /// loopback, where apple-iroh carries peers' streams to it, and accepts only
 /// connections this process opened, so a program on this Mac can't use it to
 /// get around the gateway's token.
 final class HostService: Sendable {
     let scheduler: Scheduler
-    /// This device's host, or nil when it serves no model and only uses
-    /// peers'.
-    let hostID: String?
+    /// This device's hosts, the one it answers for by default first: none
+    /// when it serves no model and only uses peers'.
+    let hostIDs: [String]
     /// The files this device's host serves, by role: the only files it
     /// sends, whatever a request names.
     let files: [PeerFile.Role: String]
@@ -155,10 +171,25 @@ final class HostService: Sendable {
         }
     }
 
-    init(scheduler: Scheduler, hostID: String?, files: [PeerFile.Role: String] = [:]) {
+    init(scheduler: Scheduler, hostIDs: [String], files: [PeerFile.Role: String] = [:]) {
         self.scheduler = scheduler
-        self.hostID = hostID
+        self.hostIDs = hostIDs
         self.files = files
+    }
+
+    convenience init(scheduler: Scheduler, hostID: String?, files: [PeerFile.Role: String] = [:]) {
+        self.init(scheduler: scheduler, hostIDs: hostID.map { [$0] } ?? [], files: files)
+    }
+
+    /// The host whose files it serves: the device's first, the model file's.
+    var hostID: String? { hostIDs.first }
+
+    /// The host a request is for: the one `Conflux-Host` names, or the
+    /// first. Nil when it names one this device doesn't serve, or it serves
+    /// none.
+    func host(for request: HTTPRequest) -> String? {
+        guard let named = request.header(HostProtocol.hostHeader) else { return hostIDs.first }
+        return hostIDs.contains(named) ? named : nil
     }
 
     func handle(_ request: HTTPRequest) async -> HTTPResponse {
@@ -167,10 +198,15 @@ final class HostService: Sendable {
             let after = request.header(HostProtocol.afterHeader).flatMap(Int.init)
             let wait = request.header(HostProtocol.waitHeader).flatMap(TimeInterval.init)
                 .map { min(max(0, $0), HostProtocol.longestWait) } ?? 0
-            var status = HostStatus(nil, generation: 0)
-            if let hostID {
+            var status = HostStatus(nil, generation: 0, hosts: hostIDs)
+            if let hostID = host(for: request) {
                 let (host, generation) = await scheduler.status(of: hostID, after: after, wait: wait)
-                status = HostStatus(host, generation: generation)
+                status = HostStatus(host, generation: generation, hosts: hostIDs)
+                // Listed but not in the scheduler: say which host this is.
+                status.host = hostID
+            } else if let named = request.header(HostProtocol.hostHeader) {
+                status.detail = "this device doesn't serve \(named) now"
+                if after != nil { try? await Task.sleep(for: .seconds(wait)) }
             } else if after != nil {
                 // Nothing will change: don't have the gateway ask again at once.
                 try? await Task.sleep(for: .seconds(wait))
@@ -197,10 +233,12 @@ final class HostService: Sendable {
     func complete(_ request: HTTPRequest) async -> HTTPResponse {
         let deadline = request.header(ContractHeader.timeout).flatMap(TimeInterval.init)
             .map { Date().addingTimeInterval($0) }
-        guard let hostID else {
+        guard let hostID = host(for: request) else {
+            let message = request.header(HostProtocol.hostHeader).map { "this device doesn't serve \($0) now" }
+                ?? "this device serves no model"
             return HTTPResponse(status: 503, headers: [("Content-Type", "application/json"),
                                                        (HostProtocol.outcomeHeader, "unavailable")],
-                                body: ChatCompletionResult.error("this device serves no model", type: "server_error"))
+                                body: ChatCompletionResult.error(message, type: "server_error"))
         }
         let prefetch = request.header(HostProtocol.prefetchHeader) == "1"
         let id = request.header(HostProtocol.requestIDHeader)

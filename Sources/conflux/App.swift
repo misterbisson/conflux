@@ -188,10 +188,15 @@ final class AppModel: ObservableObject {
 
     func peerHost(_ peer: PeerStatus) -> HostSnapshot? { snapshot?.hosts.first { $0.id == peer.hostID } }
 
+    /// Every host a peer serves, the one it answers for by default first.
+    func peerHosts(_ peer: PeerStatus) -> [HostSnapshot] {
+        peer.hostIDs.compactMap { id in snapshot?.hosts.first { $0.id == id } }
+    }
+
     /// The name a peer's host goes by: the trusted peer's name, when it has
     /// one. Nil for this Mac's hosts, and for peers without a name.
     func peerName(of host: HostSnapshot) -> String? {
-        guard let endpointID = peers.first(where: { $0.hostID == host.id })?.endpointID else { return nil }
+        guard let endpointID = peers.first(where: { $0.hostIDs.contains(host.id) })?.endpointID else { return nil }
         return trusted.first { $0.endpointID == endpointID }?.name
     }
 
@@ -213,9 +218,16 @@ final class AppModel: ObservableObject {
         case ConfluxNode.localHostID: return "This Mac"
         case ConfluxNode.appleHostID: return "Apple's model"
         default:
-            let peer = trusted.first { "peer-\(DeviceIdentity.short($0.endpointID))" == id }
-            return peer?.name ?? String(id.dropFirst("peer-".count)) + "…"
+            let other = RemoteHost.hostOnPeer(in: id)
+            let peer = trusted.first { RemoteHost.id($0.endpointID, other) == id }
+            let name = peer?.name ?? String(id.dropFirst("peer-".count).prefix(10)) + "…"
+            return other.map { "\(name), \(Self.otherHostName($0))" } ?? name
         }
+    }
+
+    /// What a peer's host after its first is called, by its ID on the peer.
+    static func otherHostName(_ hostOnPeer: String) -> String {
+        hostOnPeer == ConfluxNode.appleHostID ? "Apple's model" : hostOnPeer
     }
 
     /// The model the app ships, served until the person chooses one. Built
