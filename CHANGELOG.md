@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.0](https://github.com/misterbisson/conflux/compare/v0.10.0...v0.11.0) (2026-11-14)
+
+
+### Features
+
+* **monitoring:** show utilization, wait times and failures per host, and keep counts on rejoin ([#99](https://github.com/misterbisson/conflux/issues/99)) ([761b626](https://github.com/misterbisson/conflux/commit/761b626ac0d109a62c5de5c236a1cc41abf9b01b))
+* serve Apple's model from an iPad, and turn each model on or off while serving ([#93](https://github.com/misterbisson/conflux/issues/93)) ([cad0b3a](https://github.com/misterbisson/conflux/commit/cad0b3a5c803a22c2f6f1177ead10adb704f9c31))
+* show one model's hosts in the activity chart ([#96](https://github.com/misterbisson/conflux/issues/96)) ([964726b](https://github.com/misterbisson/conflux/commit/964726bd79cb22e757142c3b52dc81c203184cff))
+
+
+### Bug Fixes
+
+* a host whose self-check was interrupted no longer stays Failed ([#98](https://github.com/misterbisson/conflux/issues/98)) ([e5375a9](https://github.com/misterbisson/conflux/commit/e5375a9f5e1957f81cd16299bf37024e5190c1b6))
+* an iPad reloads its model after memory relief, and a paused peer isn't counted as not answering ([#97](https://github.com/misterbisson/conflux/issues/97)) ([11ccec1](https://github.com/misterbisson/conflux/commit/11ccec15fdc703993a7c8cf0e0f0387596c3a352))
+* count all of a peer's models in its mesh row, and show every host in the chart's legend ([#95](https://github.com/misterbisson/conflux/issues/95)) ([6b4c85a](https://github.com/misterbisson/conflux/commit/6b4c85ab24a08cc2b378556afa1843594132fcf6))
+
 ## [0.10.0](https://github.com/misterbisson/conflux/compare/v0.9.0...v0.10.0) (2026-11-14)
 
 
