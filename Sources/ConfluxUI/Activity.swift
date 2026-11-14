@@ -666,6 +666,9 @@ public struct ResourceTile<Chart: View, Accessory: View>: View {
     let value: String
     let chart: Chart
     let accessory: Accessory
+    /// The title never changes, so where it stays on screen for hours it's
+    /// dimmer, against burn-in.
+    @Environment(\.isLuminanceReduced) private var reduced
 
     public init(_ title: String, value: String, @ViewBuilder accessory: () -> Accessory,
                 @ViewBuilder chart: () -> Chart) {
@@ -677,7 +680,7 @@ public struct ResourceTile<Chart: View, Accessory: View>: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Text(title).font(.subheadline).foregroundStyle(reduced ? .tertiary : .secondary)
             Text(value).font(.title3.monospacedDigit().weight(.semibold)).lineLimit(1)
             chart
         }

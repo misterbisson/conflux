@@ -415,7 +415,10 @@ for the model file: only in the foreground, and only while charging unless
 press **Lock**, at the top right. Locked, conflux turns dark, whatever the
 iPad's appearance is set to, and shows the same status, chart and tiles, and
 nothing that changes anything: no buttons or switches, no choice of what the
-chart counts or how far back, no Cool down box. The one control is **Unlock**, which asks for the iPad's passcode, Face ID or Touch
+chart counts or how far back, no Cool down box. Against burn-in on an OLED
+screen, the labels and the state are drawn dimmer, and everything drifts a
+few points at a time, too slowly to see, so nothing stays on the same pixels
+all night. The one control is **Unlock**, which asks for the iPad's passcode, Face ID or Touch
 ID. It needs a passcode set in Settings. It stays locked if conflux is ended
 and opened again. It locks conflux, not the iPad: iPadOS's own gestures still
 leave the app, which stops it serving, as above. To keep the iPad in conflux
