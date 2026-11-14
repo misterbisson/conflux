@@ -84,6 +84,9 @@ struct JSONSchemaGrammar {
         var name: String
         var schema: Node
         var required: Bool
+        /// Not in the grammar, which llama.cpp doesn't write from it, but
+        /// Apple's guided generation shows it to the model.
+        var description: String? = nil
     }
 
     enum Format { case none, date, time, dateTime, uuid }
@@ -218,7 +221,8 @@ struct JSONSchemaGrammar {
                 for member in members {
                     properties.append(Property(name: member.key,
                                                schema: try build(member.value, path: "\(path)/properties/\(member.key)"),
-                                               required: required.contains(member.key)))
+                                               required: required.contains(member.key),
+                                               description: member.value["description"]?.string))
                 }
             }
             var additional: Node?

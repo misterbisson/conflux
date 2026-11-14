@@ -29,6 +29,8 @@ struct AppleModelRequest: Equatable {
     /// Nil: the model's own.
     var temperature: Double?
     var stop: [String] = []
+    /// The answer's shape, from `response_format`; nil for text.
+    var schema: AppleModelSchema?
 
     enum Failure: Error, Equatable {
         /// The client's fault: 400 from any host.
@@ -50,10 +52,8 @@ struct AppleModelRequest: Equatable {
             throw .invalid(error.message)
         }
         let object = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+        let schema = try AppleModelSchema.parse(body)
         // What Apple's model can't do yet, but a llama.cpp host can.
-        if let format = object["response_format"] as? [String: Any], (format["type"] as? String) != "text" {
-            throw .unsuited("Apple's model here doesn't take response_format yet")
-        }
         if let tools = object["tools"] as? [Any], !tools.isEmpty {
             throw .unsuited("Apple's model here doesn't take tools")
         }
@@ -93,6 +93,7 @@ struct AppleModelRequest: Equatable {
         request.maxTokens = parsed.maxTokens
         request.temperature = (object["temperature"] as? NSNumber)?.doubleValue
         request.stop = parsed.stop
+        request.schema = schema
         return request
     }
 

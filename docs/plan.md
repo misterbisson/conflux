@@ -203,16 +203,16 @@ contribution is measured against the effort of keeping it there.
   model file and Apple's model is two hosts to every gateway in the mesh:
   the host protocol lists each host a device serves, and a gateway names
   the one it means in `Conflux-Host`, without a new protocol version
-  ([design.md](design.md#the-host-protocol)).
+  ([design.md](design.md#the-host-protocol)). It follows `response_format`
+  with its guided generation, and sends a schema asking for what that can't
+  enforce, such as a `pattern`, to another host.
 
   *Left*, in order:
-  1. Structured output: `response_format` as Apple's guided generation.
-     Until then such requests go to another host.
-  2. Measurements: how many tokens an image costs, throughput against
+  1. Measurements: how many tokens an image costs, throughput against
      Qwen3-VL-4B on the same images, both models at once on one Mac,
      whether it slows in the background, and how often the default
      guardrails decline ordinary images.
-  3. Apple's model in the iPad probe. It runs outside the app's memory
+  2. Apple's model in the iPad probe. It runs outside the app's memory
      limit, which may make the 8 GB iPad Pro a useful host.
 - **A starter model in the app**, so a first request works before anyone
   has found a model. *Built*: SmolVLM-256M-Instruct (Apache 2.0), Q8_0 with

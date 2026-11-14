@@ -194,6 +194,8 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
             return HostReply(status: 200, body: result.body(model: Self.modelID))
         } catch let error as Unreadable {
             return HostReply(status: 400, body: ChatCompletionResult.error(error.message))
+        } catch let error as Unsuited {
+            return Self.unsuited(error.message, code: "unsupported_by_model")
         } catch is DeadlinePassed {
             throw HostError.unavailable("the deadline passed while the model was running")
         } catch {
@@ -208,6 +210,8 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
     }
 
     struct Unreadable: Error { let message: String }
+    /// Something another host might do.
+    struct Unsuited: Error { let message: String }
     struct DeadlinePassed: Error {}
 
     /// Runs `work`, or throws `DeadlinePassed` when the deadline comes
@@ -254,16 +258,88 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
         let options = GenerationOptions(samplingMode: nil, temperature: request.temperature,
                                         maximumResponseTokens: request.maxTokens)
         let started = Date()
-        let response = try await session.respond(options: options) {
-            for piece in pieces { piece }
+        var text: String
+        if let schema = request.schema {
+            let generation: GenerationSchema
+            do {
+                generation = try GenerationSchema(root: dynamic(schema), dependencies: [])
+            } catch {
+                throw Unsuited(message: "Apple's model can't take this schema: \(error.localizedDescription)")
+            }
+            let response = try await session.respond(schema: generation, options: options) {
+                for piece in pieces { piece }
+            }
+            text = json(response.content)
+        } else {
+            text = try await session.respond(options: options) {
+                for piece in pieces { piece }
+            }.content
         }
         let elapsed = Date().timeIntervalSince(started) * 1000
-        var text = response.content
         if let cut = ChatCompletionRequest.truncate(text, atFirstOf: request.stop) { text = cut }
         let usage = session.usage
         return ChatCompletionResult(text: text, finishReason: "stop", promptTokens: usage.input.totalTokenCount,
                                     completionTokens: usage.output.totalTokenCount, promptMs: 0,
                                     predictedMs: elapsed)
+    }
+
+    /// A response_format schema as guided generation takes it.
+    static func dynamic(_ schema: AppleModelSchema) -> DynamicGenerationSchema {
+        switch schema {
+        case .object(let name, let properties):
+            return DynamicGenerationSchema(name: name, properties: properties.map { property in
+                DynamicGenerationSchema.Property(name: property.name, description: property.description,
+                                                 schema: dynamic(property.schema), isOptional: property.optional)
+            })
+        case .choice(let name, let choices):
+            return DynamicGenerationSchema(name: name, anyOf: choices.map(dynamic))
+        case .strings(let name, let values):
+            return DynamicGenerationSchema(name: name, anyOf: values)
+        case .constant(let value):
+            return DynamicGenerationSchema(type: String.self, guides: [.constant(value)])
+        case .array(let items, let minimum, let maximum):
+            return DynamicGenerationSchema(arrayOf: dynamic(items), minimumElements: minimum, maximumElements: maximum)
+        case .string:
+            return DynamicGenerationSchema(type: String.self)
+        case .integer(let minimum, let maximum):
+            var guides: [GenerationGuide<Int>] = []
+            if let minimum { guides.append(.minimum(minimum)) }
+            if let maximum { guides.append(.maximum(maximum)) }
+            return DynamicGenerationSchema(type: Int.self, guides: guides)
+        case .number:
+            return DynamicGenerationSchema(type: Double.self)
+        case .boolean:
+            return DynamicGenerationSchema(type: Bool.self)
+        case .null:
+            return .null
+        }
+    }
+
+    /// The answer as compact JSON, each object's properties in the order
+    /// the model wrote them, which is the schema's. `jsonString` doesn't
+    /// keep that order.
+    static func json(_ content: GeneratedContent) -> String {
+        switch content.kind {
+        case .null:
+            return "null"
+        case .bool(let value):
+            return value ? "true" : "false"
+        case .number(let value):
+            guard value.isFinite else { return "null" }
+            if value == value.rounded(), abs(value) < 1e15 { return String(Int64(value)) }
+            return value.description
+        case .string(let value):
+            return OrderedJSON.quoted(value)
+        case .array(let elements):
+            return "[" + elements.map(json).joined(separator: ",") + "]"
+        case .structure(let properties, let orderedKeys):
+            let keys = orderedKeys.filter { properties[$0] != nil }
+                + properties.keys.filter { !orderedKeys.contains($0) }.sorted()
+            return "{" + keys.map { "\(OrderedJSON.quoted($0)):\(json(properties[$0]!))" }.joined(separator: ",") + "}"
+
+        @unknown default:
+            return content.jsonString
+        }
     }
 
     static func segment(_ part: AppleModelRequest.Part) throws -> Transcript.Segment {

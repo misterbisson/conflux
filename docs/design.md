@@ -651,7 +651,14 @@ build. Its guardrails decline some content, and its context is small,
 fit isn't the client's fault, so the host marks it for another host, and the
 gateway tries one that serves an accepted model. The client sees the
 refusal, a `400` with code `content_filter` or `context_length_exceeded`,
-only when there's none.
+only when there's none. `response_format` becomes a `DynamicGenerationSchema`
+for its guided generation, read by the same parser as the grammar, so a
+schema malformed for one runtime is malformed for both. What guided
+generation can't enforce, such as `pattern`, `format` or a string's length,
+is marked for another host in the same way, with code
+`unsupported_by_model`. The framework's JSON loses the order of an object's
+properties, so the host writes the answer itself, in the order the model
+wrote it, which is the schema's.
 
 Later candidates, each behind the same host interface:
 
