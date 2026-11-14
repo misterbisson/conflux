@@ -100,6 +100,16 @@ Each host's slot count comes from measuring that device with its model
 single throughput gain on one device. Generating tokens is limited by memory
 bandwidth, so one sequence leaves most of the GPU's compute unused.
 
+The in-process runtime's slots change while it serves: each slot is its own
+llama.cpp context on the shared model, made or freed on its own. A slot that
+goes while a request runs in it retires: it takes nothing new, and still
+counts until the request ends, so the scheduler, which counts requests
+running, sees exactly the free slots. Its owner may instead stop the request,
+the newest first. The host then answers `busy`, which isn't a failure, so the
+gateway sends the request to another host. No slots frees the model once its
+last request ends, and leaves a device's gateway sending all its work to
+peers. `llama-server`'s slots are fixed when it starts.
+
 ### States
 
 | State | Meaning |

@@ -31,6 +31,17 @@ the same span. The history is kept in memory, from when conflux opened.
 **Drain** finishes what's running and takes nothing new. **Pause** takes
 nothing new straight away. **Stop** ends serving and unloads the model.
 
+The slots change while conflux runs; the other model settings need a stop.
+More slots are made without reloading the model. Fewer free idle slots at
+once. When requests are running in slots that go, conflux asks whether to let
+them finish first or stop them now. A stopped request goes to another host
+with a free slot, and with none, its client gets `429` and tries again.
+
+**No slots** makes the Mac gateway only: it runs no requests itself, frees the
+model's memory once its last request ends, and sends every request to its
+peers. The model stays chosen, and peers can still copy it. Raising the slots
+loads it again.
+
 Settings are kept between launches.
 
 The app also comes from TestFlight ([releasing.md](releasing.md)). That build
@@ -153,7 +164,7 @@ others' IDs:
   ```
 
   A Mac that serves no model can still use its peers': `conflux serve --peer
-  3f2a...` with no `--model`.
+  3f2a...` with no `--model`, or, in the app, no slots.
 
 Both Macs have to add each other. Until then, each refuses the other, and the
 window counts the refused connections. A Mac with no peers, from iCloud

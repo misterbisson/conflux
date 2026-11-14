@@ -120,15 +120,22 @@ private let testModelPath = ProcessInfo.processInfo.environment["CONFLUX_TEST_MO
 @Suite(.serialized, .enabled(if: testModelPath != nil))
 struct LlamaHostIntegrationTests {
 
-    func started(slots: Int = 1) async throws -> LlamaHost {
+    func started(slots: Int = 1, context: Int = 256) async throws -> LlamaHost {
         let directory = FileManager.default.temporaryDirectory.appending(path: "conflux-llama-\(UUID().uuidString)")
-        let config = ModelConfig(model: try #require(testModelPath), slots: slots, contextPerSlot: 256,
+        let config = ModelConfig(model: try #require(testModelPath), slots: slots, contextPerSlot: context,
                                  selfCheck: false)
         let host = LlamaHost(config: config, logURL: directory.appending(path: "llama.log"))
         await host.start()
         let state = await host.availability
-        #expect(state == .available, "\(state)")
+        #expect(state == (slots == 0 ? .paused(LlamaHost.noSlots) : .available), "\(state)")
         return host
+    }
+
+    /// A request that runs a while: this model writes into any JSON string
+    /// it may until it runs out of tokens.
+    func long(_ host: LlamaHost) -> Task<HostReply, any Error> {
+        let body = #"{"messages":[{"role":"user","content":"Once upon a time"}],"temperature":0,"max_tokens":1900,"response_format":{"type":"json_object"}}"#
+        return Task { try await host.complete(Data(body.utf8), timeout: 60) }
     }
 
     func ask(_ host: LlamaHost, _ extra: String = "") async throws -> (status: Int, object: [String: Any]) {
@@ -227,6 +234,91 @@ struct LlamaHostIntegrationTests {
         host.stop()
         #expect(await host.availability == .offline)
         await #expect(throws: HostError.self) { try await ask(host) }
+    }
+
+    @Test func slotsChangeWhileServing() async throws {
+        let host = try await started(slots: 1)
+        defer { host.stop() }
+        await host.resize(to: 3, cancelling: false)
+        #expect(host.slots == 3 && host.slotProblem == nil)
+        async let a = ask(host, #","max_tokens":16"#)
+        async let b = ask(host, #","max_tokens":16"#)
+        async let c = ask(host, #","max_tokens":16"#)
+        let replies = try await [a, b, c]
+        #expect(replies.allSatisfy { $0.status == 200 })
+        await host.resize(to: 1, cancelling: false)
+        #expect(host.slots == 1)
+        #expect(try await ask(host, #","max_tokens":8"#).status == 200)
+    }
+
+    /// Fewer slots than requests running: the request finishes in its slot,
+    /// which then goes.
+    @Test func aRemovedSlotFinishesItsRequest() async throws {
+        let host = try await started(slots: 2, context: 2048)
+        defer { host.stop() }
+        let running = long(host)
+        #expect(await eventually { host.running == 1 })
+        await host.resize(to: 1, cancelling: false)
+        await host.resize(to: 0, cancelling: false)
+        #expect(host.slots == 0)
+        #expect(await host.availability == .paused(LlamaHost.noSlots))
+        #expect(try await running.value.status == 200)
+        await #expect(throws: HostError.self) { try await ask(host) }
+    }
+
+    /// Or, asked to, it stops the request, which hears that its slot was
+    /// taken away, so its gateway can send it elsewhere.
+    @Test func aRemovedSlotCanStopItsRequest() async throws {
+        let host = try await started(slots: 1, context: 2048)
+        defer { host.stop() }
+        let running = long(host)
+        #expect(await eventually { host.running == 1 })
+        await host.resize(to: 0, cancelling: true)
+        await #expect(throws: HostError.busy("its slot was taken away while it ran")) { try await running.value }
+    }
+
+    /// A slot that goes while busy counts until its request ends, so the
+    /// scheduler sees exactly the free ones. Stopping takes the newest
+    /// request, which has done least.
+    @Test func busySlotsRetireNewestFirst() async throws {
+        let host = try await started(slots: 3, context: 2048)
+        defer { host.stop() }
+        let older = long(host)
+        #expect(await eventually { host.running == 1 })
+        let newer = long(host)
+        #expect(await eventually { host.running == 2 })
+        // The idle slot goes at once; one busy slot retires.
+        await host.resize(to: 1, cancelling: false)
+        #expect(host.slots == 2)
+        await host.resize(to: 1, cancelling: true)
+        await #expect(throws: HostError.busy("its slot was taken away while it ran")) { try await newer.value }
+        #expect(try await older.value.status == 200)
+        #expect(host.slots == 1)
+        // Back up while nothing runs: a new slot is made.
+        await host.resize(to: 2, cancelling: false)
+        #expect(host.slots == 2)
+    }
+
+    /// No slots: the model is identified but not loaded. Slots load it.
+    @Test func noSlotsThenSome() async throws {
+        let host = try await started(slots: 0)
+        defer { host.stop() }
+        #expect(host.slots == 0)
+        #expect(try #require(await host.model).fingerprint.hasPrefix("llama.cpp-b"))
+        await #expect(throws: HostError.self) { try await ask(host) }
+        await host.resize(to: 2, cancelling: false)
+        #expect(await host.availability == .available)
+        #expect(host.slots == 2)
+        #expect(try await ask(host, #","max_tokens":8"#).status == 200)
+    }
+
+    /// Stopped, it stays stopped whatever its slots.
+    @Test func stoppedStaysStopped() async throws {
+        let host = try await started(slots: 1)
+        host.stop()
+        await host.resize(to: 0, cancelling: false)
+        await host.resize(to: 2, cancelling: false)
+        #expect(await host.availability == .offline)
     }
 
     @Test func missingFile() async {

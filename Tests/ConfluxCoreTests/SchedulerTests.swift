@@ -263,6 +263,64 @@ import Testing
         #expect(host.callCount == 0)
     }
 
+    /// A host's slots can change while it serves: one added takes work
+    /// that waits, once the host says so.
+    @Test func slotsAddedWhileServingTakeWaitingWork() async {
+        let gate = Gate()
+        let host = FakeHost(id: "h", slots: 1, behavior: gate.reply())
+        let scheduler = await Scheduler.with([host])
+        let first = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
+        #expect(await eventually { await scheduler.snapshot().hosts.first?.active == 1 })
+        let second = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
+        #expect(await eventually { await scheduler.snapshot().queued == 1 })
+
+        host.resize(2)
+        await scheduler.refresh(hostID: "h")
+        #expect(await eventually { host.callCount == 2 })
+        #expect(await scheduler.snapshot().queued == 0)
+        await gate.release()
+        for task in [first, second] {
+            if case .completed = await task.value {} else { Issue.record("both should complete") }
+        }
+    }
+
+    /// Fewer slots than requests running: the running ones finish, and
+    /// nothing new starts until a slot frees.
+    @Test func slotsRemovedWhileServingLetRunningWorkFinish() async {
+        let gate = Gate()
+        let host = FakeHost(id: "h", slots: 2, behavior: gate.reply())
+        let scheduler = await Scheduler.with([host])
+        let running = (0..<2).map { _ in Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) } }
+        #expect(await eventually { await scheduler.snapshot().hosts.first?.active == 2 })
+
+        host.resize(1)
+        await scheduler.refresh(hostID: "h")
+        let snapshot = await scheduler.snapshot().hosts.first
+        #expect(snapshot?.slots == 1 && snapshot?.active == 2 && snapshot?.state == .busy)
+        let waiting = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
+        #expect(await eventually { await scheduler.snapshot().queued == 1 })
+        #expect(host.callCount == 2)
+        await gate.release()
+        for task in running + [waiting] {
+            if case .completed = await task.value {} else { Issue.record("each should complete") }
+        }
+        #expect(host.callCount == 3)
+    }
+
+    /// A request whose slot was taken away goes to another host, and
+    /// doesn't count against the one that took it.
+    @Test func aRequestWhoseSlotWasTakenAwayGoesElsewhere() async {
+        let mac = FakeHost(id: "mac") { _ in throw HostError.busy("its slot was taken away while it ran") }
+        let peer = FakeHost(id: "peer")
+        let scheduler = await Scheduler.with([mac, peer])
+        guard case .completed = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) else {
+            Issue.record("the peer should answer")
+            return
+        }
+        #expect(mac.callCount == 1 && peer.callCount == 1)
+        #expect(await scheduler.snapshot().hosts.first { $0.id == "mac" }?.failed == 0)
+    }
+
     @Test func drainingFinishesWhatsRunning() async {
         let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 0.3))
         let scheduler = await Scheduler.with([host])

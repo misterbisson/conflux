@@ -56,6 +56,8 @@ final class AppModel: ObservableObject {
     @Published var problem: String?
     @Published private(set) var peers: [PeerStatus] = []
     @Published private(set) var meshProblem: String?
+    /// Why this Mac's model has fewer slots than asked for.
+    @Published private(set) var slotProblem: String?
     @Published private(set) var refused = 0
     /// Each host's last day by the minute, for the activity chart.
     @Published private(set) var activity: [String: [ActivityMinute]] = [:]
@@ -81,6 +83,9 @@ final class AppModel: ObservableObject {
     let node = ConfluxNode()
     private let access = ModelAccess()
     private var polling: Task<Void, Never>?
+    /// The last change of slots sent to the node. Each waits for the one
+    /// before, so they arrive in order.
+    private var resizing: Task<Void, Never>?
     private var watchingDirectory: Task<Void, Never>?
     /// How often the window reads the directory and refreshes this Mac's
     /// listing. The keychain sends no notice of changes.
@@ -105,6 +110,7 @@ final class AppModel: ObservableObject {
                     self.snapshot = snapshot
                     self.peers = self.node.peers
                     self.meshProblem = self.node.meshProblem
+                    self.slotProblem = self.node.slotProblem
                     self.refused = self.node.refusedConnections
                     self.waiting.append(Double(snapshot.queued))
                     self.memory.append(Double(ProcessMemory.footprint.now))
@@ -377,6 +383,29 @@ final class AppModel: ObservableObject {
         _ = try? TokenStore.rotate()
         objectWillChange.send()
         if running { start() }
+    }
+
+    /// Whether this Mac's model is set to no slots: it runs no requests
+    /// itself, and its gateway sends them all to peers.
+    var servesNoSlots: Bool { settings.host?.slots == 0 }
+
+    /// Requests running on this Mac's model now, slots being removed
+    /// included.
+    var runningHere: Int { host?.active ?? 0 }
+
+    /// Changes how many requests this Mac's model runs at once, and, while
+    /// conflux runs, applies it without stopping. Requests running in slots
+    /// that go finish first, unless `cancelling`.
+    func setSlots(_ slots: Int, cancelling: Bool = false) {
+        var host = settings.host ?? ModelConfig(model: "")
+        host.slots = slots
+        settings.host = host
+        guard running else { return }
+        let previous = resizing
+        resizing = Task { [node] in
+            await previous?.value
+            await node.setSlots(slots, cancelling: cancelling)
+        }
     }
 
     /// Goes back to the starter model, keeping the other model settings.
