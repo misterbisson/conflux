@@ -48,11 +48,19 @@ public struct ActivitySeries: Identifiable, Sendable {
     public let id: String
     public let name: String
     public let minutes: [ActivityMinute]
+    /// The model the host serves, or last served: its minutes count for that
+    /// model, even those from before it changed. Nil when unknown.
+    public let model: String?
+    /// How long its requests typically take.
+    public let typicalSeconds: Double?
 
-    public init(id: String, name: String, minutes: [ActivityMinute]) {
+    public init(id: String, name: String, minutes: [ActivityMinute], model: String? = nil,
+                typicalSeconds: Double? = nil) {
         self.id = id
         self.name = name
         self.minutes = minutes
+        self.model = model
+        self.typicalSeconds = typicalSeconds
     }
 }
 
@@ -70,6 +78,8 @@ public struct ActivityPanel: View {
     @Binding var metric: ActivityMetric
     @Binding var range: ActivityRange
     let now: Date
+    /// Only this model's hosts, or nil for every host.
+    @State private var model: String?
 
     /// `tailSeconds` is the 95th percentile of request time, shown beside
     /// the typical time, which follows the median.
@@ -89,13 +99,48 @@ public struct ActivityPanel: View {
                 HStack(alignment: .firstTextBaseline) { summary; Spacer(); pickers }
                 VStack(alignment: .leading, spacing: 8) { summary; pickers }
             }
-            ActivityChart(series: series, metric: metric, range: range, now: now)
+            ActivityChart(series: series, metric: metric, range: range, now: now,
+                          shown: chosen.map { model in Set(series.filter { $0.model == model }.map(\.id)) })
         }
     }
 
+    /// Every model a host serves or served, Apple's last, when there's more
+    /// than one to choose between.
+    private var models: [String] {
+        let models = Set(series.compactMap(\.model)).sorted {
+            ($0 == AppleModelHost.modelID ? 1 : 0, $0) < ($1 == AppleModelHost.modelID ? 1 : 0, $1)
+        }
+        return models.count > 1 ? models : []
+    }
+
+    /// The model chosen, while a host still has it.
+    private var chosen: String? { model.flatMap { models.contains($0) ? $0 : nil } }
+
+    private var shownSeries: [ActivitySeries] { chosen.map { model in series.filter { $0.model == model } } ?? series }
+
+    /// For every host, the typical time given. For one model's, its hosts'
+    /// typical times, each by how much of the last ten minutes' work it did.
+    private func typical(_ series: [ActivitySeries]) -> Double? {
+        guard chosen != nil else { return typicalSeconds }
+        let weighted = series.compactMap { host in
+            host.typicalSeconds.map { typical in
+                (typical, Double(ActivityTotals(host.minutes.filter { $0.start > now.addingTimeInterval(-600) }).completed))
+            }
+        }
+        let work = weighted.reduce(0) { $0 + $1.1 }
+        guard !weighted.isEmpty else { return nil }
+        return work > 0 ? weighted.reduce(0) { $0 + $1.0 * $1.1 } / work
+                        : weighted.reduce(0) { $0 + $1.0 } / Double(weighted.count)
+    }
+
     /// The last ten minutes, as a rate: what's happening now. The failures
-    /// count over the whole span, to go with the red marks.
+    /// count over the whole span, to go with the red marks. For the model
+    /// chosen, if one is.
     private var summary: some View {
+        let series = shownSeries
+        let typicalSeconds = typical(series)
+        // This Mac's tail: not one model's hosts'.
+        let tailSeconds = chosen == nil ? tailSeconds : nil
         let recent = ActivityTotals(series.flatMap { $0.minutes.filter { $0.start > now.addingTimeInterval(-600) } })
         let shown = series.map { host in
             (name: host.name,
@@ -119,7 +164,10 @@ public struct ActivityPanel: View {
             parts.append("\((recent.promptTokens / 10).formatted()) read")
             if let speed = recent.tokensPerSecond { parts.append(String(format: "%.0f a second while writing", speed)) }
         case .utilization:
-            if recent.utilization != nil { parts.append("of every host's slots, last ten minutes") }
+            if recent.utilization != nil {
+                parts.append(chosen == nil ? "of every host's slots, last ten minutes"
+                                           : "of this model's hosts' slots, last ten minutes")
+            }
         }
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(headline).font(.title2.monospacedDigit().weight(.semibold))
@@ -134,14 +182,26 @@ public struct ActivityPanel: View {
 
     private var pickers: some View {
         HStack {
-            Picker("Count", selection: $metric) {
-                ForEach(ActivityMetric.allCases) { Text($0.title).tag($0) }
+            if !models.isEmpty {
+                Picker("Model", selection: $model) {
+                    Text("Every model").tag(String?.none)
+                    Divider()
+                    ForEach(models, id: \.self) { model in
+                        Text(model == AppleModelHost.modelID ? "Apple's model" : model).tag(Optional(model))
+                    }
+                }
+                .pickerStyle(.menu)
             }
-            Picker("Over", selection: $range) {
-                ForEach(ActivityRange.allCases) { Text($0.title).tag($0) }
+            Group {
+                Picker("Count", selection: $metric) {
+                    ForEach(ActivityMetric.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Over", selection: $range) {
+                    ForEach(ActivityRange.allCases) { Text($0.title).tag($0) }
+                }
             }
+            .pickerStyle(.segmented)
         }
-        .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
     }
@@ -156,14 +216,19 @@ public struct ActivityChart: View {
     let metric: ActivityMetric
     let range: ActivityRange
     let now: Date
+    /// The hosts drawn, by ID, or nil for all of them. Each keeps the colour
+    /// it has among all of them.
+    let shown: Set<String>?
     /// The time selected on the chart, to name the hosts that failed there.
     @State private var selected: Date?
 
-    public init(series: [ActivitySeries], metric: ActivityMetric, range: ActivityRange, now: Date = Date()) {
+    public init(series: [ActivitySeries], metric: ActivityMetric, range: ActivityRange, now: Date = Date(),
+                shown: Set<String>? = nil) {
         self.series = series
         self.metric = metric
         self.range = range
         self.now = now
+        self.shown = shown
     }
 
     /// Each host keeps its colour whatever's shown. Red is kept for
@@ -220,7 +285,8 @@ public struct ActivityChart: View {
         return Date(timeIntervalSince1970: (seconds / range.bin).rounded(.down) * range.bin)
     }
 
-    private func shown(_ host: ActivitySeries) -> [ActivityMinute] {
+    /// A host's minutes in the span, and the bin that started before it.
+    private func inRange(_ host: ActivitySeries) -> [ActivityMinute] {
         host.minutes.filter { $0.start >= start.addingTimeInterval(-range.bin) }
     }
 
@@ -230,11 +296,11 @@ public struct ActivityChart: View {
         var segments: [Segment] = []
         var points: [Point] = []
         let gap = range.bin * 0.12
-        for host in series {
+        for host in series where shown?.contains(host.id) ?? true {
             var values: [Date: Int] = [:]
             var slots: [Date: (busy: Double, offered: Double)] = [:]
             var failures: [Date: Int] = [:]
-            for minute in shown(host) {
+            for minute in inRange(host) {
                 values[bin(minute), default: 0] += metric.value(minute)
                 slots[bin(minute), default: (0, 0)].busy += minute.busySlotSeconds
                 slots[bin(minute), default: (0, 0)].offered += minute.slotSeconds
@@ -261,16 +327,21 @@ public struct ActivityChart: View {
     }
 
     public var body: some View {
-        let names = series.map(\.name)
-        let colors = names.indices.map { $0 < Self.palette.count ? Self.palette[$0] : Color.gray }
-        // Each host's failures on the span, for the legend.
-        let failed = series.map { host in shown(host).filter { $0.start >= start }.reduce(0) { $0 + $1.failed } }
+        // With each host's failures on the span, for the legend.
+        let entries = series.indices.compactMap { index -> (name: String, color: Color, failed: Int)? in
+            guard shown?.contains(series[index].id) ?? true else { return nil }
+            let failed = inRange(series[index]).filter { $0.start >= start }.reduce(0) { $0 + $1.failed }
+            return (series[index].name, index < Self.palette.count ? Self.palette[index] : Color.gray, failed)
+        }
+        let names = entries.map(\.name)
+        let colors = entries.map(\.color)
+        let failed = entries.map(\.failed)
         VStack(alignment: .leading, spacing: 6) {
             chart(names: names, colors: colors)
                 .frame(height: 116)
             // Its own, not the chart's, which keeps to one line and cuts off
             // the hosts that don't fit.
-            if names.count > 1 || failed.contains(where: { $0 > 0 }) {
+            if series.count > 1 || failed.contains(where: { $0 > 0 }) {
                 Flow {
                     ForEach(Array(zip(names, colors).enumerated()), id: \.offset) { index, entry in
                         HStack(spacing: 4) {

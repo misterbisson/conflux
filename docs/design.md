@@ -141,8 +141,10 @@ A host refuses work before it hurts the device. It watches:
   (the in-process runtime, on a Mac or an iPad) unloads its model, stopping
   what runs so gateways send it elsewhere, and says why. Once pressure has
   been normal for a minute it loads the model again with its owner's
-  slots. A model that brings pressure back to critical within 10 minutes of
-  loading waits twice as long the next time, up to 30 minutes
+  slots, and checks it again (*Self-check*). A host's start runs to its end
+  even if the task that asked for it is cancelled: only stopping the host
+  stops it. A model that brings pressure back to critical within 10 minutes
+  of loading waits twice as long the next time, up to 30 minutes
   (`MemoryRelief`). `llama-server` can't change its slots, so it's only
   paused.
 
@@ -480,7 +482,12 @@ device, `apple` for Apple's model.
   `Conflux-Outcome` says what became of it: `completed`, `rejected` (the
   runtime refused it, a 4xx the gateway passes on), `unsuitable` (refused
   here, though another host might take it: content the model declined, or a
-  request too long for it), `busy`, `unavailable`, or `cancelled`. A completion names the model that ran,
+  request too long for it), `busy`, `unavailable`, or `cancelled`. `busy`
+  covers a host held back on purpose as well as one whose slots are full:
+  paused, draining, resting, or limited to no slots by resource policy. It
+  answered, with no slot to give, so the gateway doesn't count it as not
+  answering; `unavailable` is for a host that's starting, has failed, or
+  doesn't answer at all. A completion names the model that ran,
   as the host saw it, and a refusal the model that refused.
   `Conflux-Slots: <generation> <capacity> <active> <held>` says how the
   host's slots stand once the request has left its slot, so the gateway can

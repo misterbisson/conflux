@@ -126,6 +126,58 @@ import Testing
         _ = await running
     }
 
+    /// A host held back on purpose, by its owner or by resource policy,
+    /// answers a peer's gateway busy: it's there, with no slot to give. One
+    /// that's starting or has failed is unavailable.
+    @Test func aHeldBackHostAnswersPeersBusy() async throws {
+        let host = FakeHost(id: "local")
+        let scheduler = await Scheduler.with([host])
+        func run() async -> Outcome { await scheduler.run(Data(), onHost: "local", deadline: nil) }
+
+        await scheduler.setLimit(0, reason: MemoryRelief.reason, for: "local")
+        #expect(await run() == .busy(retryAfter: 30))
+        await scheduler.setLimit(nil, reason: nil, for: "local")
+        for intent in [OwnerIntent.paused, .draining] {
+            await scheduler.setIntent(intent, for: "local")
+            #expect(await run() == .busy(retryAfter: 30), "\(intent)")
+        }
+        await scheduler.setIntent(.serving, for: "local")
+        host.set(.paused(MemoryRelief.reason))
+        await scheduler.refresh()
+        #expect(await run() == .busy(retryAfter: 30))
+        #expect(host.callCount == 0)
+
+        host.set(.starting("loading the model"))
+        await scheduler.refresh()
+        #expect(await run() == .unavailable(retryAfter: 30, message: "loading the model"))
+        host.set(.failed("self-check failed"))
+        await scheduler.refresh()
+        #expect(await run() == .unavailable(retryAfter: 30, message: "self-check failed"))
+    }
+
+    /// An iPad at critical memory pressure pauses before its gateways hear
+    /// of it. What they send meanwhile isn't counted against it as not
+    /// answering: the answer's slots say it has none, and the gateway sends
+    /// nothing more until it says otherwise.
+    @Test func aPeerPausedBeforeItsGatewayHeardIsntAFault() async throws {
+        let peer = try await Peer()
+        defer { peer.server.stop() }
+        let gateway = Scheduler()
+        await gateway.add(peer.remote)
+        #expect(await gateway.snapshot().hosts.first?.state == .ready)
+        // The peer pauses; the gateway's last status still says one slot is free.
+        await peer.scheduler.setLimit(0, reason: "memory pressure is critical", for: "local")
+
+        let outcome = await gateway.submit(Data("{}".utf8), choice: any, deadline: Date().addingTimeInterval(3),
+                                           key: nil)
+        if case .busy = outcome {} else { Issue.record("\(outcome)") }
+        let snapshot = try #require(await gateway.snapshot().hosts.first)
+        #expect(snapshot.failures.hostFaults == 0, "\(snapshot.failures)")
+        #expect(snapshot.failures.busy == 1)
+        #expect(snapshot.capacity == 0)
+        #expect(peer.host.callCount == 0)
+    }
+
     /// The point of it all, measured: a fast host and a slow one on other
     /// devices, behind a network's latency, and more work than slots. With
     /// one request sent ahead, the fast host's idle-with-work all but goes;

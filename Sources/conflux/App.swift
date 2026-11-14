@@ -61,6 +61,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var refused = 0
     /// Each host's last day by the minute, for the activity chart.
     @Published private(set) var activity: [String: [ActivityMinute]] = [:]
+    /// The model each host last served, so the chart can show a model's
+    /// hosts after one has left.
+    private var hostModels: [String: String] = [:]
     /// Requests waiting at this gateway, the most in each reading.
     @Published private(set) var waiting = TimeSeries(keeping: .highest)
     /// conflux's memory footprint: with the model run in the process, the
@@ -115,6 +118,7 @@ final class AppModel: ObservableObject {
                 if let self {
                     let snapshot = await self.node.scheduler.snapshot()
                     self.snapshot = snapshot
+                    for host in snapshot.hosts { if let model = host.model?.id { self.hostModels[host.id] = model } }
                     self.peers = self.node.peers
                     self.meshProblem = self.node.meshProblem
                     self.slotProblem = self.node.slotProblem
@@ -206,8 +210,9 @@ final class AppModel: ObservableObject {
         var ids = Set(activity.keys).union(snapshot?.hosts.map(\.id) ?? [])
         let first = [ConfluxNode.localHostID, ConfluxNode.appleHostID].filter { ids.contains($0) }
         ids.subtract(first)
-        return (first + ids.sorted()).map {
-            ActivitySeries(id: $0, name: hostName($0), minutes: activity[$0] ?? [])
+        return (first + ids.sorted()).map { id in
+            ActivitySeries(id: id, name: hostName(id), minutes: activity[id] ?? [], model: hostModels[id],
+                           typicalSeconds: snapshot?.hosts.first { $0.id == id }?.typicalSeconds)
         }
     }
 

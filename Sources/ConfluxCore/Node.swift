@@ -282,8 +282,11 @@ public final class ConfluxNode: @unchecked Sendable {
             reliefCheck = relief.nextCheck.map { next in
                 Task { [weak self] in
                     try? await Task.sleep(until: next, clock: .continuous)
-                    guard !Task.isCancelled else { return }
-                    await self?.relieve(host)
+                    guard !Task.isCancelled, let self else { return }
+                    // In a task of its own: relieving cancels this check to
+                    // replace it, and loading the model again shouldn't run
+                    // in a cancelled task.
+                    Task { await self.relieve(host) }
                 }
             }
             return (action, ownerSlots, monitor)
