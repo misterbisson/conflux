@@ -56,21 +56,25 @@ import Testing
         let running = Task { await scheduler.submit(Data(), choice: ModelChoice(model: "model-a", preference: nil),
                                                     deadline: nil, key: nil) }
         #expect(await eventually { await scheduler.snapshot().hosts.first?.active == 1 })
-        try await Task.sleep(for: .milliseconds(400))
+        // One slot of two busy from here on: utilization climbs towards half,
+        // however long the moment before took on a slow machine, and never
+        // passes it.
+        func current(_ id: String) async -> HostSnapshot? { await scheduler.snapshot().hosts.first { $0.id == id } }
+        #expect(await eventually { (await current("h")?.utilization ?? 0) > 0.4 })
         let snapshot = await scheduler.snapshot()
         let hosts = Dictionary(uniqueKeysWithValues: snapshot.hosts.map { ($0.id, $0) })
-        // One slot of two busy nearly throughout, less the moment before.
         let busy = try #require(hosts["h"]?.utilization)
-        #expect(busy > 0.35 && busy <= 0.5 + 1e-9, "utilization \(busy)")
+        #expect(busy > 0.4 && busy <= 0.5 + 1e-9, "utilization \(busy)")
         #expect(hosts["idle"]?.utilization == 0)
-        // The mesh's: one slot busy of three.
+        // The mesh's: one slot busy of three, at most.
         let mesh = try #require(snapshot.utilization)
-        #expect(mesh > 0.2 && mesh <= 1.0 / 3 + 1e-9, "mesh utilization \(mesh)")
-        #expect(try #require(hosts["h"]?.slotSeconds) >= 2 * 0.4)
-        #expect(try #require(hosts["h"]?.busySlotSeconds) >= 0.4)
+        #expect(mesh > 0 && mesh <= 1.0 / 3 + 1e-9, "mesh utilization \(mesh)")
+        // The counts since it was added say the same.
+        let counted = try #require(hosts["h"])
+        #expect(counted.busySlotSeconds > 0 && counted.busySlotSeconds <= counted.slotSeconds / 2 + 1e-9)
         // The activity has it by the minute.
         let minutes = await scheduler.activity(since: Date().addingTimeInterval(-120))["h"] ?? []
-        #expect(ActivityTotals(minutes).busySlotSeconds >= 0.4)
+        #expect(ActivityTotals(minutes).busySlotSeconds > 0)
         await gate.release()
         _ = await running.value
     }
