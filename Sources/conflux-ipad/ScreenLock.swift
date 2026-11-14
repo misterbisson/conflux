@@ -70,6 +70,10 @@ struct LockedView<Status: View>: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(uiColor: .systemGroupedBackground))
+        // Dark while locked, whatever iPadOS is set to: an iPad left serving
+        // through the night lights the room less, and the whole window,
+        // status bar included, follows. Unlocked, it's iPadOS's again.
+        .preferredColorScheme(.dark)
     }
 
     private var unlockSymbol: String {

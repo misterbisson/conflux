@@ -412,10 +412,10 @@ for the model file: only in the foreground, and only while charging unless
   than through a relay.
 
 **Locking the screen.** To leave an iPad serving where others can reach it,
-press **Lock**, at the top right. Locked, conflux shows the same status,
-chart and tiles, and nothing that changes anything: no buttons or switches,
-no choice of what the chart counts or how far back, no Cool down box. The one
-control is **Unlock**, which asks for the iPad's passcode, Face ID or Touch
+press **Lock**, at the top right. Locked, conflux turns dark, whatever the
+iPad's appearance is set to, and shows the same status, chart and tiles, and
+nothing that changes anything: no buttons or switches, no choice of what the
+chart counts or how far back, no Cool down box. The one control is **Unlock**, which asks for the iPad's passcode, Face ID or Touch
 ID. It needs a passcode set in Settings. It stays locked if conflux is ended
 and opened again. It locks conflux, not the iPad: iPadOS's own gestures still
 leave the app, which stops it serving, as above. To keep the iPad in conflux
