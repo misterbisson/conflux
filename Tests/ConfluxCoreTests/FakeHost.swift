@@ -5,8 +5,8 @@ import Foundation
 /// what it answers or throws.
 final class FakeHost: InferenceHost, @unchecked Sendable {
     let id: String
-    let slots: Int
     private let lock = NSLock()
+    private var slotCount: Int
     private var info: ModelInfo?
     private var state: HostAvailability
     private var running = 0
@@ -20,11 +20,15 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
          slots: Int = 1, availability: HostAvailability = .available,
          behavior: @escaping @Sendable (Int) async throws -> HostReply = FakeHost.reply(after: 0)) {
         self.id = id
-        self.slots = slots
+        slotCount = slots
         info = ModelInfo(id: model, capabilities: capabilities, fingerprint: "fake-\(model)", maxImageDimension: 1024)
         state = availability
         self.behavior = behavior
     }
+
+    var slots: Int { lock.withLock { slotCount } }
+    /// Changes its slots while it serves, as `LlamaHost` can.
+    func resize(_ slots: Int) { lock.withLock { slotCount = slots } }
 
     var model: ModelInfo? { get async { lock.withLock { info } } }
     var availability: HostAvailability { get async { lock.withLock { state } } }

@@ -45,9 +45,18 @@ struct ContentView: View {
                 Text(problem).foregroundStyle(.red)
             }
             if let host = model.host, model.running {
-                if host.capacity < host.slots {
+                let wanted = model.settings.host?.slots ?? host.slots
+                let finishing = host.active - wanted
+                if finishing > 0 {
+                    Text("\(finishing) \(finishing == 1 ? "request is" : "requests are") finishing in slots being removed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if host.capacity < host.slots {
                     Text("Running \(host.capacity) of \(host.slots) slots: the rest didn't fit.")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                if let problem = model.slotProblem {
+                    Text("Running \(host.slots) of \(wanted) slots: \(problem).")
+                        .font(.caption).foregroundStyle(.orange)
                 }
                 if let served = host.model {
                     LabeledContent("Fingerprint") {
@@ -134,20 +143,28 @@ struct ContentView: View {
         return (stopWarning(running: running, waiting: waiting) ?? "") + drain
     }
 
+    /// The host the headline is about: this Mac's model, unless it serves
+    /// no slots, then Apple's.
+    var headlineHost: HostSnapshot? {
+        model.servesNoSlots ? model.appleHost : model.host ?? model.appleHost
+    }
+
     var stateLabel: String {
         guard model.running else { return "Stopped" }
-        return (model.host ?? model.appleHost)?.state.label ?? "Gateway only"
+        return headlineHost?.state.label ?? "Gateway only"
     }
 
     /// Why it's in the state it's in, or else what it serves.
     var stateDetail: String? {
         guard model.running else { return "Start to open the gateway, serve this Mac's models and join the mesh." }
-        guard let state = (model.host ?? model.appleHost) else { return nil }
+        guard let state = headlineHost else {
+            return model.servesNoSlots ? "This Mac's model serves no slots: requests go to peers." : nil
+        }
         return state.state.detail ?? state.model?.id
     }
 
     var color: Color {
-        guard model.running, let state = (model.host ?? model.appleHost)?.state else { return .secondary }
+        guard model.running, let state = headlineHost?.state else { return .secondary }
         return state.color
     }
 
@@ -155,60 +172,112 @@ struct ContentView: View {
 
     @ViewBuilder var modelSection: some View {
         Section("Model") {
-            if model.servesStarter {
-                LabeledContent("Model") {
-                    HStack {
-                        Text("Starter model, included").lineLimit(1)
-                        Button("Choose…") { model.choose(projector: false) }
-                    }
-                }
-                Text("""
-                    \(StarterModel.modelFile), with its projector: small, reads text and images, and answers \
-                    poorly. Enough to see a client work through conflux. Choose a model to serve a real one.
-                    """)
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                path("Model", model.settings.host?.model, projector: false)
-                path("Projector", model.settings.host?.projector, projector: true)
-                ForEach(model.fileProblems, id: \.self) { problem in
-                    Text(problem).font(.caption).foregroundStyle(.red)
-                }
-                if model.settings.host?.projector != nil {
-                    Button("Remove projector (text only)") { model.settings.host?.projector = nil }
-                }
-                if model.starter != nil {
-                    Button("Use the starter model") { model.useStarter() }
-                }
-            }
-            StepperRow("Slots", value: binding(\.slots), in: 1...32)
-            Picker("Context per slot", selection: binding(\.contextPerSlot)) {
-                ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: host.contextPerSlot), id: \.self) {
-                    Text("\($0.formatted()) tokens").tag($0)
-                }
-            }
-            Picker("Largest image side", selection: binding(\.maxImageDimension)) {
-                ForEach(ModelConfig.choices(ModelConfig.imageSides, including: host.maxImageDimension), id: \.self) {
-                    Text("\($0.formatted()) px").tag($0)
-                }
-            }
-            Toggle("Check the model reads its input before serving", isOn: binding(\.selfCheck))
-            if model.settings.host?.projector != nil {
-                TextField("Fewest tokens per image", value: binding(\.imageMinTokens), format: .number.grouping(.never),
-                          prompt: Text("the model's own setting"))
-                Text("Some models read small images badly with fewer tokens. Qwen-VL models want 1024.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Text("""
-                Slots are how many requests this Mac runs at once, and each one takes memory for its context. \
-                More slots don't always mean more speed. If the Mac runs short of memory and swaps to disk, use \
-                fewer slots or less context.
-                """)
-                .font(.caption).foregroundStyle(.secondary)
+            Group { modelFiles }.disabled(model.running)
+            slotsRow
+            Group { modelOptions }.disabled(model.running)
+            slotsHelp
             if model.running {
-                Text("Stop conflux to change these.").font(.caption).foregroundStyle(.secondary)
+                Text("Stop conflux to change the rest.").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .disabled(model.running)
+    }
+
+    @ViewBuilder var modelFiles: some View {
+        if model.servesStarter {
+            LabeledContent("Model") {
+                HStack {
+                    Text("Starter model, included").lineLimit(1)
+                    Button("Choose…") { model.choose(projector: false) }
+                }
+            }
+            Text("""
+                \(StarterModel.modelFile), with its projector: small, reads text and images, and answers \
+                poorly. Enough to see a client work through conflux. Choose a model to serve a real one.
+                """)
+                .font(.caption).foregroundStyle(.secondary)
+        } else {
+            path("Model", model.settings.host?.model, projector: false)
+            path("Projector", model.settings.host?.projector, projector: true)
+            ForEach(model.fileProblems, id: \.self) { problem in
+                Text(problem).font(.caption).foregroundStyle(.red)
+            }
+            if model.settings.host?.projector != nil {
+                Button("Remove projector (text only)") { model.settings.host?.projector = nil }
+            }
+            if model.starter != nil {
+                Button("Use the starter model") { model.useStarter() }
+            }
+        }
+    }
+
+    /// The model's slots, changed at once while conflux runs. Fewer slots
+    /// than requests running asks whether to stop the ones left over.
+    var slotsRow: some View {
+        StepperRow("Slots", value: Binding(get: { host.slots }, set: setSlots), in: 0...32)
+            .confirmationDialog(shrinking.map { $0.to == 0 ? "Serve no slots on this Mac?" : "Use \($0.to) \($0.to == 1 ? "slot" : "slots")?" } ?? "",
+                                isPresented: Binding(get: { shrinking != nil }, set: { if !$0 { shrinking = nil } }),
+                                presenting: shrinking) { change in
+                let them = change.cut == 1 ? "It" : "Them"
+                Button("Let \(them) Finish") { model.setSlots(change.to) }
+                Button("Stop \(them) Now", role: .destructive) { model.setSlots(change.to, cancelling: true) }
+                Button("Keep \(host.slots) \(host.slots == 1 ? "Slot" : "Slots")", role: .cancel) {}
+            } message: { change in
+                Text(change.cut == 1
+                     ? "A request is running in a slot that goes. It can finish there first, or stop now and go to another host with a free slot; with none, its client hears to try again shortly."
+                     : "\(change.cut) requests are running in slots that go. They can finish there first, or stop now and go to other hosts with free slots; with none, their clients hear to try again shortly.")
+            }
+    }
+
+    /// Fewer slots than requests running, and what to do with the ones left
+    /// over, while it asks.
+    @State private var shrinking: (to: Int, cut: Int)?
+
+    func setSlots(_ slots: Int) {
+        let cut = model.running && slots < host.slots ? model.runningHere - slots : 0
+        if cut > 0 {
+            shrinking = (slots, cut)
+        } else {
+            model.setSlots(slots)
+        }
+    }
+
+    @ViewBuilder var modelOptions: some View {
+        Picker("Context per slot", selection: binding(\.contextPerSlot)) {
+            ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: host.contextPerSlot), id: \.self) {
+                Text("\($0.formatted()) tokens").tag($0)
+            }
+        }
+        Picker("Largest image side", selection: binding(\.maxImageDimension)) {
+            ForEach(ModelConfig.choices(ModelConfig.imageSides, including: host.maxImageDimension), id: \.self) {
+                Text("\($0.formatted()) px").tag($0)
+            }
+        }
+        Toggle("Check the model reads its input before serving", isOn: binding(\.selfCheck))
+        if model.settings.host?.projector != nil {
+            TextField("Fewest tokens per image", value: binding(\.imageMinTokens), format: .number.grouping(.never),
+                      prompt: Text("the model's own setting"))
+            Text("Some models read small images badly with fewer tokens. Qwen-VL models want 1024.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder var slotsHelp: some View {
+        Text("""
+            Slots are how many requests this Mac runs at once, and each one takes memory for its context. \
+            More slots don't always mean more speed. If the Mac runs short of memory and swaps to disk, use \
+            fewer slots or less context. Slots change while conflux runs.
+            """)
+            .font(.caption).foregroundStyle(.secondary)
+        if model.servesNoSlots {
+            Text("""
+                With no slots, this Mac runs no requests itself and doesn't load the model: its gateway sends \
+                every request to peers. Peers can still copy the model.
+                """)
+                .font(.caption).foregroundStyle(.secondary)
+            if model.trusted.isEmpty && !model.settings.appleModel.enabled {
+                Text("With no peers, nothing will answer requests.").font(.caption).foregroundStyle(.orange)
+            }
+        }
     }
 
     // MARK: Apple's model

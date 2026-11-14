@@ -119,7 +119,8 @@ public final class ConfluxNode: @unchecked Sendable {
     private var host: (any ManagedHost)?
     /// Apple's on-device model, alongside it.
     private var apple: AppleModelHost?
-    private var monitors: [ResourceMonitor] = []
+    /// Each local host's resource monitor, by host ID.
+    private var monitors: [String: ResourceMonitor] = [:]
     private var boundPort: UInt16?
     private var service: HTTPServer?
     private var mesh: Mesh?
@@ -176,16 +177,18 @@ public final class ConfluxNode: @unchecked Sendable {
         lock.withLock { usesPeers = settings.gateway }
         await scheduler.startRefreshing()
 
-        if let config = settings.host {
-            let host = Self.host(for: config)
+        // With no slots, a host that can't change its slots isn't started:
+        // there'd be nothing it could do.
+        if let config = settings.host, case let host = Self.host(for: config),
+           config.slots > 0 || host is any ResizableHost {
             lock.withLock { self.host = host }
-            await serve(host, slots: config.slots)
+            await serve(host)
         }
         if settings.appleModel.enabled {
             let apple = AppleModelHost(id: Self.appleHostID, slots: settings.appleModel.slots,
                                        selfCheck: settings.appleModel.selfCheck)
             lock.withLock { self.apple = apple }
-            await serve(apple, slots: apple.slots)
+            await serve(apple)
         }
 
         let directory = settings.iCloudKeychain ? directory : nil
@@ -211,17 +214,37 @@ public final class ConfluxNode: @unchecked Sendable {
 
     /// Adds a local host to the scheduler, starts it, and holds its slots to
     /// what resource policy allows.
-    private func serve(_ host: any LocalHost, slots: Int) async {
+    private func serve(_ host: any LocalHost) async {
         let monitor = ResourceMonitor()
-        lock.withLock { monitors.append(monitor) }
+        lock.withLock { monitors[host.id] = monitor }
         await scheduler.add(host)
         let scheduler = self.scheduler
         monitor.start { reading in
-            let limit = ResourcePolicy.limit(slots: slots, reading: reading)
-            Task { await scheduler.setLimit(limit.slots, reason: limit.reason, for: host.id) }
+            Task { await Self.limit(host, under: reading, in: scheduler) }
         }
         Task { await host.start() }
     }
+
+    /// Holds a host to what resource policy allows of the slots it has now,
+    /// or lifts the limit when nothing limits it.
+    private static func limit(_ host: any LocalHost, under reading: ResourceReading, in scheduler: Scheduler) async {
+        let limit = ResourcePolicy.limit(slots: host.slots, reading: reading)
+        await scheduler.setLimit(limit.reason == nil ? nil : limit.slots, reason: limit.reason, for: host.id)
+    }
+
+    /// Changes how many requests this device's model runs at once, without
+    /// stopping (`LlamaHost.resize(to:cancelling:)`). None frees the model
+    /// and leaves requests to peers' hosts. Does nothing without a model, or
+    /// with a runtime whose slots can't change, such as `llama-server`.
+    public func setSlots(_ slots: Int, cancelling: Bool) async {
+        let (host, monitor) = lock.withLock { (self.host, self.host.flatMap { monitors[$0.id] }) }
+        guard let host = host as? any ResizableHost else { return }
+        await host.resize(to: slots, cancelling: cancelling)
+        if let monitor { await Self.limit(host, under: monitor.reading, in: scheduler) }
+    }
+
+    /// Why this device's model has fewer slots than asked for, when it does.
+    public var slotProblem: String? { (lock.withLock { host } as? LlamaHost)?.slotProblem }
 
     /// The hosts on this device.
     private var localHosts: [any LocalHost] {
@@ -446,8 +469,8 @@ public final class ConfluxNode: @unchecked Sendable {
         }
         let hosts = localHosts
         let (server, monitors) = lock.withLock { () -> (HTTPServer?, [ResourceMonitor]) in
-            defer { self.server = nil; host = nil; apple = nil; self.monitors = []; boundPort = nil }
-            return (self.server, self.monitors)
+            defer { self.server = nil; host = nil; apple = nil; self.monitors = [:]; boundPort = nil }
+            return (self.server, Array(self.monitors.values))
         }
         for monitor in monitors { monitor.stop() }
         for host in hosts { host.stop() }

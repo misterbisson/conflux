@@ -8,24 +8,37 @@ import llama
 /// the model's weights and the vision projector are shared. A crash inside
 /// llama.cpp takes the whole process with it, which the `llama-server`
 /// runtime avoids.
-public final class LlamaHost: ManagedHost, @unchecked Sendable {
+public final class LlamaHost: ManagedHost, ResizableHost, @unchecked Sendable {
     public let id: String
+    /// The settings it started with. Its slots can change since
+    /// (`resize(to:cancelling:)`); `slots` says how many it has now.
     public let config: ModelConfig
     public let logURL: URL
-    public var slots: Int { config.slots }
 
     private let lock = NSLock()
     private var engine: LlamaEngine?
     private var identity: ModelInfo?
     private var state: HostAvailability = .starting("not started")
-    /// Counts starts and stops, so a load that finishes after a stop is
-    /// thrown away.
+    /// Counts starts, stops and unloads, so a load that finishes after one
+    /// is thrown away.
     private var generation = 0
+    /// The slots asked for.
+    private var wanted: Int
+    /// Asked for no slots, so the model isn't loaded.
+    private var resting = false
+    private var stopped = false
+    /// Why the engine has fewer slots than asked for, when it does.
+    private var shortfall: String?
+    private var observers: [@Sendable () -> Void] = []
+
+    /// What a host asked for no slots says it's doing.
+    public static let noSlots = "serving no slots: its requests go to other devices"
 
     public init(id: String = "local", config: ModelConfig, logURL: URL = LlamaHost.defaultLogURL) {
         self.id = id
         self.config = config
         self.logURL = logURL
+        wanted = max(0, config.slots)
         // Provisional until the files are hashed, so requests arriving that
         // early hear "starting" rather than "no such model".
         identity = ModelInfo(id: config.modelID, capabilities: config.capabilities, fingerprint: "identifying",
@@ -37,6 +50,20 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
             .appending(path: "Logs/conflux/llama.log")
     }
 
+    /// The slots asked for, once the model is loaded and llama.cpp has made
+    /// them, with those retiring whose requests still run; none while it
+    /// rests.
+    public var slots: Int {
+        lock.withLock { resting ? 0 : engine?.count ?? wanted }
+    }
+
+    /// Why it has fewer slots than were asked for: llama.cpp couldn't make
+    /// room for the rest.
+    public var slotProblem: String? { lock.withLock { shortfall } }
+
+    /// Requests running in the loaded model's slots, for tests.
+    var running: Int { lock.withLock { engine }?.busy ?? 0 }
+
     public var model: ModelInfo? {
         get async { lock.withLock { identity } }
     }
@@ -45,18 +72,31 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
         get async { lock.withLock { state } }
     }
 
+    public func observe(_ changed: @escaping @Sendable () -> Void) {
+        lock.withLock { observers.append(changed) }
+    }
+
+    private func changed() {
+        for observer in lock.withLock({ observers }) { observer() }
+    }
+
     private func set(_ new: HostAvailability, ifCurrent generation: Int) {
         lock.withLock { if self.generation == generation { state = new } }
+        changed()
     }
 
     // MARK: Lifecycle
 
     /// Identifies the model, loads it, and runs the self-check. Returns once
-    /// the host is available or has failed.
+    /// the host is available or has failed. Asked for no slots, it identifies
+    /// the model and rests, without loading it.
     public func start() async {
         let generation = lock.withLock { () -> Int in
             self.generation += 1
             engine = nil
+            stopped = false
+            resting = false
+            shortfall = nil
             state = .starting("identifying the model")
             return self.generation
         }
@@ -71,11 +111,18 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
         } catch {
             return set(.failed("can't read the model file: \(error.localizedDescription)"), ifCurrent: generation)
         }
-        lock.withLock {
+        let slots = lock.withLock { () -> Int? in
             identity = ModelInfo(id: config.modelID, capabilities: config.capabilities,
                                  fingerprint: "llama.cpp-b\(LlamaRuntime.build)-sha256:\(digest.prefix(12))",
                                  maxImageDimension: config.projector == nil ? nil : config.maxImageDimension)
+            guard self.generation == generation else { return nil }
+            if wanted == 0 {
+                resting = true
+                state = .paused(Self.noSlots)
+            }
+            return wanted
         }
+        guard let slots, slots > 0 else { return changed() }
 
         set(.starting("loading the model"), ifCurrent: generation)
         LlamaRuntime.initialize()
@@ -84,6 +131,8 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
         let mark = LlamaLog.shared.mark()
         let loaded: LlamaEngine
         do {
+            var config = config
+            config.slots = slots
             loaded = try await Task.detached(priority: .userInitiated) { [config] in
                 try LlamaEngine(config: config)
             }.value
@@ -101,11 +150,17 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
                 return set(.failed("self-check failed: \(problem)\(advice)"), ifCurrent: generation)
             }
         }
-        lock.withLock {
-            guard self.generation == generation else { return }
+        let current = lock.withLock { () -> Bool in
+            guard self.generation == generation else { return false }
             engine = loaded
             state = .available
+            return true
         }
+        // Asked for other slots while it loaded.
+        if current, lock.withLock({ wanted }) != slots {
+            await resize(loaded)
+        }
+        changed()
     }
 
     /// Stops taking work. The model is freed once requests still running
@@ -114,8 +169,70 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
         lock.withLock {
             generation += 1
             engine = nil
+            stopped = true
+            resting = false
             state = .offline
         }
+        changed()
+    }
+
+    /// Runs `slots` requests at once from now on, without stopping.
+    ///
+    /// Fewer slots take nothing new until requests running in the slots
+    /// that go have finished, or, `cancelling`, those requests stop at once,
+    /// the newest first, and their gateways send them elsewhere. None stops
+    /// taking work, and the model is freed when its last request ends; more
+    /// than none again loads it.
+    public func resize(to slots: Int, cancelling: Bool) async {
+        enum Step { case nothing, resize(LlamaEngine), unload(LlamaEngine?), load }
+        let step = lock.withLock { () -> Step in
+            wanted = max(0, slots)
+            if stopped { return .nothing }
+            if wanted == 0 {
+                guard !resting else { return .nothing }
+                let loaded = engine
+                generation += 1
+                engine = nil
+                resting = true
+                shortfall = nil
+                state = .paused(Self.noSlots)
+                return .unload(loaded)
+            }
+            if resting {
+                // Loading from here on: a resize meanwhile leaves it to the load.
+                resting = false
+                state = .starting("loading the model")
+                return .load
+            }
+            // Still loading, or failed: a load takes `wanted` when it's done.
+            return engine.map { .resize($0) } ?? .nothing
+        }
+        switch step {
+        case .nothing:
+            changed()
+        case .resize(let engine):
+            await resize(engine, cancelling: cancelling)
+            changed()
+        case .unload(let engine):
+            // Frees idle slots now, and stops running requests if asked. The
+            // rest of the engine goes with the last request.
+            if let engine { await resize(engine, to: 0, cancelling: cancelling) }
+            changed()
+        case .load:
+            await start()
+        }
+    }
+
+    /// Makes `engine` match the slots asked for, off the caller's thread,
+    /// since llama.cpp takes a moment to make each context.
+    private func resize(_ engine: LlamaEngine, to slots: Int? = nil, cancelling: Bool = false) async {
+        let slots = slots ?? lock.withLock { wanted }
+        let problem = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: engine.resize(to: slots, cancelling: cancelling))
+            }
+        }
+        lock.withLock { if self.engine === engine { shortfall = problem } }
     }
 
     // MARK: Requests
@@ -147,11 +264,11 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
             return HostReply(status: 400, body: ChatCompletionResult.error("this model doesn't accept images"))
         }
         let ready = request
-        guard let slot = engine.acquire() else { throw HostError.unavailable("every slot is busy") }
-        defer { engine.release(slot) }
         // Cancelling the task stops generation at the next token: a hedged
         // copy that lost frees its slot at once.
         let stop = StopFlag()
+        guard let slot = engine.acquire(stop: stop) else { throw HostError.busy("every slot is busy") }
+        defer { engine.release(slot) }
         do {
             let result = try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
@@ -171,6 +288,10 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
                 return HostReply(status: 400, body: ChatCompletionResult.error(message))
             case .outOfTime:
                 throw HostError.unavailable("the deadline passed while the model was running")
+            case .cancelled where engine.evicted(slot):
+                // Not this request's fault, nor the host's: its gateway may
+                // send it to another host.
+                throw HostError.busy("its slot was taken away while it ran")
             case .cancelled:
                 throw HostError.cancelled
             case .failed(let message):
@@ -184,6 +305,11 @@ public final class LlamaHost: ManagedHost, @unchecked Sendable {
 public protocol LocalHost: InferenceHost {
     func start() async
     func stop()
+}
+
+/// A local host whose slots can change while it serves.
+public protocol ResizableHost: LocalHost {
+    func resize(to slots: Int, cancelling: Bool) async
 }
 
 /// A local host running a model file the person chose, with llama.cpp.
@@ -217,6 +343,12 @@ final class LlamaEngine: @unchecked Sendable {
         let queue: DispatchQueue
         var batch: llama_batch
         let batchSize: Int32
+        // The request in the slot, kept under the engine's lock: when it
+        // started, how to stop it, and whether the slot was taken away
+        // from it.
+        fileprivate var started: Date?
+        fileprivate var stop: StopFlag?
+        fileprivate var evicted = false
 
         init(index: Int, context: OpaquePointer, batchSize: Int32) {
             self.index = index
@@ -241,9 +373,18 @@ final class LlamaEngine: @unchecked Sendable {
     let template: UnsafePointer<CChar>?
     let marker: String
     let contextSize: Int
-    private let slots: [Slot]
+    private let config: ModelConfig
+    private let threads: Int32
+    /// Every slot's context, by index, retiring ones included.
+    private var slots: [Int: Slot]
     private let lock = NSLock()
     private var idle: [Int]
+    /// Slots taken away while a request ran in them. Each is freed when its
+    /// request ends.
+    private var retiring: Set<Int>
+    private var nextIndex: Int
+    /// One resize at a time.
+    private let resizing = NSLock()
     /// The projector's context isn't safe to use from two slots at once.
     private let visionLock = NSLock()
 
@@ -259,7 +400,9 @@ final class LlamaEngine: @unchecked Sendable {
         vocab = llama_model_get_vocab(model)
         template = llama_model_chat_template(model, nil)
         contextSize = config.contextPerSlot
+        self.config = config
         let threads = LlamaRuntime.threads
+        self.threads = threads
 
         if let projector = config.projector {
             var params = mtmd_context_params_default()
@@ -283,42 +426,149 @@ final class LlamaEngine: @unchecked Sendable {
             marker = "<__media__>"
         }
 
-        var made: [Slot] = []
+        // Made before the engine is whole, so a failure frees what it made
+        // here: the engine's deinit doesn't run.
+        var made: [Int: Slot] = [:]
         for index in 0..<max(1, config.slots) {
-            var params = llama_context_default_params()
-            params.n_ctx = UInt32(config.contextPerSlot)
-            params.n_batch = UInt32(min(2048, config.contextPerSlot))
-            params.n_ubatch = UInt32(min(512, config.contextPerSlot))
-            params.n_seq_max = 1
-            params.n_threads = threads
-            params.n_threads_batch = threads
-            guard let context = llama_init_from_model(model, params) else {
-                made.forEach { $0.close() }
+            guard let slot = Self.makeSlot(index, model: model, config: config, threads: threads) else {
+                made.values.forEach { $0.close() }
                 if let vision { mtmd_free(vision) }
                 llama_model_free(model)
-                throw .failed("llama.cpp couldn't make a context of \(config.contextPerSlot) tokens for slot \(index + 1); try fewer slots or less context")
+                throw .failed(Self.cantMake(slot: index + 1, config: config))
             }
-            made.append(Slot(index: index, context: context, batchSize: Int32(params.n_batch)))
+            made[index] = slot
         }
         slots = made
-        idle = made.map(\.index)
+        idle = made.keys.sorted()
+        retiring = []
+        nextIndex = made.count
+    }
+
+    private static func cantMake(slot: Int, config: ModelConfig) -> String {
+        "llama.cpp couldn't make a context of \(config.contextPerSlot) tokens for slot \(slot); try fewer slots or less context"
+    }
+
+    /// A slot with its own context, or nil when llama.cpp can't make one:
+    /// usually, not enough memory.
+    private static func makeSlot(_ index: Int, model: OpaquePointer, config: ModelConfig, threads: Int32) -> Slot? {
+        var params = llama_context_default_params()
+        params.n_ctx = UInt32(config.contextPerSlot)
+        params.n_batch = UInt32(min(2048, config.contextPerSlot))
+        params.n_ubatch = UInt32(min(512, config.contextPerSlot))
+        params.n_seq_max = 1
+        params.n_threads = threads
+        params.n_threads_batch = threads
+        guard let context = llama_init_from_model(model, params) else { return nil }
+        return Slot(index: index, context: context, batchSize: Int32(params.n_batch))
     }
 
     deinit {
         // Stored properties are released after this body runs, so the
         // contexts are freed here, explicitly, before the model they came
         // from. No request is running: each holds the engine until it ends.
-        slots.forEach { $0.close() }
+        slots.values.forEach { $0.close() }
         if let vision { mtmd_free(vision) }
         llama_model_free(model)
     }
 
-    func acquire() -> Slot? {
-        lock.withLock { idle.isEmpty ? nil : slots[idle.removeFirst()] }
+    /// A free slot for a request that `stop` stops, or nil if every slot
+    /// is busy.
+    func acquire(stop: StopFlag) -> Slot? {
+        lock.withLock {
+            guard !idle.isEmpty, let slot = slots[idle.removeFirst()] else { return nil }
+            slot.started = Date()
+            slot.stop = stop
+            slot.evicted = false
+            return slot
+        }
     }
 
+    /// Gives a slot back when its request ends. A retiring slot is freed
+    /// instead.
     func release(_ slot: Slot) {
-        lock.withLock { idle.append(slot.index) }
+        let retired = lock.withLock { () -> Bool in
+            slot.started = nil
+            slot.stop = nil
+            guard retiring.remove(slot.index) != nil else {
+                idle.append(slot.index)
+                return false
+            }
+            slots[slot.index] = nil
+            return true
+        }
+        if retired { slot.close() }
+    }
+
+    /// Slots with a request running in them.
+    var busy: Int { lock.withLock { slots.values.filter { $0.started != nil }.count } }
+
+    /// Whether the slot was taken away from its request, which stopped it.
+    func evicted(_ slot: Slot) -> Bool { lock.withLock { slot.evicted } }
+
+    /// Slots with a request running or free to take one: those retiring
+    /// count until their requests end. So the scheduler, which counts the
+    /// requests running, sees exactly the free slots.
+    var count: Int { lock.withLock { slots.count } }
+
+    /// Slots taking work: every slot, less those retiring.
+    private var live: Int { lock.withLock { slots.count - retiring.count } }
+
+    /// Makes `wanted` slots take work, and returns why it couldn't make them
+    /// all, if it couldn't. Blocks while llama.cpp makes contexts.
+    ///
+    /// Fewer: idle slots are freed at once, then slots with a request
+    /// running retire, the newest request's first, since it has done the
+    /// least. A retiring slot takes nothing new and is freed when its request
+    /// ends, or, `cancelling`, its request stops at its next token and the
+    /// host answers that the slot was taken away; so do requests in slots
+    /// left to finish before.
+    ///
+    /// More: retiring slots come back first, since their contexts are made,
+    /// then new ones are made until there are enough or llama.cpp can't.
+    @discardableResult
+    func resize(to wanted: Int, cancelling: Bool) -> String? {
+        resizing.withLock {
+            let wanted = max(0, wanted)
+            let closing = lock.withLock { () -> [Slot] in
+                var live = slots.count - retiring.count
+                for index in retiring.sorted() where live < wanted {
+                    retiring.remove(index)
+                    live += 1
+                }
+                var closing: [Slot] = []
+                while live > wanted, let index = idle.popLast(), let slot = slots.removeValue(forKey: index) {
+                    closing.append(slot)
+                    live -= 1
+                }
+                let running = slots.values.filter { $0.started != nil && !retiring.contains($0.index) }
+                    .sorted { $0.started! > $1.started! }
+                for slot in running.prefix(max(0, live - wanted)) { retiring.insert(slot.index) }
+                // Those left to finish before are stopped now too.
+                if cancelling {
+                    for index in retiring {
+                        slots[index]?.evicted = true
+                        slots[index]?.stop?.set()
+                    }
+                }
+                return closing
+            }
+            closing.forEach { $0.close() }
+
+            while live < wanted {
+                let index = lock.withLock { () -> Int in
+                    defer { nextIndex += 1 }
+                    return nextIndex
+                }
+                guard let slot = Self.makeSlot(index, model: model, config: config, threads: threads) else {
+                    return Self.cantMake(slot: live + 1, config: config)
+                }
+                lock.withLock {
+                    slots[index] = slot
+                    idle.append(index)
+                }
+            }
+            return nil
+        }
     }
 
     // MARK: Generating
