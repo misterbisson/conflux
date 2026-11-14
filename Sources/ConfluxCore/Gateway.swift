@@ -90,6 +90,7 @@ public final class Gateway: Sendable {
             if let model = host.model { entry["model"] = model.id }
             if let detail = host.state.detail { entry["detail"] = detail }
             if let typical = host.typicalSeconds { entry["typical_seconds"] = seconds(typical) }
+            if let hardware = host.hardware.map(Gateway.hardware), !hardware.isEmpty { entry["hardware"] = hardware }
             return entry
         }
         return [
@@ -104,6 +105,18 @@ public final class Gateway: Sendable {
             ] as [String: Any],
             "hosts": hosts,
         ]
+    }
+
+    /// A host's hardware for `/health`: only the fields it reported.
+    static func hardware(_ info: HardwareInfo) -> [String: Any] {
+        var entry: [String: Any] = [:]
+        if let chip = info.chip { entry["chip"] = chip }
+        if let cores = info.performanceCores { entry["performance_cores"] = cores }
+        if let cores = info.efficiencyCores { entry["efficiency_cores"] = cores }
+        if let cores = info.gpuCores { entry["gpu_cores"] = cores }
+        if let bytes = info.memoryBytes { entry["memory_bytes"] = bytes }
+        if let model = info.modelIdentifier { entry["model_identifier"] = model }
+        return entry
     }
 
     static func alias(_ id: String, _ description: String) -> [String: Any] {

@@ -149,11 +149,13 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
     /// Requests sent ahead: to a peer's host by this gateway, or taken ahead
     /// by this Mac's host.
     public var prefetched: Int
+    /// What kind of device it runs on, when known.
+    public var hardware: HardwareInfo?
 
     public init(id: String, model: ModelInfo? = nil, state: HostState, slots: Int = 0, capacity: Int = 0,
                 active: Int = 0, completed: Int = 0, failures: FailureCounts = FailureCounts(),
                 typicalSeconds: Double? = nil, perHour: Double = 0, idleWithWorkSeconds: Double = 0,
-                freeSeconds: Double = 0, held: Int = 0, prefetched: Int = 0) {
+                freeSeconds: Double = 0, held: Int = 0, prefetched: Int = 0, hardware: HardwareInfo? = nil) {
         self.id = id
         self.model = model
         self.state = state
@@ -168,6 +170,7 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
         self.freeSeconds = freeSeconds
         self.held = held
         self.prefetched = prefetched
+        self.hardware = hardware
     }
 
     /// Requests that failed because of the host.
@@ -1188,7 +1191,8 @@ public actor Scheduler {
                                 typicalSeconds: e.typical,
                                 perHour: Double(e.recent.filter { $0 > cutoff }.count) * 6,
                                 idleWithWorkSeconds: e.idleTime, freeSeconds: e.freeTime,
-                                held: e.report?.held ?? held(id), prefetched: e.prefetched)
+                                held: e.report?.held ?? held(id), prefetched: e.prefetched,
+                                hardware: e.host.hardware)
         }
         return SchedulerSnapshot(hosts: hosts, queued: waiting.count, completed: completedCount,
                                  failures: failures, rejected: rejectedCount, busy: busyCount,

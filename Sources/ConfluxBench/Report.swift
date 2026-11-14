@@ -1,18 +1,50 @@
 import CryptoKit
 import Foundation
+#if os(macOS)
+import IOKit
+#endif
 
-/// The machine running the benchmark: chip, memory and OS only, never a
-/// hostname or serial number. When the server is on the same machine, this
-/// is the server too.
+/// The machine running the benchmark: chip, GPU cores, memory and OS only,
+/// never a hostname or serial number. When the server is on the same
+/// machine, this is the server too.
 public struct Machine: Sendable, Codable, Equatable {
     public var chip: String
+    /// Nil where the system doesn't say, and in reports from before it was
+    /// recorded.
+    public var gpuCores: Int?
     public var memoryGB: Int
     public var os: String
 
+    public init(chip: String, gpuCores: Int? = nil, memoryGB: Int, os: String) {
+        self.chip = chip
+        self.gpuCores = gpuCores
+        self.memoryGB = memoryGB
+        self.os = os
+    }
+
     public static var current: Machine {
         Machine(chip: sysctlString("machdep.cpu.brand_string") ?? "unknown",
+                gpuCores: gpuCoreCount(),
                 memoryGB: Int((sysctlUInt64("hw.memsize") ?? 0) / 1_073_741_824),
                 os: ProcessInfo.processInfo.operatingSystemVersionString)
+    }
+
+    /// `Apple M4 Pro, 16-core GPU, 48 GB`.
+    public var description: String {
+        [chip, gpuCores.map { "\($0)-core GPU" }, "\(memoryGB) GB"].compactMap { $0 }.joined(separator: ", ")
+    }
+
+    /// The GPU's `gpu-core-count`, from IOKit's accelerator.
+    static func gpuCoreCount() -> Int? {
+        #if os(macOS)
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AGXAccelerator"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        let value = IORegistryEntryCreateCFProperty(service, "gpu-core-count" as CFString, kCFAllocatorDefault, 0)
+        return (value?.takeRetainedValue() as? NSNumber)?.intValue
+        #else
+        return nil
+        #endif
     }
 
     static func sysctlString(_ name: String) -> String? {
@@ -147,7 +179,7 @@ public struct Report: Sendable, Codable {
 
         lines.append("conflux-bench" + (label.map { "  \($0)" } ?? ""))
         line("endpoint", settings.endpoint)
-        line("machine", "\(machine.chip), \(machine.memoryGB) GB")
+        line("machine", machine.description)
         line("load", "\(settings.concurrency) concurrent, \(settings.images) images at ≤\(settings.maxDimension) px "
             + "(\(f(settings.meanImageKB, 0)) KB avg)")
         line("requests", "\(s.ok) ok, \(s.failed) failed, \(s.busyRetries) busy retries")

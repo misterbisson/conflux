@@ -19,6 +19,10 @@ public protocol InferenceHost: AnyObject, Sendable {
     /// it last said about its slots. Nil for a host whose slots the
     /// scheduler holds itself.
     var report: HostReport? { get async }
+    /// What kind of device the host runs on. This device's own for a host
+    /// here; for a host on another device, what it last said, or nil if it
+    /// hasn't, as peers from before it was reported don't.
+    var hardware: HardwareInfo? { get }
     /// Calls `changed` whenever the host's model, availability or report may
     /// have changed, so the scheduler needn't wait for its next look.
     func observe(_ changed: @escaping @Sendable () -> Void)
@@ -33,6 +37,7 @@ extension InferenceHost {
         try await complete(body, timeout: timeout)
     }
     public var report: HostReport? { get async { nil } }
+    public var hardware: HardwareInfo? { HardwareInfo.current }
     public func observe(_ changed: @escaping @Sendable () -> Void) {}
     public func cancel(_ id: UUID) async {}
 }
