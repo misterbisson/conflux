@@ -516,3 +516,117 @@ import Testing
         #expect(reply.model?.fingerprint == "fake-model-a")
     }
 }
+
+/// Apple's model's slots changing while it serves, with a stand-in for the
+/// model that runs until it's let go.
+@Suite struct AppleModelSlotsTests {
+    /// Requests started, and whether they may finish.
+    final class Gate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var open = false
+        private var count = 0
+        var started: Int { lock.withLock { count } }
+        func release() { lock.withLock { open = true } }
+
+        func generate(_ request: AppleModelRequest) async throws -> ChatCompletionResult {
+            lock.withLock { count += 1 }
+            while !lock.withLock({ open }) { try await Task.sleep(for: .milliseconds(10)) }
+            return ChatCompletionResult(text: "ok", finishReason: "stop", promptTokens: 1, completionTokens: 1,
+                                        promptMs: 0, predictedMs: 0)
+        }
+    }
+
+    final class Count: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        var changes: Int { lock.withLock { value } }
+        func add() { lock.withLock { value += 1 } }
+    }
+
+    static let body = Data(#"{"messages":[{"role":"user","content":"hi"}]}"#.utf8)
+
+    func host(slots: Int, gate: Gate) -> AppleModelHost {
+        AppleModelHost(id: "apple", slots: slots, maxImageDimension: 1024, selfCheck: false, recheck: .seconds(10),
+                       generator: gate.generate)
+    }
+
+    func run(_ host: AppleModelHost) -> Task<HostReply, any Error> {
+        Task { try await host.run(Self.body, deadline: Date().addingTimeInterval(30)) }
+    }
+
+    @Test func moreSlotsTakeMoreAtOnce() async throws {
+        let gate = Gate()
+        let host = host(slots: 1, gate: gate)
+        let changes = Count()
+        host.observe { changes.add() }
+        let first = run(host)
+        #expect(await eventually { gate.started == 1 })
+        await #expect(throws: HostError.unavailable("every slot is busy")) {
+            try await host.run(Self.body, deadline: Date().addingTimeInterval(30))
+        }
+
+        await host.resize(to: 2, cancelling: false)
+        #expect(host.slots == 2)
+        #expect(changes.changes == 1)
+        let second = run(host)
+        #expect(await eventually { gate.started == 2 })
+        gate.release()
+        #expect(try await first.value.status == 200)
+        #expect(try await second.value.status == 200)
+    }
+
+    @Test func fewerSlotsLetRequestsFinish() async throws {
+        let gate = Gate()
+        let host = host(slots: 2, gate: gate)
+        let first = run(host)
+        let second = run(host)
+        #expect(await eventually { gate.started == 2 })
+
+        await host.resize(to: 1, cancelling: false)
+        // The slot that goes stays until its request finishes, and takes
+        // nothing new.
+        #expect(host.slots == 2)
+        await #expect(throws: HostError.unavailable("every slot is busy")) {
+            try await host.run(Self.body, deadline: Date().addingTimeInterval(30))
+        }
+        gate.release()
+        #expect(try await first.value.status == 200)
+        #expect(try await second.value.status == 200)
+        #expect(host.slots == 1)
+    }
+
+    @Test func fewerSlotsCanStopTheNewestRequests() async throws {
+        let gate = Gate()
+        let host = host(slots: 3, gate: gate)
+        let oldest = run(host)
+        #expect(await eventually { gate.started == 1 })
+        let middle = run(host)
+        #expect(await eventually { gate.started == 2 })
+        let newest = run(host)
+        #expect(await eventually { gate.started == 3 })
+
+        await host.resize(to: 1, cancelling: true)
+        for stopped in [middle, newest] {
+            await #expect(throws: HostError.busy("its slot was taken away while it ran")) {
+                try await stopped.value
+            }
+        }
+        #expect(host.slots == 1)
+        gate.release()
+        #expect(try await oldest.value.status == 200)
+    }
+
+    @Test func noSlotsTakeNoWork() async throws {
+        let gate = Gate()
+        let host = host(slots: 1, gate: gate)
+        await host.resize(to: 0, cancelling: false)
+        #expect(host.slots == 0)
+        await #expect(throws: HostError.unavailable("every slot is busy")) {
+            try await host.run(Self.body, deadline: Date().addingTimeInterval(30))
+        }
+        await host.resize(to: 1, cancelling: false)
+        let request = run(host)
+        gate.release()
+        #expect(try await request.value.status == 200)
+    }
+}

@@ -96,6 +96,7 @@ final class AppModel: ObservableObject {
     /// The last change of slots sent to the node. Each waits for the one
     /// before, so they arrive in order.
     private var resizing: Task<Void, Never>?
+    private var resizingApple: Task<Void, Never>?
     private var watchingDirectory: Task<Void, Never>?
     /// How often the window reads the directory and refreshes this Mac's
     /// listing. The keychain sends no notice of changes.
@@ -481,6 +482,18 @@ final class AppModel: ObservableObject {
         resizing = Task { [node] in
             await previous?.value
             await node.setSlots(slots, cancelling: cancelling)
+        }
+    }
+
+    /// Changes how many requests Apple's model runs at once, and, while
+    /// conflux runs, applies it without stopping, as `setSlots` does.
+    func setAppleSlots(_ slots: Int, cancelling: Bool = false) {
+        settings.appleModel.slots = slots
+        guard running else { return }
+        let previous = resizingApple
+        resizingApple = Task { [node] in
+            await previous?.value
+            await node.setAppleSlots(slots, cancelling: cancelling)
         }
     }
 
