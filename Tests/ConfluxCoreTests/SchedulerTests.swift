@@ -418,4 +418,50 @@ import Testing
         #expect(both.slots == 4)
         #expect(both.reason?.contains("Low Power Mode") == true)
     }
+
+    /// Cooling down rests every host at serious heat, a single slot
+    /// included, and changes nothing below it.
+    @Test func coolDown() {
+        let serious = ResourceReading(thermal: .serious)
+        #expect(ResourcePolicy.limit(slots: 1, reading: serious).slots == 1)
+        #expect(ResourcePolicy.limit(slots: 1, reading: serious, coolDown: true).slots == 0)
+        #expect(ResourcePolicy.limit(slots: 4, reading: serious, coolDown: true).slots == 0)
+        #expect(ResourcePolicy.limit(slots: 4, reading: serious, coolDown: true).reason?.contains("cooling") == true)
+        #expect(ResourcePolicy.limit(slots: 4, reading: ResourceReading(thermal: .fair), coolDown: true) == (4, nil))
+        let lowPower = ResourceReading(thermal: .fair, lowPowerMode: true)
+        #expect(ResourcePolicy.limit(slots: 4, reading: lowPower, coolDown: true).slots == 2)
+    }
+
+    @Test func heatStatus() {
+        let serious = ResourceReading(thermal: .serious)
+        // Nothing held back: the box is the owner's choice.
+        #expect(ResourcePolicy.heat(slots: [1], reading: ResourceReading(), coolDown: false) == HeatStatus(box: .off))
+        #expect(ResourcePolicy.heat(slots: [1], reading: ResourceReading(), coolDown: true) == HeatStatus(box: .on))
+        // One slot at serious heat: unchecked serves on, checked rests.
+        #expect(ResourcePolicy.heat(slots: [1], reading: serious, coolDown: false) == HeatStatus(box: .off))
+        #expect(ResourcePolicy.heat(slots: [1], reading: serious, coolDown: true)
+                == HeatStatus(box: .on, action: "resting"))
+        // Several: policy halves them, and the box can still rest them.
+        #expect(ResourcePolicy.heat(slots: [4], reading: serious, coolDown: false)
+                == HeatStatus(box: .off, action: "halved"))
+        #expect(ResourcePolicy.heat(slots: [4, 1], reading: serious, coolDown: true)
+                == HeatStatus(box: .on, action: "resting"))
+        // Paused by policy itself: checked, whatever the owner chose.
+        let critical = ResourceReading(thermal: .critical)
+        #expect(ResourcePolicy.heat(slots: [1], reading: critical, coolDown: false)
+                == HeatStatus(box: .automatic, action: "paused"))
+        #expect(ResourcePolicy.heat(slots: [2], reading: ResourceReading(memory: .critical), coolDown: true)
+                == HeatStatus(box: .automatic, action: "paused"))
+        // Serving no slots, or nothing: nothing to hold back.
+        #expect(ResourcePolicy.heat(slots: [0], reading: critical, coolDown: true) == HeatStatus(box: .on))
+        #expect(ResourcePolicy.heat(slots: [], reading: critical, coolDown: false) == HeatStatus(box: .off))
+    }
+
+    /// Settings saved before cooling down existed load with it off.
+    @Test func coolDownSetting() throws {
+        let old = try JSONDecoder().decode(NodeSettings.self, from: Data(#"{"port": 8090}"#.utf8))
+        #expect(old.coolDown == false)
+        let saved = try JSONEncoder().encode(NodeSettings(coolDown: true))
+        #expect(try JSONDecoder().decode(NodeSettings.self, from: saved).coolDown)
+    }
 }

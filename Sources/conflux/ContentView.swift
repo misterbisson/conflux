@@ -84,9 +84,7 @@ struct ContentView: View {
                             + " of \(installed / 1_073_741_824) GB") {
                 Sparkline(model.memory.bins(range), color: .purple, ceiling: Double(installed))
             }
-            ResourceTile("Heat", value: Thermal.label.capitalized) {
-                LevelBand(model.heat.bins(range), colors: thermalColors)
-            }
+            HeatTile(model.heatStatus, bins: model.heat.bins(range), setCoolDown: model.setCoolDown)
         }
     }
 

@@ -393,16 +393,20 @@ public struct LevelBand: View {
     }
 }
 
-/// One resource: what it's called, where it stands, and how it's gone.
-public struct ResourceTile<Chart: View>: View {
+/// One resource: what it's called, where it stands, and how it's gone, with
+/// an optional control beside its name.
+public struct ResourceTile<Chart: View, Accessory: View>: View {
     let title: String
     let value: String
     let chart: Chart
+    let accessory: Accessory
 
-    public init(_ title: String, value: String, @ViewBuilder chart: () -> Chart) {
+    public init(_ title: String, value: String, @ViewBuilder accessory: () -> Accessory,
+                @ViewBuilder chart: () -> Chart) {
         self.title = title
         self.value = value
         self.chart = chart()
+        self.accessory = accessory()
     }
 
     public var body: some View {
@@ -413,8 +417,98 @@ public struct ResourceTile<Chart: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+        // Over the name's line, so the tile is no taller, and outside the
+        // combined element, so it stays a control of its own.
+        .overlay(alignment: .topTrailing) { accessory }
     }
 }
+
+extension ResourceTile where Accessory == EmptyView {
+    public init(_ title: String, value: String, @ViewBuilder chart: () -> Chart) {
+        self.init(title, value: value, accessory: { EmptyView() }, chart: chart)
+    }
+}
+
+/// The Heat tile: the thermal state, what resource policy is doing about it,
+/// and the Cool down box (`ResourcePolicy.heat`).
+public struct HeatTile: View {
+    let status: HeatStatus
+    let bins: [TimeSeries.Bin]
+    let setCoolDown: @MainActor @Sendable (Bool) -> Void
+
+    public init(_ status: HeatStatus, bins: [TimeSeries.Bin],
+                setCoolDown: @escaping @MainActor @Sendable (Bool) -> Void) {
+        self.status = status
+        self.bins = bins
+        self.setCoolDown = setCoolDown
+    }
+
+    public var body: some View {
+        ResourceTile("Heat", value: Thermal.label.capitalized + (status.action.map { " · \($0)" } ?? "")) {
+            CoolDownBox(status, set: setCoolDown)
+        } chart: {
+            LevelBand(bins, colors: thermalColors)
+        }
+    }
+}
+
+/// Checked to rest this device's hosts at serious heat until it's back to
+/// fair. Checked and dimmed while resource policy has paused them itself.
+struct CoolDownBox: View {
+    let status: HeatStatus
+    let set: @MainActor @Sendable (Bool) -> Void
+
+    init(_ status: HeatStatus, set: @escaping @MainActor @Sendable (Bool) -> Void) {
+        self.status = status
+        self.set = set
+    }
+
+    private var help: String {
+        status.box == .automatic
+            ? "conflux has paused this device's models by itself, until it's cooler or has more memory"
+            : "Rest this device's models when its heat reaches serious, until it's back to fair. Heat ages the battery."
+    }
+
+    var body: some View {
+        let isOn = Binding(get: { status.box != .off }, set: set)
+        Toggle("Cool down", isOn: isOn)
+            #if os(macOS)
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+            #else
+            .toggleStyle(CheckboxStyle())
+            #endif
+            .font(.subheadline)
+            .disabled(status.box == .automatic)
+            .help(help)
+    }
+}
+
+#if !os(macOS)
+/// A checkbox, which iPadOS doesn't have: a square that fills with a check.
+/// The label is part of what's tapped, so it's big enough for a finger.
+struct CheckboxStyle: ToggleStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            Label {
+                configuration.label.foregroundStyle(isEnabled ? .primary : .secondary)
+            } icon: {
+                Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        // Borderless, so in a list row only the box answers a tap, not the
+        // whole row.
+        .buttonStyle(.borderless)
+        .accessibilityValue(configuration.isOn ? "checked" : "unchecked")
+    }
+}
+#endif
 
 /// How the thermal state is drawn: nominal, fair, serious, critical.
 public let thermalColors: [Color] = [.green, .yellow, .orange, .red]

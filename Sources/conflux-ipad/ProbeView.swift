@@ -220,9 +220,7 @@ struct ProbeView: View {
             ResourceTile("Memory left", value: Memory.gigabytes(Memory.available)) {
                 Sparkline(server.memoryLeft.bins(range), color: .purple, ceiling: Double(probe.limitAtLaunch))
             }
-            ResourceTile("Heat", value: Thermal.label.capitalized) {
-                LevelBand(server.heat.bins(range), colors: thermalColors)
-            }
+            HeatTile(server.heatStatus, bins: server.heat.bins(range), setCoolDown: server.setCoolDown)
             ResourceTile("Power", value: server.charging ? "Charging" : "On battery") {
                 LevelBand(server.power.bins(range), colors: [.green, .orange])
             }
