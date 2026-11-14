@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.0](https://github.com/misterbisson/conflux/compare/v0.8.0...v0.9.0) (2026-11-14)
+
+
+### Features
+
+* change a Mac's slots while it serves, down to none ([#83](https://github.com/misterbisson/conflux/issues/83)) ([a93011d](https://github.com/misterbisson/conflux/commit/a93011df0a56d9a27156eb2f3dd106b1b2031c67))
+* rest a device's models while its heat is serious, with a Cool down box ([#87](https://github.com/misterbisson/conflux/issues/87)) ([7bd6c64](https://github.com/misterbisson/conflux/commit/7bd6c641ebdf94825e88a4fb86707daa104b7409))
+* show each host's chip, GPU cores and memory ([#86](https://github.com/misterbisson/conflux/issues/86)) ([5eacd53](https://github.com/misterbisson/conflux/commit/5eacd535befaa34834390b9e51e200bbafbc9a09))
+
+
+### Bug Fixes
+
+* free a model's memory when the device runs short, instead of being ended by iPadOS ([#89](https://github.com/misterbisson/conflux/issues/89)) ([96ca521](https://github.com/misterbisson/conflux/commit/96ca521e1567f32794436ff10f5ca0ac5e673f18))
+* **ipad:** say a model file is missing when it has been deleted, not "not connected" ([#80](https://github.com/misterbisson/conflux/issues/80)) ([e01a549](https://github.com/misterbisson/conflux/commit/e01a54911fcf4b795d7b20146924593bcb35fc86))
+* send a request to the quickest free host, not the one that joined first ([#84](https://github.com/misterbisson/conflux/issues/84)) ([544494e](https://github.com/misterbisson/conflux/commit/544494e7641f8baedc48401f3430f5338ebf2386))
+
 ## [0.8.0](https://github.com/misterbisson/conflux/compare/v0.7.0...v0.8.0) (2026-11-13)
 
 
