@@ -221,3 +221,100 @@ A few minutes later, near the end of the run:
 
 Not covered: closing a lid mid-run, each host measured alone, and a
 benchmark with a known workload.
+
+## Mesh, saturated
+
+The first `conflux-bench` run against a mesh, with more requests in flight
+than the mesh had slots, so work always waited at the gateway.
+
+- **Devices:** seven hosts on five devices:
+  - the gateway: a 14-inch MacBook Pro, M4 Pro (16-core GPU), 48 GB: the
+    model file, 1 slot
+  - a 15-inch MacBook Air, M2 (10-core GPU), 24 GB, fanless: the model file,
+    2 slots, and Apple's model, 8 slots
+  - a 13-inch MacBook Pro, M1 (8-core GPU), 16 GB: the model file, 2 slots,
+    and Apple's model, 8 slots and then 4
+  - an iPad Pro, M1 (`iPad13,4`), 8 GB: Apple's model, 2 slots
+  - a 13-inch iPad Air, M3 (`iPad15,6`), 8 GB: Apple's model, 2 slots
+- **Models:** Gemma 3 4B-it, Q4_K_M, with its F16 projector
+  ([Gemma Terms of Use](https://ai.google.dev/gemma/terms)), in-process with
+  llama.cpp build 12110; and Apple's on-device model, on macOS 27 and
+  iPadOS 27
+- **conflux:** 0.11.0 on the gateway
+- **Workload:** `conflux-bench run --concurrency 30 --requests 3000`, with 8
+  images from `conflux-bench images`, at most 1,024 px and 50 KB on average,
+  and its default prompt, "Describe this image in one paragraph.", with up
+  to 256 tokens of answer. The requests name no model, so any host could
+  take each one, and each has a 115 s deadline. A request was 225 prompt
+  tokens and 87 generated tokens on average, across both models.
+- **Date:** 2026-11-14
+
+### What the client saw
+
+- **2,997 answered and 3 refused**, each refusal a `429` once no slot would
+  free up in time.
+- **4,373 an hour**: 2,967 requests, after the first 30, in 2,442 s.
+- **Latency:** 20.4 s at the median, 39.7 s at p90, 63.9 s at p99 and 113.1 s
+  at most. Every request ended inside its 115 s deadline.
+- **Models:** Apple's answered 2,249 and Gemma 748.
+
+### Each host
+
+From the gateway's `/health` about 18 minutes into the run, so for the
+10 minutes before that.
+
+| Host | Model | Slots | Typical request | p95 | Per hour |
+|---|---|---|---|---|---|
+| MacBook Pro, M4 Pro | Gemma | 1 | 5.2 s | 6.0 s | 684 |
+| MacBook Air, M2 | Gemma | 2 | 30.6 s | 34.3 s | 228 |
+| MacBook Air, M2 | Apple's | 8 | 26.6 s | 32.2 s | 1,074 |
+| MacBook Pro, M1 | Gemma | 2 | 28.3 s | 30.8 s | 252 |
+| MacBook Pro, M1 | Apple's | 4 | 11.3 s | 15.2 s | 1,284 |
+| iPad Pro, M1 | Apple's | 2 | 9.3 s | 12.6 s | 402 |
+| iPad Air, M3 | Apple's | 2 | 8.1 s | 12.7 s | 438 |
+| **All seven** | | | | | **4,362** |
+
+Every host's utilization was 99.6% or more, and the mesh's 99.8%. Requests
+waited at the gateway 8.5 s at the median and 14.3 s at p95, with 8 to 13
+waiting at a time.
+
+### What this shows
+
+- **The gateway kept every slot busy.** Idle while work waited was 27 s in
+  total at that point, since the gateway started, earlier runs included.
+- **Apple's model did three-quarters of the work.** Its four hosts did 3,198
+  an hour, and Gemma's three 1,164. On the base M1 and M2, Gemma's requests
+  took about 30 s with 2 slots, against 8.7 s and 9.9 s with 1 slot in the
+  first mesh run (above). Answers here were several times longer, and each
+  of those Macs ran Apple's model on the same GPU, so this run can't say
+  which cost more.
+- **More slots for Apple's model stopped paying.** The M1 MacBook Pro began
+  with 8, and did more once it was cut to 4 early in the run. With 4, it did
+  1,284 an hour at 11.3 s a request. The M2, a faster chip, with 8 did 1,074
+  at 26.6 s. One device of each, sharing its GPU with Gemma, isn't a
+  measurement of where more slots stop helping on each chip, but it says to
+  find it rather than take the most ([running.md](running.md#apples-on-device-model)).
+- **The iPads spent about half the time paused.** Both showed 99.6%
+  utilization or more, but this gateway completed 67 and 73 requests on them
+  in those 10 minutes, where two slots at their typical times would fit
+  about 129 and 148. Utilization counts only time a host offers slots, and a
+  paused host offers none. Both were paused near the end of the run, the
+  iPad Air for heat. The fanless MacBook Air kept its slots: its two hosts' requests
+  fill its slots for the whole window.
+- **Stopping a host cost the client nothing.** Cutting the M1's slots meant
+  stopping conflux on it, as Apple's model's slots then needed. The requests
+  running there failed, and so did requests that tried it before the
+  gateway knew it had stopped, and the gateway sent each to another host.
+  None reached the client. Apple's model's slots now change while conflux
+  runs.
+- **The peers dropped out together once, unexplained.** Between 18 minutes
+  in and the end, idle while work waited rose from 27 s to 388 s, spread
+  over every peer's hosts, 35 to 92 s each, and none on the gateway's own.
+  Every peer's hosts also counted requests that found them unreachable. The
+  gateway lost all its peers at once, perhaps for under a minute, and the
+  slowest answers and the three `429`s may have come from it. The window's
+  chart would show when; this summary can't.
+
+Not covered: each host measured alone, the M1's Apple model at one slot
+count for the whole run, the same run without Apple's model beside Gemma,
+and what took every peer away at once.

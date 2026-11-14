@@ -104,8 +104,14 @@ model downloads, the host says so and waits.
 
 It reads text and images and passes the self-check, in about a second per
 image on an M2 MacBook Air. It runs two requests at once by default
-(`--apple-slots`): more add waiting, not throughput. Its slots change while
-conflux runs, the way the model file's do. Its guardrails decline
+(`--apple-slots`), and its slots change while conflux runs, the way the model
+file's do. Past a few, more slots add waiting, not throughput: in a saturated
+mesh, an M1 MacBook Pro with 4 did 1,284 requests an hour at 11.3 s each,
+and an M2 with 8 did 1,074 at 26.6 s ([measurements.md](measurements.md#mesh-saturated)).
+A longer request leaves less of a client's deadline, and a gateway sends
+nothing to a host it expects to finish too late. So raise them one at a time
+while conflux runs, and stop when the host's requests an hour, under
+**Monitoring**, stop rising. Its guardrails decline
 some content, and it takes only short requests. Those go to the model file's
 host, or a peer's, when the client accepts that model: with
 `Conflux-Models: apple-on-device, <model ID>`, for example. A request that
@@ -198,6 +204,23 @@ run waited at this gateway. It should stay near zero
 ([design.md](design.md#monitoring)). A peer that stops is shown as not
 answering within seconds, and its requests go elsewhere or get a 503 with
 `Retry-After`.
+
+Two numbers need reading beside others:
+
+- **Utilization counts only time a host is taking work.** A host paused for
+  heat or memory offers no slots while it's paused, so an iPad that rests
+  half the time can show 99% busy while doing half the work. Read its
+  requests an hour beside it.
+- **A host's failures aren't its clients'.** The chart's red marks and the
+  failures under **Monitoring** count requests that failed on that host, and
+  the gateway sends each to another host while the client's deadline allows.
+  What clients got is the mesh's `answered` in `/health`: the busy (`429`),
+  rejected and unavailable (`503`) answers the gateway gave.
+
+To take a host out of a busy mesh without those failures, **Drain** it first
+and **Stop** it once it's idle. Stopped at once, every request running on it
+fails there and goes elsewhere, and so does each request waiting at a
+gateway that tries it before that gateway hears it has stopped.
 
 To try it on one Mac, run two nodes with different identities and ports:
 
@@ -377,7 +400,11 @@ serving**. Apple's model runs in a system process, so it takes none of the memor
 iPadOS lets conflux use, and an iPad too small for a useful model file can
 still serve it. It needs an iPad that runs Apple Intelligence, with Apple
 Intelligence turned on in Settings; until then the switch says why, and
-while it serves, its own row shows its state. The same rules hold for it as
+while it serves, its own row shows its state. It takes two requests at once,
+with no setting for it: at serious heat that halves to one, or with **Cool
+down** checked it rests. Under sustained work an iPad can spend much of its
+time paused for heat, so heat, not slots, sets what it does
+([measurements.md](measurements.md#mesh-saturated)). The same rules hold for it as
 for the model file: only in the foreground, and only while charging unless
 **Serve on battery** is on.
 
