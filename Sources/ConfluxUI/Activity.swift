@@ -69,7 +69,6 @@ public struct ActivityPanel: View {
                 VStack(alignment: .leading, spacing: 8) { summary; pickers }
             }
             ActivityChart(series: series, metric: metric, range: range, now: now)
-                .frame(height: 140)
         }
     }
 
@@ -192,11 +191,33 @@ public struct ActivityChart: View {
     }
 
     public var body: some View {
-        let (segments, failures) = stacks
         let names = series.map(\.name)
         let colors = names.indices.map { $0 < Self.palette.count ? Self.palette[$0] : Color.gray }
+        VStack(alignment: .leading, spacing: 6) {
+            chart(names: names, colors: colors)
+                .frame(height: 116)
+            // Its own, not the chart's, which keeps to one line and cuts off
+            // the hosts that don't fit.
+            if names.count > 1 {
+                Flow {
+                    ForEach(Array(zip(names, colors).enumerated()), id: \.offset) { _, entry in
+                        HStack(spacing: 4) {
+                            Circle().fill(entry.1).frame(width: 7, height: 7)
+                            Text(entry.0).lineLimit(1).truncationMode(.middle)
+                        }
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func chart(names: [String], colors: [Color]) -> some View {
+        let (segments, failures) = stacks
         let top = segments.map(\.high).max() ?? 0
-        Chart {
+        return Chart {
             ForEach(segments) { segment in
                 RectangleMark(xStart: .value("Time", segment.start), xEnd: .value("Time", segment.end),
                               yStart: .value(metric.title, segment.low), yEnd: .value(metric.title, segment.high))
@@ -223,7 +244,7 @@ public struct ActivityChart: View {
                 AxisValueLabel()
             }
         }
-        .chartLegend(names.count > 1 ? .visible : .hidden)
+        .chartLegend(.hidden)
         .overlay {
             if segments.isEmpty {
                 Text(metric == .requests ? "No requests yet" : "No tokens yet")
@@ -232,6 +253,43 @@ public struct ActivityChart: View {
         }
         .accessibilityLabel(metric == .requests ? "Requests completed over time, by host"
                                                 : "Tokens written over time, by host")
+    }
+}
+
+/// Views left to right, onto as many lines as they need. One wider than a
+/// line gets the line, and truncates.
+struct Flow: Layout {
+    var spacing: CGFloat = 12
+    var lineSpacing: CGFloat = 3
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(subviews, width: proposal.width ?? .infinity).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, arrange(subviews, width: bounds.width).frames) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> (frames: [CGRect], size: CGSize) {
+        var frames: [CGRect] = []
+        var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
+        for subview in subviews {
+            var size = subview.sizeThatFits(.unspecified)
+            if size.width > width { size = subview.sizeThatFits(ProposedViewSize(width: width, height: nil)) }
+            if x > 0, x + size.width > width {
+                x = 0
+                y += line + lineSpacing
+                line = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            widest = max(widest, x + size.width)
+            x += size.width + spacing
+            line = max(line, size.height)
+        }
+        return (frames, CGSize(width: widest, height: y + line))
     }
 }
 

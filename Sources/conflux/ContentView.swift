@@ -519,16 +519,20 @@ struct ContentView: View {
                     Button("Forget…") { forgetting = peer }
                 }
             }
-            let live = connected ? host : nil
-            // Each model it serves: Apple's model alongside its model file,
-            // say.
-            let models = connected ? status.map(model.peerHosts)?.compactMap(\.model?.id) ?? [] : []
+            // Each host it serves: Apple's model alongside its model file,
+            // say. Its slots and its work count them all, the way busy here
+            // counts this Mac's.
+            let hosts = status.map(model.peerHosts) ?? []
+            let live = connected ? hosts : []
+            let models = live.compactMap(\.model?.id)
+            let capacity = live.reduce(0) { $0 + $1.capacity }
+            let completed = hosts.reduce(0) { $0 + $1.completed }
             let parts = [source(of: peer),
                          model.running ? status.map(\.path.label) : nil,
                          host?.hardware?.summary,
                          models.isEmpty ? nil : models.joined(separator: " and "),
-                         live.flatMap { $0.capacity > 0 ? "\($0.active) busy of \($0.capacity)" : nil },
-                         host.flatMap { $0.completed > 0 ? "\($0.completed) completed" : nil }].compactMap { $0 }
+                         capacity > 0 ? "\(live.reduce(0) { $0 + $1.active }) busy of \(capacity)" : nil,
+                         completed > 0 ? "\(completed) completed" : nil].compactMap { $0 }
             Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
             if model.running, let detail = host?.state.detail {
                 Text(detail).font(.caption).foregroundStyle(connected ? .secondary : Color.orange)
