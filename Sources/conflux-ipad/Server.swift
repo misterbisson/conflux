@@ -42,6 +42,11 @@ final class Server {
     /// What this process can still allocate before iPadOS ends it, the
     /// least in each reading. Taken while it serves.
     private(set) var memoryLeft = TimeSeries(keeping: .lowest)
+    /// The device's memory pressure, and what resource policy is doing
+    /// about it.
+    private(set) var memoryStatus: MemoryStatus?
+    /// Memory pressure as a level, the highest in each reading.
+    private(set) var pressure = TimeSeries(keeping: .highest)
     /// The thermal state as a level, the highest in each reading.
     private(set) var heat = TimeSeries(keeping: .highest)
     /// The Heat tile's Cool down box, and what resource policy is doing.
@@ -176,6 +181,8 @@ final class Server {
                 if self.running {
                     self.snapshot = await self.node.scheduler.snapshot()
                     self.memoryLeft.append(Double(Memory.available))
+                    self.memoryStatus = self.node.memoryStatus
+                    if let status = self.memoryStatus { self.pressure.append(Double(status.level)) }
                     self.heat.append(Double(Thermal.level))
                     self.heatStatus = self.node.heatStatus
                     self.power.append(self.charging ? 0 : 1)

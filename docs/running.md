@@ -210,6 +210,16 @@ When the Mac gets hot or short of memory, or Low Power Mode is on, the host
 halves its slots, keeping at least one. At critical heat or memory pressure it
 pauses until things recover.
 
+Pausing frees no memory. When memory pressure stays critical for a few
+seconds, a model run in conflux's own process, the default runtime, is
+unloaded, and requests running in it go to other hosts. The host says
+*memory ran short*, and loads the model again by itself once pressure has
+been normal for a minute, or longer if loading it brought the pressure
+back. The **Memory pressure** tile shows the whole Mac's pressure, normal,
+warning or critical, over the chart's span, and what conflux is doing about
+it: *halved*, *paused* or *unloaded*. With `llama-server`, the host only
+pauses.
+
 **Cool down**, the box in the Heat tile, rests the host at serious heat too,
 until it's back to fair, rather than letting it stay hot. It's off until you
 check it, and it takes effect at once. A device that serves for hours while
@@ -337,8 +347,9 @@ press **Serve this model to my Macs**. The top of the screen says what the
 iPad is doing, in type big enough to read across a room: its state, the slots
 in use and how many Macs are connected. Below that, the same chart as the
 Mac's shows its own requests or tokens over the last hour or day, and under
-it the memory left before iPadOS would end conflux, the thermal state, and
-whether it's charging, over the same span, while it serves.
+it the memory left before iPadOS would end conflux, the whole iPad's memory
+pressure, the thermal state, and whether it's charging, over the same span,
+while it serves.
 
 - **Which Macs.** With **Find my Macs through iCloud Keychain** on, the iPad
   lists itself in iCloud Keychain's device list, and trusts the Macs listed
@@ -358,6 +369,15 @@ whether it's charging, over the same span, while it serves.
   mean](#what-the-states-mean)). An iPad serves one request at a time, and
   halving one slot leaves one, so without it an iPad serves on at serious
   heat.
+- **When the iPad runs short of memory.** Memory left is what iPadOS lets
+  conflux alone use. The iPad as a whole can run short sooner, since the
+  model's memory is wired for the GPU and other apps need theirs, and then
+  iPadOS ends apps, conflux among them. **Memory pressure** shows the whole
+  iPad's: normal, warning or critical. At a warning, more than one slot is
+  halved. When it stays critical for a few seconds, conflux unloads the model,
+  which gives its memory back, and says so; the Macs send its work
+  elsewhere. Once pressure has been normal for a minute it loads the model
+  again by itself, with no need to stop and serve again.
 - **The first time**, iPadOS asks whether conflux may find devices on the
   local network. Allowing it lets iroh connect to the Macs directly rather
   than through a relay.
@@ -369,16 +389,18 @@ conflux's own container, which other apps can't reach, and apple-iroh
 carries the Macs' requests there.
 
 **Which models will likely fit.** Above the model choices, conflux says
-how much memory iPadOS lets it use on this iPad, and how large a model,
-with its projector, will likely load. Below them, it estimates the memory
+how much memory iPadOS lets it use of this iPad's memory, and how large a
+model, with its projector, will likely load. Below them, it estimates the memory
 the chosen model, projector, slots and context will take: the two files,
 whole, plus each slot's context, worked out from the model's header (its
 layers, key/value heads and their width, at llama.cpp's default f16 cache),
 plus room for llama.cpp and conflux to work in. It marks the choice *likely
 too big* when the estimate is more than three quarters of what iPadOS
-allows, or of the iPad's memory if that's less. The quarter kept back is
-for iPadOS, which can report a limit as large as all of the iPad's memory,
-and for what the estimate can't see. The estimate errs towards saying a
+allows, or of the iPad's memory if that's less, or more than the iPad's
+memory less 3.5 GB: 4.5 GB on an 8 GB iPad. What's kept back is for
+iPadOS, which can report a limit as large as all of the iPad's memory but
+needs some of it itself, for the other apps it keeps, and for what the
+estimate can't see. The estimate errs towards saying a
 model may not fit, and it's a hint, never a block: serving and checking
 stay open either way. It also says when the context per slot is more than
 the model was trained to read, which takes memory and may not help. Once a

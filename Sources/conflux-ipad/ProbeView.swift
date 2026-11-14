@@ -123,14 +123,18 @@ struct ProbeView: View {
 
     private var physicalMemory: UInt64 { ProcessInfo.processInfo.physicalMemory }
 
-    /// What iPadOS lets conflux use, and how large a model that likely
-    /// loads, with room for its context (ModelFit).
+    /// What iPadOS lets conflux use, of the iPad's memory, and how large a
+    /// model likely loads, with room for its context and for iPadOS
+    /// (ModelFit). What iPadOS allows can be nearly all of the iPad's
+    /// memory, more than it can spare once a model is loaded.
     private var allowance: String {
         let allowed = probe.limitAtLaunch
         let largest = ModelFit.largestModel(allowed: allowed, physicalMemory: physicalMemory)
-        let lets = "This iPad lets conflux use about \(Memory.roughly(allowed))"
+        let lets = "iPadOS lets conflux use about \(Memory.roughly(allowed)) of this iPad's "
+            + "\(Memory.roughly(physicalMemory))"
         guard largest > 0 else { return lets + ", which is likely too little for any model but the smallest." }
-        return lets + ", so models up to about \(Memory.roughly(largest)), with their projectors, will likely load."
+        return lets + ". Leaving room for iPadOS, models up to about \(Memory.roughly(largest)), with their "
+            + "projectors, will likely load."
     }
 
     /// The chosen model's memory: what a check of these files with these
@@ -186,8 +190,8 @@ struct ProbeView: View {
         }
         detail += ", and \(Memory.roughly(estimate.working)) of room to work in. conflux counts on about "
             + "\(Memory.roughly(ModelFit.usable(allowed: allowed, physicalMemory: physicalMemory))) of the "
-            + "\(Memory.roughly(allowed)) iPadOS allows, keeping the rest for iPadOS and what the estimate "
-            + "can't see."
+            + "\(Memory.roughly(allowed)) iPadOS allows, keeping the rest of the iPad's "
+            + "\(Memory.roughly(physicalMemory)) for iPadOS and what the estimate can't see."
         return VStack(alignment: .leading, spacing: 4) {
             Text(fits ? "Likely fits: about \(Memory.roughly(estimate.total))"
                       : "Likely too big: about \(Memory.roughly(estimate.total))")
@@ -214,11 +218,15 @@ struct ProbeView: View {
     @AppStorage("activityRange") private var range = ActivityRange.hour
 
     /// The iPad's side of things on the chart's span: memory left before
-    /// iPadOS ends conflux, heat, and power, which pauses it when unplugged.
+    /// iPadOS ends conflux, the whole iPad's memory pressure, which can end
+    /// it sooner, heat, and power, which pauses it when unplugged.
     private var resources: some View {
         HStack(alignment: .top, spacing: 20) {
             ResourceTile("Memory left", value: Memory.gigabytes(Memory.available)) {
                 Sparkline(server.memoryLeft.bins(range), color: .purple, ceiling: Double(probe.limitAtLaunch))
+            }
+            if let status = server.memoryStatus {
+                MemoryPressureTile(status, bins: server.pressure.bins(range))
             }
             HeatTile(server.heatStatus, bins: server.heat.bins(range), setCoolDown: server.setCoolDown)
             ResourceTile("Power", value: server.charging ? "Charging" : "On battery") {

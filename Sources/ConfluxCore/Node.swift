@@ -129,6 +129,14 @@ public final class ConfluxNode: @unchecked Sendable {
     private var monitors: [String: ResourceMonitor] = [:]
     /// Whether local hosts rest at serious heat (`NodeSettings.coolDown`).
     private var coolDown = false
+    /// Unloads the model under sustained critical memory pressure, and
+    /// loads it again once pressure is normal (`MemoryRelief`).
+    private var relief = MemoryRelief()
+    /// When relief next looks again, if pressure doesn't change before.
+    private var reliefCheck: Task<Void, Never>?
+    /// The slots the model's owner asked for, which relief loads it with
+    /// again.
+    private var ownerSlots = 0
     private var boundPort: UInt16?
     private var service: HTTPServer?
     private var mesh: Mesh?
@@ -192,7 +200,11 @@ public final class ConfluxNode: @unchecked Sendable {
         // there'd be nothing it could do.
         if let config = settings.host, case let host = Self.host(for: config),
            config.slots > 0 || host is any ResizableHost {
-            lock.withLock { self.host = host }
+            lock.withLock {
+                self.host = host
+                ownerSlots = config.slots
+                relief = MemoryRelief()
+            }
             await serve(host)
         }
         if settings.appleModel.enabled {
@@ -229,10 +241,52 @@ public final class ConfluxNode: @unchecked Sendable {
         let monitor = ResourceMonitor()
         lock.withLock { monitors[host.id] = monitor }
         await scheduler.add(host)
+        let resizable = host as? any ResizableHost
         monitor.start { [weak self] reading in
             Task { await self?.limit(host, under: reading) }
+            if let resizable { Task { await self?.relieve(resizable) } }
         }
         Task { await host.start() }
+    }
+
+    /// Unloads a host's model once memory pressure has been critical for a
+    /// few seconds, and loads it again with its owner's slots once pressure
+    /// has been normal for a while (`MemoryRelief`). Only a host whose slots
+    /// can change: one that can't is only paused.
+    private func relieve(_ host: any ResizableHost) async {
+        let now = ContinuousClock.now
+        guard let (action, slots, monitor) = lock.withLock({ () -> (MemoryRelief.Action, Int, ResourceMonitor)? in
+            guard let monitor = monitors[host.id], self.host === host else { return nil }
+            let action = relief.observe(monitor.reading.memory, at: now)
+            reliefCheck?.cancel()
+            reliefCheck = relief.nextCheck.map { next in
+                Task { [weak self] in
+                    try? await Task.sleep(until: next, clock: .continuous)
+                    guard !Task.isCancelled else { return }
+                    await self?.relieve(host)
+                }
+            }
+            return (action, ownerSlots, monitor)
+        }) else { return }
+        switch action {
+        case .none: return
+        // Stopping what runs: the device is short of memory now, and the
+        // gateways send those requests elsewhere.
+        case .release: await host.resize(to: 0, cancelling: true, because: MemoryRelief.reason)
+        case .restore: await host.resize(to: slots, cancelling: false)
+        }
+        await limit(host, under: monitor.reading)
+    }
+
+    /// The device's memory pressure, and what resource policy is doing
+    /// about it, for the Memory pressure tile. Nil without a host on this
+    /// device, which is what watches it.
+    public var memoryStatus: MemoryStatus? {
+        let (hosts, monitor, relief) = lock.withLock {
+            ([host as (any LocalHost)?, apple].compactMap { $0 }, monitors.values.first, relief)
+        }
+        guard let pressure = monitor?.reading.memory else { return nil }
+        return MemoryStatus(pressure: pressure, action: relief.action(slots: hosts.map(\.slots), memory: pressure))
     }
 
     /// Holds a host to what resource policy allows of the slots it has now,
@@ -267,9 +321,14 @@ public final class ConfluxNode: @unchecked Sendable {
     /// stopping (`LlamaHost.resize(to:cancelling:)`). None frees the model
     /// and leaves requests to peers' hosts. Does nothing without a model, or
     /// with a runtime whose slots can't change, such as `llama-server`.
+    /// While memory relief has unloaded the model, it only takes the slots
+    /// for when the model loads again.
     public func setSlots(_ slots: Int, cancelling: Bool) async {
-        let (host, monitor) = lock.withLock { (self.host, self.host.flatMap { monitors[$0.id] }) }
-        guard let host = host as? any ResizableHost else { return }
+        let (host, monitor, released) = lock.withLock { () -> ((any ManagedHost)?, ResourceMonitor?, Bool) in
+            ownerSlots = slots
+            return (self.host, self.host.flatMap { monitors[$0.id] }, relief.released)
+        }
+        guard let host = host as? any ResizableHost, !released else { return }
         await host.resize(to: slots, cancelling: cancelling)
         if let monitor { await limit(host, under: monitor.reading) }
     }
@@ -500,7 +559,10 @@ public final class ConfluxNode: @unchecked Sendable {
         }
         let hosts = localHosts
         let (server, monitors) = lock.withLock { () -> (HTTPServer?, [ResourceMonitor]) in
-            defer { self.server = nil; host = nil; apple = nil; self.monitors = [:]; boundPort = nil }
+            defer {
+                self.server = nil; host = nil; apple = nil; self.monitors = [:]; boundPort = nil
+                reliefCheck?.cancel(); reliefCheck = nil; relief = MemoryRelief()
+            }
             return (self.server, Array(self.monitors.values))
         }
         for monitor in monitors { monitor.stop() }

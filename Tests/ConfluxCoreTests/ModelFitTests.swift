@@ -78,19 +78,37 @@ import Testing
     }
 
     @Test func keepsAQuarterBack() {
-        let eight = 8 * Self.gigabyte
-        #expect(ModelFit.usable(allowed: eight, physicalMemory: eight) == 6 * Self.gigabyte)
+        let sixteen = 16 * Self.gigabyte
+        #expect(ModelFit.usable(allowed: 12 * Self.gigabyte, physicalMemory: sixteen) == 9 * Self.gigabyte)
         // An allowance larger than the memory is no use.
-        #expect(ModelFit.usable(allowed: 16 * Self.gigabyte, physicalMemory: eight) == 6 * Self.gigabyte)
+        #expect(ModelFit.usable(allowed: 32 * Self.gigabyte, physicalMemory: sixteen) == 12 * Self.gigabyte)
+        #expect(ModelFit.usable(allowed: 4 * Self.gigabyte, physicalMemory: sixteen) == 3 * Self.gigabyte)
+        #expect(ModelFit.usable(allowed: 8 * Self.gigabyte, physicalMemory: 0) == 6 * Self.gigabyte)
+    }
+
+    @Test func leavesIPadOSRoomOnASmallIPad() {
+        let eight = 8 * Self.gigabyte
+        // A quarter of 8 GB would leave 6 GB: more than an 8 GB iPad can
+        // spare once a model's memory is wired for the GPU.
+        let room = eight - ModelFit.systemReserve
+        #expect(room == 4 * Self.gigabyte + Self.gigabyte / 2)
+        #expect(ModelFit.usable(allowed: eight, physicalMemory: eight) == room)
+        #expect(ModelFit.usable(allowed: 7 * Self.gigabyte, physicalMemory: eight) == room)
+        // A small allowance still keeps its quarter.
         #expect(ModelFit.usable(allowed: 4 * Self.gigabyte, physicalMemory: eight) == 3 * Self.gigabyte)
-        #expect(ModelFit.usable(allowed: eight, physicalMemory: 0) == 6 * Self.gigabyte)
+        // Less memory than the reserve: nothing.
+        #expect(ModelFit.usable(allowed: 3 * Self.gigabyte, physicalMemory: 3 * Self.gigabyte) == 0)
     }
 
     @Test func saysHowLargeAModelFits() {
         let eight = 8 * Self.gigabyte
-        // 6 GB usable, less the room for one slot of a typical context, is
-        // 4.75 GB: about 4.5.
-        #expect(ModelFit.largestModel(allowed: eight, physicalMemory: eight) == 4 * Self.gigabyte + Self.gigabyte / 2)
+        // 4.5 GB usable, less the room for one slot of a typical context, is
+        // 3.25 GB: about 3.
+        #expect(ModelFit.largestModel(allowed: eight, physicalMemory: eight) == 3 * Self.gigabyte)
+        let sixteen = 16 * Self.gigabyte
+        // 12 GB usable, less the same room: 10.75 GB, about 10.5.
+        #expect(ModelFit.largestModel(allowed: sixteen, physicalMemory: sixteen)
+            == 10 * Self.gigabyte + Self.gigabyte / 2)
         #expect(ModelFit.largestModel(allowed: Self.gigabyte, physicalMemory: eight) == 0)
         #expect(ModelFit.largestModel(allowed: 0, physicalMemory: 0) == 0)
     }
@@ -103,6 +121,12 @@ import Testing
         let small = ModelFit(model: model, modelBytes: 2_500_000_000, projectorBytes: 800_000_000, slots: 1,
                              contextPerSlot: 4096)
         #expect(small.likelyFits(allowed: eight, physicalMemory: eight))
+        // Two slots of it: about 5.2 GB, within a quarter of 8 GB but more
+        // than an 8 GB iPad can spare.
+        let two = ModelFit(model: model, modelBytes: 2_500_000_000, projectorBytes: 800_000_000, slots: 2,
+                           contextPerSlot: 4096)
+        #expect(!two.likelyFits(allowed: eight, physicalMemory: eight))
+        #expect(two.likelyFits(allowed: 12 * Self.gigabyte, physicalMemory: 16 * Self.gigabyte))
         // The same files with four slots of 32,768 tokens: 18 GB of context.
         let greedy = ModelFit(model: model, modelBytes: 2_500_000_000, projectorBytes: 800_000_000, slots: 4,
                               contextPerSlot: 32768)
