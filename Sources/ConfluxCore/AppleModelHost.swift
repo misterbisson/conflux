@@ -124,7 +124,12 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
 
     /// Waits for Apple's model to be available, then runs the self-check.
     /// Returns once the host is available or has failed, or was stopped.
+    /// Cancelling the task that calls it doesn't stop it (`LocalHost.start`).
     public func start() async {
+        await Task { await self.load() }.value
+    }
+
+    private func load() async {
         let generation = lock.withLock { () -> Int in
             self.generation += 1
             state = .starting("checking Apple's model")
@@ -138,7 +143,7 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
             case .waiting(let why):
                 set(.starting(why), ifCurrent: generation)
                 try? await Task.sleep(for: recheck)
-                guard isCurrent(generation), !Task.isCancelled else { return }
+                guard isCurrent(generation) else { return }
                 continue
             case .never(let why):
                 return set(.failed(why), ifCurrent: generation)
