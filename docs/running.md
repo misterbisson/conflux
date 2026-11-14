@@ -104,7 +104,8 @@ model downloads, the host says so and waits.
 
 It reads text and images and passes the self-check, in about a second per
 image on an M2 MacBook Air. It runs two requests at once by default
-(`--apple-slots`): more add waiting, not throughput. Its guardrails decline
+(`--apple-slots`): more add waiting, not throughput. Its slots change while
+conflux runs, the way the model file's do. Its guardrails decline
 some content, and it takes only short requests. Those go to the model file's
 host, or a peer's, when the client accepts that model: with
 `Conflux-Models: apple-on-device, <model ID>`, for example. A request that

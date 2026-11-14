@@ -269,10 +269,14 @@ struct ContentView: View {
                 Button("Stop \(them) Now", role: .destructive) { model.setSlots(change.to, cancelling: true) }
                 Button("Keep \(host.slots) \(host.slots == 1 ? "Slot" : "Slots")", role: .cancel) {}
             } message: { change in
-                Text(change.cut == 1
-                     ? "A request is running in a slot that goes. It can finish there first, or stop now and go to another host with a free slot; with none, its client hears to try again shortly."
-                     : "\(change.cut) requests are running in slots that go. They can finish there first, or stop now and go to other hosts with free slots; with none, their clients hear to try again shortly.")
+                Text(Self.shrinkMessage(cut: change.cut))
             }
+    }
+
+    static func shrinkMessage(cut: Int) -> String {
+        cut == 1
+            ? "A request is running in a slot that goes. It can finish there first, or stop now and go to another host with a free slot; with none, its client hears to try again shortly."
+            : "\(cut) requests are running in slots that go. They can finish there first, or stop now and go to other hosts with free slots; with none, their clients hear to try again shortly."
     }
 
     /// Fewer slots than requests running, and what to do with the ones left
@@ -349,8 +353,7 @@ struct ContentView: View {
                         LabeledContent("Typical request", value: String(format: "%.1f s", typical))
                     }
                 }
-                StepperRow("Slots", value: $model.settings.appleModel.slots, in: 1...8)
-                    .disabled(model.running)
+                appleSlotsRow
             }
             Text("""
                 The model Apple Intelligence uses, served as \(AppleModelHost.modelID): text and images, in a system \
@@ -358,9 +361,40 @@ struct ContentView: View {
                 some content and takes only short requests; those go to another host when there is one.
                 """)
                 .font(.caption).foregroundStyle(.secondary)
-            if model.running, model.settings.appleModel.enabled {
-                Text("Stop conflux to change its slots.").font(.caption).foregroundStyle(.secondary)
+            if model.settings.appleModel.enabled {
+                Text("Its slots change while conflux runs.").font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// Apple's model's slots, changed at once while conflux runs, as the
+    /// custom model's are.
+    var appleSlotsRow: some View {
+        let slots = model.settings.appleModel.slots
+        return StepperRow("Slots", value: Binding(get: { slots }, set: setAppleSlots), in: 1...8)
+            .confirmationDialog(appleShrinking.map { "Use \($0.to) \($0.to == 1 ? "slot" : "slots") for Apple's model?" } ?? "",
+                                isPresented: Binding(get: { appleShrinking != nil }, set: { if !$0 { appleShrinking = nil } }),
+                                presenting: appleShrinking) { change in
+                let them = change.cut == 1 ? "It" : "Them"
+                Button("Let \(them) Finish") { model.setAppleSlots(change.to) }
+                Button("Stop \(them) Now", role: .destructive) { model.setAppleSlots(change.to, cancelling: true) }
+                Button("Keep \(slots) \(slots == 1 ? "Slot" : "Slots")", role: .cancel) {}
+            } message: { change in
+                Text(Self.shrinkMessage(cut: change.cut))
+            }
+    }
+
+    /// Fewer slots for Apple's model than requests running on it, and what
+    /// to do with the ones left over, while it asks.
+    @State private var appleShrinking: (to: Int, cut: Int)?
+
+    func setAppleSlots(_ slots: Int) {
+        let running = model.appleHost?.active ?? 0
+        let cut = model.running && slots < model.settings.appleModel.slots ? running - slots : 0
+        if cut > 0 {
+            appleShrinking = (slots, cut)
+        } else {
+            model.setAppleSlots(slots)
         }
     }
 

@@ -356,6 +356,15 @@ public final class ConfluxNode: @unchecked Sendable {
         if let monitor { await limit(host, under: monitor.reading) }
     }
 
+    /// Changes how many requests Apple's model runs at once, without
+    /// stopping (`AppleModelHost.resize(to:cancelling:because:)`). Does
+    /// nothing while it isn't served.
+    public func setAppleSlots(_ slots: Int, cancelling: Bool) async {
+        guard let (apple, monitor) = lock.withLock({ apple.map { ($0, monitors[$0.id]) } }) else { return }
+        await apple.resize(to: slots, cancelling: cancelling)
+        if let monitor { await limit(apple, under: monitor.reading) }
+    }
+
     /// Starts serving a model file while the node runs, or, with nil, stops
     /// serving it: it takes no new requests, and goes once those it runs
     /// have finished, or, `cancelling`, at once, each going to another host.

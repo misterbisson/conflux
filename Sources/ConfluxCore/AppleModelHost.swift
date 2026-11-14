@@ -17,21 +17,39 @@ import ImageIO
 ///
 /// Measured on an M2 MacBook Air: about 1 s to read a self-check image, and
 /// about 1.2 requests a second with two at once, with little more from four
-/// or eight. Hence two slots.
-public final class AppleModelHost: LocalHost, @unchecked Sendable {
+/// or eight. Hence two slots. They change while it serves
+/// (`resize(to:cancelling:because:)`).
+public final class AppleModelHost: ResizableHost, @unchecked Sendable {
     /// What clients name it, and what responses report.
     public static let modelID = "apple-on-device"
     public static let defaultSlots = 2
 
     public let id: String
-    public let slots: Int
     public let maxImageDimension: Int
     public let selfCheck: Bool
 
     private let lock = NSLock()
     private var state: HostAvailability = .starting("not started")
     private var identity: ModelInfo
-    private var running = 0
+    /// The slots asked for.
+    private var wanted: Int
+    /// Why it rests, asked for no slots.
+    private var resting: String?
+    /// The requests running, by when each started.
+    private var running: [UUID: Running] = [:]
+    private var observers: [@Sendable () -> Void] = []
+    /// Runs one request: Apple's model, or a stand-in in tests.
+    private let generator: @Sendable (AppleModelRequest) async throws -> ChatCompletionResult
+
+    struct Running {
+        let started: Date
+        var work: Task<ChatCompletionResult, any Error>?
+        /// Stopped to free its slot.
+        var evicted = false
+    }
+
+    /// What a host asked for no slots says it's doing.
+    public static let noSlots = "serving no slots: its requests go to other hosts"
     /// Counts starts and stops, so a check that finishes after a stop is
     /// thrown away.
     private var generation = 0
@@ -39,10 +57,17 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
     /// Intelligence is off. The framework sends no notice.
     private let recheck: Duration
 
-    public init(id: String = "apple", slots: Int = AppleModelHost.defaultSlots, maxImageDimension: Int = 1024,
-                selfCheck: Bool = true, recheck: Duration = .seconds(10)) {
+    public convenience init(id: String = "apple", slots: Int = AppleModelHost.defaultSlots,
+                            maxImageDimension: Int = 1024, selfCheck: Bool = true, recheck: Duration = .seconds(10)) {
+        self.init(id: id, slots: slots, maxImageDimension: maxImageDimension, selfCheck: selfCheck, recheck: recheck,
+                  generator: { try await AppleModelHost.generate($0) })
+    }
+
+    init(id: String, slots: Int, maxImageDimension: Int, selfCheck: Bool, recheck: Duration,
+         generator: @escaping @Sendable (AppleModelRequest) async throws -> ChatCompletionResult) {
         self.id = id
-        self.slots = slots
+        wanted = max(0, slots)
+        self.generator = generator
         self.maxImageDimension = maxImageDimension
         self.selfCheck = selfCheck
         self.recheck = recheck
@@ -76,8 +101,28 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
         get async { lock.withLock { identity } }
     }
 
+    /// The slots asked for, or, while fewer are asked for than requests
+    /// run, the requests running: the slots that go are kept until their
+    /// requests finish.
+    public var slots: Int {
+        lock.withLock { max(wanted, running.count) }
+    }
+
     public var availability: HostAvailability {
-        get async { lock.withLock { state } }
+        get async { lock.withLock { current } }
+    }
+
+    private var current: HostAvailability {
+        if let resting, state == .available { return .paused(resting) }
+        return state
+    }
+
+    public func observe(_ changed: @escaping @Sendable () -> Void) {
+        lock.withLock { observers.append(changed) }
+    }
+
+    private func changed() {
+        for observer in lock.withLock({ observers }) { observer() }
     }
 
     private func set(_ new: HostAvailability, ifCurrent generation: Int) {
@@ -179,16 +224,39 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
         if current { Task { await self.start() } }
     }
 
+    /// Runs `slots` requests at once from now on, without stopping.
+    ///
+    /// Fewer slots take nothing new until requests running in the slots
+    /// that go have finished, or, `cancelling`, those requests stop at once,
+    /// the newest first, and their gateways send them elsewhere. None takes
+    /// no work, saying `reason`, or that it serves no slots, until it has
+    /// slots again. Apple's model runs in a system process, so there's
+    /// nothing to load or free.
+    public func resize(to slots: Int, cancelling: Bool, because reason: String?) async {
+        let stopping = lock.withLock { () -> [Task<ChatCompletionResult, any Error>] in
+            wanted = max(0, slots)
+            resting = wanted == 0 ? reason ?? Self.noSlots : nil
+            guard cancelling else { return [] }
+            let newest = running.filter { !$0.value.evicted }.sorted { $0.value.started > $1.value.started }
+            return newest.prefix(max(0, newest.count - wanted)).compactMap { id, _ in
+                running[id]?.evicted = true
+                return running[id]?.work
+            }
+        }
+        stopping.forEach { $0.cancel() }
+        changed()
+    }
+
     // MARK: Requests
 
     public func complete(_ body: Data, timeout: TimeInterval) async throws -> HostReply {
-        guard lock.withLock({ state == .available }) else {
+        guard lock.withLock({ current == .available }) else {
             throw HostError.unavailable("Apple's model isn't ready")
         }
         return try await run(body, deadline: Date().addingTimeInterval(timeout))
     }
 
-    private func run(_ body: Data, deadline: Date) async throws -> HostReply {
+    func run(_ body: Data, deadline: Date) async throws -> HostReply {
         let request: AppleModelRequest
         do {
             request = try AppleModelRequest.parse(body)
@@ -197,16 +265,26 @@ public final class AppleModelHost: LocalHost, @unchecked Sendable {
         } catch .unsuited(let message) {
             return Self.unsuited(message, code: "unsupported_by_model")
         }
+        let id = UUID()
         guard lock.withLock({ () -> Bool in
-            guard running < slots else { return false }
-            running += 1
+            guard running.count < wanted else { return false }
+            running[id] = Running(started: Date())
             return true
         }) else { throw HostError.unavailable("every slot is busy") }
-        defer { lock.withLock { running -= 1 } }
+        // A slot that went while this ran goes with it.
+        defer { if lock.withLock({ running.removeValue(forKey: id) != nil && running.count >= wanted }) { changed() } }
 
+        // In a task of its own, so cutting slots can stop it.
+        let generator = generator
+        let work = Task { try await Self.within(deadline) { try await generator(request) } }
+        lock.withLock {
+            if running[id]?.evicted == true { work.cancel() } else { running[id]?.work = work }
+        }
         do {
-            let result = try await Self.within(deadline) { try await Self.generate(request) }
+            let result = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
             return HostReply(status: 200, body: result.body(model: Self.modelID))
+        } catch where lock.withLock({ running[id]?.evicted == true }) {
+            throw HostError.busy("its slot was taken away while it ran")
         } catch let error as Unreadable {
             return HostReply(status: 400, body: ChatCompletionResult.error(error.message))
         } catch let error as Unsuited {
