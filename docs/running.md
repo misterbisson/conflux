@@ -411,6 +411,18 @@ for the model file: only in the foreground, and only while charging unless
   local network. Allowing it lets iroh connect to the Macs directly rather
   than through a relay.
 
+**Locking the screen.** To leave an iPad serving where others can reach it,
+press **Lock**, at the top right. Locked, conflux shows the same status,
+chart and tiles, and nothing that changes anything: no buttons or switches,
+no choice of what the chart counts or how far back, no Cool down box. The one
+control is **Unlock**, which asks for the iPad's passcode, Face ID or Touch
+ID. It needs a passcode set in Settings. It stays locked if conflux is ended
+and opened again. It locks conflux, not the iPad: iPadOS's own gestures still
+leave the app, which stops it serving, as above. To keep the iPad in conflux
+too, turn on Guided Access in Settings, under Accessibility, and start it
+with a triple click of the top button, or the Home button; it ends with the
+passcode, Face ID or Touch ID.
+
 How other apps are kept out: on a Mac, the host service listens on a
 loopback port and takes connections only from conflux itself. iPadOS can't
 say which app connected, so on an iPad it listens on a Unix socket in

@@ -20,6 +20,11 @@ struct ProbeView: View {
     @State private var choosing = false
     /// The copy Delete would delete, while it asks.
     @State private var deleting: URL?
+    /// Whether the screen is locked (ScreenLock). Kept across launches, so
+    /// ending conflux and opening it again doesn't unlock it.
+    @AppStorage("screenLocked") private var locked = false
+    /// Whether Lock found no passcode to unlock with, while it says so.
+    @State private var noPasscode = false
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -48,6 +53,17 @@ struct ProbeView: View {
                 }
             }
             .navigationTitle("conflux")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Lock", systemImage: "lock", action: lock)
+                }
+            }
+            .alert("Set a passcode to lock conflux", isPresented: $noPasscode) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("conflux unlocks with this iPad's passcode, Face ID or Touch ID. Set a passcode in Settings, "
+                    + "under Face ID & Passcode or Touch ID & Passcode.")
+            }
             .refreshable { probe.reload() }
             .confirmationDialog(turningOff?.title ?? "",
                                 isPresented: Binding(get: { turningOff != nil }, set: { if !$0 { turningOff = nil } }),
@@ -57,6 +73,20 @@ struct ProbeView: View {
                 Button("Keep Serving", role: .cancel) {}
             } message: { change in
                 Text(change.message)
+            }
+        }
+        // Locked, what's underneath takes no touch, key or VoiceOver focus.
+        .disabled(locked)
+        .accessibilityHidden(locked)
+        // An overlay, not a full-screen cover, so a launch that starts locked
+        // covers the screen from its first frame.
+        .overlay {
+            if locked {
+                LockedView {
+                    status(locked: true)
+                } unlocked: {
+                    locked = false
+                }
             }
         }
         .fileImporter(isPresented: $choosing, allowedContentTypes: [.gguf], allowsMultipleSelection: true) { result in
@@ -230,7 +260,7 @@ struct ProbeView: View {
     /// The iPad's side of things on the chart's span: memory left before
     /// iPadOS ends conflux, the whole iPad's memory pressure, which can end
     /// it sooner, heat, and power, which pauses it when unplugged.
-    private var resources: some View {
+    private func resources(locked: Bool) -> some View {
         HStack(alignment: .top, spacing: 20) {
             ResourceTile("Memory left", value: Memory.gigabytes(Memory.available)) {
                 Sparkline(server.memoryLeft.bins(range), color: .purple, ceiling: Double(probe.limitAtLaunch))
@@ -238,7 +268,11 @@ struct ProbeView: View {
             if let status = server.memoryStatus {
                 MemoryPressureTile(status, bins: server.pressure.bins(range))
             }
-            HeatTile(server.heatStatus, bins: server.heat.bins(range), setCoolDown: server.setCoolDown)
+            if locked {
+                HeatTile(server.heatStatus, bins: server.heat.bins(range))
+            } else {
+                HeatTile(server.heatStatus, bins: server.heat.bins(range), setCoolDown: server.setCoolDown)
+            }
             ResourceTile("Power", value: server.charging ? "Charging" : "On battery") {
                 LevelBand(server.power.bins(range), colors: [.green, .orange])
             }
@@ -246,26 +280,41 @@ struct ProbeView: View {
     }
 
     /// Read from across a room: what this iPad is doing, and how much.
-    private var serving: some View {
-        Section {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                VStack(alignment: .leading, spacing: 12) {
-                    StatusHeadline(headline, color: headlineColor, detail: headlineDetail)
-                    if server.running {
-                        // Now; how it's gone is below.
-                        let connected = server.peers.filter { $0.path != .none }.count
-                        let own = server.ownHosts
-                        StatusFigures([
-                            ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy"),
-                            ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
-                        ])
+    /// Locked, with nothing to change what's counted or how far back, and no
+    /// Cool down box.
+    private func status(locked: Bool) -> some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            VStack(alignment: .leading, spacing: 12) {
+                // Not serving, the detail points at the choices below, which
+                // the lock hides.
+                StatusHeadline(headline, color: headlineColor,
+                               detail: locked && !server.running ? nil : headlineDetail)
+                if server.running {
+                    // Now; how it's gone is below.
+                    let connected = server.peers.filter { $0.path != .none }.count
+                    let own = server.ownHosts
+                    StatusFigures([
+                        ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy"),
+                        ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
+                    ])
+                    if locked {
+                        ActivityPanel(series: activitySeries, typicalSeconds: primaryHost?.typicalSeconds,
+                                      tailSeconds: primaryHost?.requestSeconds?.p95, metric: metric, range: range)
+                    } else {
                         ActivityPanel(series: activitySeries, typicalSeconds: primaryHost?.typicalSeconds,
                                       tailSeconds: primaryHost?.requestSeconds?.p95, metric: $metric, range: $range)
-                        resources
                     }
+                    resources(locked: locked)
                 }
-                .padding(.vertical, 8)
             }
+        }
+    }
+
+    /// The status, and what starts and stops serving.
+    private var serving: some View {
+        Section {
+            status(locked: false)
+                .padding(.vertical, 8)
             if !server.running {
                 Button {
                     server.start(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot)
@@ -312,6 +361,20 @@ struct ProbeView: View {
                                typicalSeconds: host?.typicalSeconds)
             }
         }
+    }
+
+    /// Locks the screen, once there's a passcode to unlock it with. What
+    /// was asking is put away, so nothing is left open under the lock.
+    private func lock() {
+        guard ScreenLock.biometry() != nil else {
+            noPasscode = true
+            return
+        }
+        stopping = nil
+        turningOff = nil
+        deleting = nil
+        choosing = false
+        locked = true
     }
 
     /// Whether either model is turned on.
