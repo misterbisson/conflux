@@ -283,7 +283,10 @@ public final class ConfluxNode: @unchecked Sendable {
                 Task { [weak self] in
                     try? await Task.sleep(until: next, clock: .continuous)
                     guard !Task.isCancelled else { return }
-                    await self?.relieve(host)
+                    // In a task of its own. The next reading cancels this
+                    // timer, and that mustn't reach a model that's loading
+                    // and checking itself.
+                    Task { await self?.relieve(host) }
                 }
             }
             return (action, ownerSlots, monitor)

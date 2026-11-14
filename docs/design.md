@@ -175,7 +175,9 @@ or dropped, or two neighbours swapped. A working model
 reads them every time. A model that can't see the image, or that reads it
 badly because it's misconfigured, gets some right by luck, and one probe
 wouldn't tell the difference. A host that fails the check reports Failed and
-says why.
+says why. Once started, a check runs to its end, so only the model's answers
+can fail it: nothing that interrupts it partway, such as memory relief
+loading the model again, leaves a working host Failed.
 
 ### iPad hosts
 

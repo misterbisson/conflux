@@ -207,7 +207,7 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
     /// Nil when the check passes, otherwise what went wrong.
     func selfCheck(port: Int) async -> String? {
         await SelfCheck.run(vision: config.projector != nil) { body in
-            try await post(body, port: port, timeout: 120)
+            try await self.post(body, port: port, timeout: 120)
         }
     }
 
