@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/misterbisson/conflux/compare/v0.9.0...v0.10.0) (2026-11-14)
+
+
+### Features
+
+* Apple's on-device model answers in a response_format schema ([#91](https://github.com/misterbisson/conflux/issues/91)) ([4234da1](https://github.com/misterbisson/conflux/commit/4234da1c885d06fb24fd0653b0a2e7172862a1c6))
+* let a mesh's gateways use Apple's model on a device that also serves a model file ([#90](https://github.com/misterbisson/conflux/issues/90)) ([ed7466a](https://github.com/misterbisson/conflux/commit/ed7466ab625c91d4b1e2260f66001d632cfc3045))
+
 ## [0.9.0](https://github.com/misterbisson/conflux/compare/v0.8.0...v0.9.0) (2026-11-14)
 
 
