@@ -410,11 +410,22 @@ What a gateway and a host on another device say to each other, over the
 forwarded connection. It's versioned in its paths, `/conflux/0/…`, until
 apple-iroh lets conflux name its own ALPN.
 
+A device can serve more than one host to its peers: its model file and Apple's
+model. The first, the model file's, or Apple's model when there's no model
+file, answers every request that doesn't name a host, as it always has. Each
+request names any other in `Conflux-Host: <host>`, with the host's ID on the
+device, `apple` for Apple's model.
+
 - `GET /conflux/0/host`: the host's model, availability, the slots it takes
   work in now, how many are busy, how many requests are held waiting for a
   slot (`held`), its typical request time, how many seconds it has had a free
   slot since it started (`free_seconds`), the hardware it runs on
-  (`hardware`, below), and `generation`, which counts its status changes. With `Conflux-After: <generation>` and `Conflux-Wait:
+  (`hardware`, below), and `generation`, which counts its status changes.
+  `host` names the host it describes, and `hosts` lists every host the
+  device serves, the first first. A gateway follows that list: each host
+  after the first becomes a host of its own in the gateway's scheduler,
+  `peer-<short ID>-<host>` beside the first's `peer-<short ID>`, and leaves
+  when the list drops it. With `Conflux-After: <generation>` and `Conflux-Wait:
   <seconds>` (5 at most), the host holds the request until its status has
   changed since that generation, or the wait is over. The gateway always
   has one of these open, waiting a second, so it hears of a freed slot at
@@ -465,6 +476,16 @@ which holds the queue, waits for the next slot. No slot is promised twice.
 A host from before host pull sends no `generation`, answers a status request
 at once, and ignores `Conflux-Prefetch`. A gateway asks it every second and
 sends it nothing ahead, as before.
+
+A device from before it could serve more than one host sends no `host` or
+`hosts`, and ignores `Conflux-Host`. A gateway sees it as one host, its
+first, as before, and names a host only to a device whose status listed it.
+If a device that doesn't say which host it answered for is asked for one by
+name, the gateway counts that host offline rather than take the first for
+it. A gateway from before ignores the new fields and sends no
+`Conflux-Host`, so it sees the first host, as before. Neither change needs a
+new protocol version: both ends read what the other leaves out the way they
+always have.
 
 A host that serves no model still answers, so its peers see "serves no model"
 rather than silence.
@@ -621,7 +642,8 @@ distribution.
 **Apple's on-device model** is the third runtime, through the Foundation
 Models framework: the model Apple Intelligence uses, which reads text and
 images from macOS 27 and iPadOS 27, conflux's floors. A device serves it
-alongside its model file, as a second host, `apple-on-device`. It runs in a
+alongside its model file, as a second host, `apple-on-device`, which peers'
+gateways see as well ([the host protocol](#the-host-protocol)). It runs in a
 system process, so it takes none of conflux's memory. conflux can't choose
 or pin it, and it changes with OS updates, so its fingerprint is the OS
 build. Its guardrails decline some content, and its context is small,

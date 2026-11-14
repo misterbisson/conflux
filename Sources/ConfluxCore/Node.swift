@@ -110,9 +110,21 @@ public struct TrustedPeer: Sendable, Equatable, Identifiable {
 public struct PeerStatus: Sendable, Equatable, Identifiable {
     public var id: String { endpointID }
     public var endpointID: String
-    /// The scheduler's ID for the peer's host.
+    /// The scheduler's ID for the peer's host: the one it answers for by
+    /// default, its model file's, or Apple's model when it has no model
+    /// file.
     public var hostID: String
     public var path: PeerPath
+    /// The scheduler's IDs for every host the peer serves, `hostID` first:
+    /// Apple's model alongside the model file, say.
+    public var hostIDs: [String]
+
+    public init(endpointID: String, hostID: String, path: PeerPath, hostIDs: [String]? = nil) {
+        self.endpointID = endpointID
+        self.hostID = hostID
+        self.path = path
+        self.hostIDs = hostIDs ?? (hostID.isEmpty ? [] : [hostID])
+    }
 }
 
 /// A device's gateway and its own hosts, started and stopped together. On an
@@ -140,7 +152,8 @@ public final class ConfluxNode: @unchecked Sendable {
     private var boundPort: UInt16?
     private var service: HTTPServer?
     private var mesh: Mesh?
-    private var remotes: [RemoteHost] = []
+    /// Each peer's hosts, in the scheduler.
+    private var remotes: [PeerHosts] = []
     private var meshFailure: String?
     private var identity: DeviceIdentity?
     private var manual: [String] = []
@@ -378,13 +391,10 @@ public final class ConfluxNode: @unchecked Sendable {
                 let added = wanted.filter { !current.contains($0) }
                 try mesh.allow(added)
                 let joined = usesPeers ? added.compactMap { peer in
-                    mesh.link(to: peer).map { RemoteHost(endpointID: peer, link: $0) }
+                    mesh.link(to: peer).map { PeerHosts(endpointID: peer, link: $0, scheduler: scheduler) }
                 } : []
                 lock.withLock { remotes += joined }
-                for remote in joined {
-                    remote.start()
-                    await scheduler.add(remote)
-                }
+                for remote in joined { await remote.start() }
             } else {
                 await stopMesh()
                 if !wanted.isEmpty { try await startMesh(peers: wanted, identity: identity) }
@@ -414,10 +424,10 @@ public final class ConfluxNode: @unchecked Sendable {
     public func refreshSoon() { lock.withLock { watching?.wake }?.yield() }
 
     private func startMesh(peers: [String], identity: DeviceIdentity) async throws {
-        // This device's host, for peers' gateways. Served without a host
-        // too, so peers hear "serves no model" rather than nothing. Peers see
-        // one host per device for now: the model file's, or else Apple's
-        // model.
+        // This device's hosts, for peers' gateways: the model file's first,
+        // then Apple's model, each named in the status so a peer's gateway
+        // can ask for the second (`PeerHosts`). Served without a host too,
+        // so peers hear "serves no model" rather than nothing.
         // And the files of the model it serves, the starter model's
         // included, for peers to copy. None for Apple's model.
         var files: [PeerFile.Role: String] = [:]
@@ -425,7 +435,7 @@ public final class ConfluxNode: @unchecked Sendable {
             files[.model] = config.model
             files[.projector] = config.projector
         }
-        let handler = HostService(scheduler: scheduler, hostID: localHosts.first?.id, files: files)
+        let handler = HostService(scheduler: scheduler, hostIDs: localHosts.map(\.id), files: files)
         let service: HTTPServer
         let exposure: Mesh.Exposure
         if let path = Self.hostSocket {
@@ -446,16 +456,13 @@ public final class ConfluxNode: @unchecked Sendable {
             throw error
         }
         let remotes = lock.withLock { usesPeers } ? peers.compactMap { peer in
-            mesh.link(to: peer).map { RemoteHost(endpointID: peer, link: $0) }
+            mesh.link(to: peer).map { PeerHosts(endpointID: peer, link: $0, scheduler: scheduler) }
         } : []
         lock.withLock {
             self.mesh = mesh
             self.remotes = remotes
         }
-        for remote in remotes {
-            remote.start()
-            await scheduler.add(remote)
-        }
+        for remote in remotes { await remote.start() }
     }
 
     /// The Unix socket peers' streams reach the host service through, or nil
@@ -502,8 +509,9 @@ public final class ConfluxNode: @unchecked Sendable {
         let (mesh, remotes) = lock.withLock { (self.mesh, self.remotes) }
         guard let mesh else { return [] }
         return mesh.peers.map { peer in
-            PeerStatus(endpointID: peer, hostID: remotes.first { $0.endpointID == peer }?.id ?? "",
-                       path: mesh.path(to: peer))
+            let remote = remotes.first { $0.endpointID == peer }
+            return PeerStatus(endpointID: peer, hostID: remote?.primary.id ?? "", path: mesh.path(to: peer),
+                              hostIDs: remote?.hosts.map(\.id) ?? [])
         }
     }
 
@@ -584,14 +592,11 @@ public final class ConfluxNode: @unchecked Sendable {
     }
 
     private func stopMesh() async {
-        let (service, mesh, remotes) = lock.withLock { () -> (HTTPServer?, Mesh?, [RemoteHost]) in
+        let (service, mesh, remotes) = lock.withLock { () -> (HTTPServer?, Mesh?, [PeerHosts]) in
             defer { self.service = nil; self.mesh = nil; self.remotes = [] }
             return (self.service, self.mesh, self.remotes)
         }
-        for remote in remotes {
-            remote.stop()
-            await scheduler.remove(hostID: remote.id)
-        }
+        for remote in remotes { await remote.stop() }
         service?.stop()
         mesh?.stop()
     }

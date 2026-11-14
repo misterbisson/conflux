@@ -106,8 +106,11 @@ only Apple's model may run gets the refusal, a `400` with code
 for what it can't enforce, such as a `pattern`, goes elsewhere the same way
 ([clients.md](clients.md#ask-for-a-schema)), and so do requests with tools.
 
-Peers see one host per device so far: the model file's, or Apple's model
-when there's no model file.
+Peers' gateways see both hosts, and send each request to the one serving a
+model it accepts: a Mac that serves a model file and Apple's model is two
+hosts in every gateway in the mesh. A peer still running a conflux from
+before 0.10 shows its first host only, the model file's, or Apple's model
+when it has no model file.
 
 ## Pointing a client at it
 

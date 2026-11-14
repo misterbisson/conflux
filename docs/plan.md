@@ -199,18 +199,20 @@ contribution is measured against the effort of keeping it there.
   self-check images, in about 1 s each, and its misses each added a letter,
   so the self-check now allows one letter added or dropped as well as
   changed. It managed about 1.2 requests a second with two at once, little
-  more with four or eight, so it gets two slots. It follows `response_format`
+  more with four or eight, so it gets two slots. A device serving both a
+  model file and Apple's model is two hosts to every gateway in the mesh:
+  the host protocol lists each host a device serves, and a gateway names
+  the one it means in `Conflux-Host`, without a new protocol version
+  ([design.md](design.md#the-host-protocol)). It follows `response_format`
   with its guided generation, and sends a schema asking for what that can't
   enforce, such as a `pattern`, to another host.
 
   *Left*, in order:
-  1. Peers see one host per device: the model file's, or Apple's model when
-     there's none. The host protocol has to carry both.
-  2. Measurements: how many tokens an image costs, throughput against
+  1. Measurements: how many tokens an image costs, throughput against
      Qwen3-VL-4B on the same images, both models at once on one Mac,
      whether it slows in the background, and how often the default
      guardrails decline ordinary images.
-  3. Apple's model in the iPad probe. It runs outside the app's memory
+  2. Apple's model in the iPad probe. It runs outside the app's memory
      limit, which may make the 8 GB iPad Pro a useful host.
 - **A starter model in the app**, so a first request works before anyone
   has found a model. *Built*: SmolVLM-256M-Instruct (Apache 2.0), Q8_0 with
