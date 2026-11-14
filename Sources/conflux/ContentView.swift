@@ -36,7 +36,7 @@ struct ContentView: View {
                         ("\(connected)", connected == 1 ? "peer connected" : "peers connected"),
                     ])
                     ActivityPanel(series: model.activitySeries, typicalSeconds: model.host?.typicalSeconds,
-                                  metric: $metric, range: $range)
+                                  tailSeconds: model.host?.requestSeconds?.p95, metric: $metric, range: $range)
                     resources
                 }
             }
@@ -558,13 +558,19 @@ struct ContentView: View {
 
     // MARK: Monitoring
 
-    /// Throughput, failures and idle-with-work, for the mesh and each host,
-    /// as this Mac's gateway sees them.
+    /// The USE method's three, for the mesh and each host, as this Mac's
+    /// gateway sees them: utilization, saturation (work waiting, how long it
+    /// waits, idle-with-work and the tail of request time), and errors, with
+    /// throughput.
     @ViewBuilder var monitoringSection: some View {
         if model.running, let snapshot = model.snapshot {
             Section("Monitoring") {
                 LabeledContent("Throughput", value: "\(Int(snapshot.perHour.rounded())) per hour")
                 LabeledContent("Completed", value: "\(snapshot.completed)")
+                LabeledContent("Utilization", value: snapshot.utilization.map(percent) ?? "no slots offered")
+                    .help("Slot time spent running requests, over slot time offered, on every host, in the last ten minutes")
+                LabeledContent("Waiting", value: Self.waiting(queued: snapshot.queued, wait: snapshot.waitSeconds))
+                    .help("Requests waiting here for a slot now, and how long requests waited in the last ten minutes")
                 LabeledContent("Idle while work waited", value: Self.seconds(snapshot.idleWithWorkSeconds))
                 LabeledContent("Host failures", value: Self.describe(snapshot.failures))
                 LabeledContent("Answered busy · unavailable", value: "\(snapshot.busy) · \(snapshot.unavailable)")
@@ -576,7 +582,12 @@ struct ContentView: View {
                 ForEach(snapshot.hosts) { host in
                     monitoringRow(host)
                 }
-                Text("Idle while work waited is time a host had a free slot while work it could run waited here. It should stay near zero.")
+                Text("""
+                    Utilization is the share of slot time spent running requests, and waiting is how long \
+                    requests waited here for a slot, both over the last ten minutes. Idle while work waited is \
+                    time a host had a free slot while work it could run waited here: it should stay near zero. \
+                    A peer's host that leaves and comes back keeps its counts.
+                    """)
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -598,16 +609,31 @@ struct ContentView: View {
             }
             let parts = [host.hardware?.summary,
                          "\(host.completed) completed",
-                         host.typicalSeconds.map { String(format: "typical %.1f s", $0) },
+                         host.utilization.map { "\(percent($0)) busy" },
+                         host.typicalSeconds.map {
+                             String(format: "typical %.1f s", $0)
+                                 + (host.requestSeconds.map { String(format: ", p95 %.1f s", $0.p95) } ?? "")
+                         },
                          "idle with work \(Self.seconds(host.idleWithWorkSeconds))",
                          host.prefetched > 0 ? "\(host.prefetched) sent ahead" : nil,
-                         host.failures.total > 0 ? Self.describe(host.failures) : nil].compactMap { $0 }
+                         host.failures.total > 0 ? Self.describe(host.failures) : nil,
+                         // This Mac's hosts leave and come back with Stop and Start.
+                         host.rejoined > 0 && host.id.hasPrefix("peer-")
+                             ? "rejoined \(host.rejoined) \(host.rejoined == 1 ? "time" : "times")" : nil]
+                .compactMap { $0 }
             Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
         }
     }
 
     static func seconds(_ value: Double) -> String {
         value < 10 ? String(format: "%.1f s", value) : String(format: "%.0f s", value)
+    }
+
+    /// Requests waiting now, and how long they waited lately.
+    static func waiting(queued: Int, wait: Percentiles?) -> String {
+        let now = "\(queued) now"
+        guard let wait else { return now }
+        return "\(now) · waited \(seconds(wait.p50)) median, \(seconds(wait.p95)) p95"
     }
 
     static func describe(_ failures: FailureCounts) -> String {

@@ -151,11 +151,30 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
     public var prefetched: Int
     /// What kind of device it runs on, when known.
     public var hardware: HardwareInfo?
+    /// Busy slot-seconds over offered slot-seconds in the last ten minutes,
+    /// 0 to 1: how much of what the host offers it uses. Nil when it offered
+    /// no slot. For a peer's host, as the host counts it, whichever gateway
+    /// sent the work, when it says; otherwise this gateway's share.
+    public var utilization: Double?
+    /// How long its requests took in the last ten minutes, from this
+    /// gateway: the median, and the tail that the typical time, which
+    /// follows the median, doesn't show.
+    public var requestSeconds: Percentiles?
+    /// Slot-seconds spent running requests, and offered, since it was first
+    /// added, by this scheduler's count. A host reports its own to peers'
+    /// gateways, which can't see the slots other gateways use.
+    public var busySlotSeconds: Double
+    public var slotSeconds: Double
+    /// Times it left this scheduler and was added again: a peer's host when
+    /// the peer reconnects or lists it again. Its counts carry over.
+    public var rejoined: Int
 
     public init(id: String, model: ModelInfo? = nil, state: HostState, slots: Int = 0, capacity: Int = 0,
                 active: Int = 0, completed: Int = 0, failures: FailureCounts = FailureCounts(),
                 typicalSeconds: Double? = nil, perHour: Double = 0, idleWithWorkSeconds: Double = 0,
-                freeSeconds: Double = 0, held: Int = 0, prefetched: Int = 0, hardware: HardwareInfo? = nil) {
+                freeSeconds: Double = 0, held: Int = 0, prefetched: Int = 0, hardware: HardwareInfo? = nil,
+                utilization: Double? = nil, requestSeconds: Percentiles? = nil, busySlotSeconds: Double = 0,
+                slotSeconds: Double = 0, rejoined: Int = 0) {
         self.id = id
         self.model = model
         self.state = state
@@ -171,6 +190,11 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
         self.held = held
         self.prefetched = prefetched
         self.hardware = hardware
+        self.utilization = utilization
+        self.requestSeconds = requestSeconds
+        self.busySlotSeconds = busySlotSeconds
+        self.slotSeconds = slotSeconds
+        self.rejoined = rejoined
     }
 
     /// Requests that failed because of the host.
@@ -201,6 +225,14 @@ public struct SchedulerSnapshot: Sendable, Equatable {
     /// free slot sitting idle while work it could run waited here. Should
     /// stay near zero.
     public var idleWithWorkSeconds: Double
+    /// Busy slot-seconds over offered ones in the last ten minutes, on every
+    /// host, including hosts that have left since: 0 to 1, nil when none
+    /// offered a slot.
+    public var utilization: Double? = nil
+    /// How long requests waited here for a slot in the last ten minutes,
+    /// those that got one at once included: the queue's other half, with
+    /// `queued` and idle-with-work.
+    public var waitSeconds: Percentiles? = nil
 
     /// Requests that failed because of a host.
     public var failed: Int { failures.hostFaults }
@@ -249,6 +281,56 @@ public actor Scheduler {
         /// When a request was last sent ahead to this host.
         var prefetchedAt: Date?
         var prefetched = 0
+
+        // Utilization (see `account()`): slot-seconds busy and offered,
+        // added up each time slots change, at the counts since the last.
+        var busySlotTime: TimeInterval = 0
+        var slotTime: TimeInterval = 0
+        var slotsSince: Date?
+        var slotsBusy = 0
+        var slotsOffered = 0
+        /// For a host on another device that counts its own slot-seconds:
+        /// the last count it reported.
+        var slotSample: (busy: Double, offered: Double, at: Date)?
+        /// How long requests that completed took, for the tail. Ten minutes
+        /// are kept.
+        var durations: [(at: Date, seconds: Double)] = []
+        var rejoined = 0
+
+        /// What's counted about a host, kept when it leaves so that its
+        /// counts carry over if it comes back with the same ID.
+        struct Counts {
+            var completed: Int
+            var failures: FailureCounts
+            var prefetched: Int
+            var recent: [Date]
+            var durations: [(at: Date, seconds: Double)]
+            var freeTime: TimeInterval
+            var idleTime: TimeInterval
+            var busySlotTime: TimeInterval
+            var slotTime: TimeInterval
+            var rejoined: Int
+        }
+
+        var counts: Counts {
+            get {
+                Counts(completed: completed, failures: failures, prefetched: prefetched, recent: recent,
+                       durations: durations, freeTime: freeTime, idleTime: idleTime, busySlotTime: busySlotTime,
+                       slotTime: slotTime, rejoined: rejoined)
+            }
+            set {
+                completed = newValue.completed
+                failures = newValue.failures
+                prefetched = newValue.prefetched
+                recent = newValue.recent
+                durations = newValue.durations
+                freeTime = newValue.freeTime
+                idleTime = newValue.idleTime
+                busySlotTime = newValue.busySlotTime
+                slotTime = newValue.slotTime
+                rejoined = newValue.rejoined
+            }
+        }
 
         var capacity: Int {
             guard intent == .serving, availability == .available, model != nil else { return 0 }
@@ -338,6 +420,13 @@ public actor Scheduler {
     /// Every host's idle-with-work time, kept here too so it outlasts hosts
     /// that leave.
     private var idleWithWork: TimeInterval = 0
+    /// The counts of hosts that have left, by ID, for if they come back.
+    private var departed: [String: Entry.Counts] = [:]
+    /// How long requests waited for a slot here, for the last ten minutes.
+    private var waits: [(at: Date, seconds: Double)] = []
+    /// The most durations kept for ten minutes, a host's or the queue's:
+    /// more than enough for a tail, at any rate a mesh reaches.
+    static let durationsKept = 20_000
     private var refreshing: Task<Void, Never>?
     /// Each host's status changes, counted, so peers' gateways can wait for
     /// the next one (`status(of:after:wait:)`).
@@ -387,16 +476,29 @@ public actor Scheduler {
 
     // MARK: Hosts
 
+    /// Adds a host, or replaces the one with its ID. A host that left and
+    /// comes back keeps its counts, so they go on matching the activity
+    /// history and the gateway's own, which outlast it too.
     public func add(_ host: any InferenceHost) async {
-        if entries[host.id] == nil { order.append(host.id) }
-        entries[host.id] = Entry(host: host)
+        var entry = Entry(host: host)
+        if let existing = entries[host.id] {
+            entry.counts = existing.counts
+        } else {
+            order.append(host.id)
+            if let counts = departed.removeValue(forKey: host.id) {
+                entry.counts = counts
+                entry.rejoined += 1
+            }
+        }
+        entries[host.id] = entry
         let id = host.id
         host.observe { [weak self] in Task { await self?.refresh(hostID: id) } }
         await refresh()
     }
 
     public func remove(hostID: String) {
-        entries.removeValue(forKey: hostID)
+        account() // Its slot and idle time, up to now.
+        if let entry = entries.removeValue(forKey: hostID) { departed[hostID] = entry.counts }
         order.removeAll { $0 == hostID }
     }
 
@@ -461,6 +563,9 @@ public actor Scheduler {
             entries[id]?.report = report
             entries[id]?.full = false
             if let seconds = report.freeSeconds { note((seconds, report.at), for: id) }
+            if let busy = report.busySlotSeconds, let offered = report.slotSeconds {
+                noteSlots(busy: busy, offered: offered, at: report.at, for: id)
+            }
         }
     }
 
@@ -586,11 +691,16 @@ public actor Scheduler {
         }
 
         var tried: Set<String> = []
+        // Time spent waiting for a slot, on every try.
+        var waited: TimeInterval = 0
+        defer { noteWait(waited) }
         while true {
             // Its client has gone: no one would read the answer.
             if Task.isCancelled { return .cancelled }
-            guard let lease = await acquire(choice: choice, excluding: tried, until: queueUntil, remaining: remaining)
-            else {
+            let asked = Date()
+            let acquired = await acquire(choice: choice, excluding: tried, until: queueUntil, remaining: remaining)
+            waited += Date().timeIntervalSince(asked)
+            guard let lease = acquired else {
                 if Task.isCancelled { return .cancelled }
                 busyCount += 1
                 return .busy(retryAfter: estimateWait(choice))
@@ -682,13 +792,18 @@ public actor Scheduler {
         switch result {
         case .success(let reply):
             let now = Date()
-            entries[lease.host]?.record(seconds: now.timeIntervalSince(started))
+            let seconds = now.timeIntervalSince(started)
+            entries[lease.host]?.record(seconds: seconds)
             if (200..<300).contains(reply.status) {
                 entries[lease.host]?.completed += 1
                 entries[lease.host]?.recent.append(now)
+                entries[lease.host]?.durations.append((now, seconds))
                 activity[lease.host, default: ActivityLog()].completed(Usage(reply.body), at: now)
                 if let first = entries[lease.host]?.recent.first, first < now.addingTimeInterval(-600) {
                     entries[lease.host]?.recent.removeAll { $0 < now.addingTimeInterval(-600) }
+                }
+                if let durations = entries[lease.host]?.durations {
+                    entries[lease.host]?.durations = Self.pruned(durations, at: now)
                 }
             }
         case .failure(.cancelled):
@@ -1117,6 +1232,21 @@ public actor Scheduler {
         let now = Date()
         for id in order {
             guard var entry = entries[id] else { continue }
+            if let since = entry.slotsSince {
+                let span = now.timeIntervalSince(since)
+                let busy = Double(entry.slotsBusy) * span, offered = Double(entry.slotsOffered) * span
+                entry.busySlotTime += busy
+                entry.slotTime += offered
+                // A host that counts its own goes by its count instead.
+                if entry.report?.slotSeconds == nil {
+                    activity[id, default: ActivityLog()].slots(busy: busy, offered: offered, from: since, to: now)
+                }
+            }
+            // Offered: the slots it takes work in, and any still finishing
+            // work while it drains or after they were cut.
+            entry.slotsSince = now
+            entry.slotsBusy = entry.active.count
+            entry.slotsOffered = max(entry.capacity, entry.active.count)
             if let since = entry.freeSince { entry.freeTime += now.timeIntervalSince(since) }
             if let since = entry.waitedSince { entry.waitedTime += now.timeIntervalSince(since) }
             if let since = entry.idleSince {
@@ -1162,7 +1292,8 @@ public actor Scheduler {
                 }
             }
         }
-        return (snapshot().hosts.first { $0.id == hostID }, generations[hostID, default: 0])
+        account() // Its free and slot time, up to now.
+        return (hostSnapshot(hostID, since: Date().addingTimeInterval(-600)), generations[hostID, default: 0])
     }
 
     private func stopWatching(_ id: UUID) {
@@ -1193,29 +1324,74 @@ public actor Scheduler {
         entries[id] = entry
     }
 
+    /// Takes a slot-seconds count from a host on another device: what it ran
+    /// since its last report, whichever gateway sent the work, goes into its
+    /// activity, so its utilization is the host's own and not this
+    /// gateway's share of it.
+    private func noteSlots(busy: Double, offered: Double, at: Date, for id: String) {
+        guard var entry = entries[id] else { return }
+        if let last = entry.slotSample {
+            guard at > last.at else { return }
+            let busied = busy - last.busy, offers = offered - last.offered
+            // A count that went down is a host that restarted.
+            if busied >= 0, offers >= 0 {
+                activity[id, default: ActivityLog()].slots(busy: busied, offered: offers, from: last.at, to: at)
+            }
+        }
+        entry.slotSample = (busy, offered, at)
+        entries[id] = entry
+    }
+
+    /// Records how long a request waited for a slot here.
+    private func noteWait(_ seconds: TimeInterval) {
+        let now = Date()
+        waits.append((now, seconds))
+        waits = Self.pruned(waits, at: now)
+    }
+
+    /// Durations from the last ten minutes, and no more than are kept.
+    static func pruned(_ durations: [(at: Date, seconds: Double)], at now: Date) -> [(at: Date, seconds: Double)] {
+        let cutoff = now.addingTimeInterval(-600)
+        guard let first = durations.first, first.at < cutoff || durations.count > durationsKept else { return durations }
+        return Array(durations.drop { $0.at < cutoff }.suffix(durationsKept))
+    }
+
     /// Each host's activity from `date` on, by host ID, including hosts
     /// that have left.
     public func activity(since date: Date) -> [String: [ActivityMinute]] {
         activity.mapValues { $0.since(date) }.filter { !$0.value.isEmpty }
     }
 
+    /// One host as it stands, with its rates and tails from `cutoff` on.
+    private func hostSnapshot(_ id: String, since cutoff: Date) -> HostSnapshot? {
+        guard let e = entries[id] else { return nil }
+        return HostSnapshot(id: id, model: e.model, state: e.state, slots: e.host.slots, capacity: e.capacity,
+                            active: e.active.count, completed: e.completed, failures: e.failures,
+                            typicalSeconds: e.typical,
+                            perHour: Double(e.recent.filter { $0 > cutoff }.count) * 6,
+                            idleWithWorkSeconds: e.idleTime, freeSeconds: e.freeTime,
+                            held: e.report?.held ?? held(id), prefetched: e.prefetched,
+                            hardware: e.host.hardware,
+                            utilization: activity[id].flatMap { ActivityTotals($0.since(cutoff)).utilization },
+                            requestSeconds: Percentiles(e.durations.filter { $0.at > cutoff }.map(\.seconds)),
+                            busySlotSeconds: e.busySlotTime, slotSeconds: e.slotTime, rejoined: e.rejoined)
+    }
+
     public func snapshot() -> SchedulerSnapshot {
         account()
         let cutoff = Date().addingTimeInterval(-600)
-        let hosts = order.compactMap { id -> HostSnapshot? in
-            guard let e = entries[id] else { return nil }
-            return HostSnapshot(id: id, model: e.model, state: e.state, slots: e.host.slots, capacity: e.capacity,
-                                active: e.active.count, completed: e.completed, failures: e.failures,
-                                typicalSeconds: e.typical,
-                                perHour: Double(e.recent.filter { $0 > cutoff }.count) * 6,
-                                idleWithWorkSeconds: e.idleTime, freeSeconds: e.freeTime,
-                                held: e.report?.held ?? held(id), prefetched: e.prefetched,
-                                hardware: e.host.hardware)
+        let hosts = order.compactMap { hostSnapshot($0, since: cutoff) }
+        let mesh = activity.values.reduce(into: (busy: 0.0, offered: 0.0)) {
+            let lately = ActivityTotals($1.since(cutoff))
+            $0.busy += lately.busySlotSeconds
+            $0.offered += lately.slotSeconds
         }
         return SchedulerSnapshot(hosts: hosts, queued: waiting.count, completed: completedCount,
                                  failures: failures, rejected: rejectedCount, busy: busyCount,
                                  unavailable: unavailableCount, hedged: hedgeCount, hedgeWins: hedgeWinCount,
                                  perHour: Double(recent.filter { $0 > cutoff }.count) * 6,
-                                 idleWithWorkSeconds: idleWithWork)
+                                 idleWithWorkSeconds: idleWithWork,
+                                 utilization: mesh.offered > 0 ? min(1, mesh.busy / mesh.offered) : nil,
+                                 waitSeconds: Percentiles(waits.filter { $0.at > cutoff }.map(\.seconds)))
     }
 }
