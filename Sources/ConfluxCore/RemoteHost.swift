@@ -114,7 +114,8 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
                 guard answering, let status, mine(status) else { return nil }
                 let held = status.held ?? 0
                 return HostReport(free: max(0, status.capacity - status.active - held), held: held,
-                                  freeSeconds: status.freeSeconds, pulls: status.generation != nil, at: statusAt)
+                                  freeSeconds: status.freeSeconds, busySlotSeconds: status.busySlotSeconds,
+                                  slotSeconds: status.slotSeconds, pulls: status.generation != nil, at: statusAt)
             }
         }
     }

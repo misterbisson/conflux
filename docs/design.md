@@ -329,14 +329,52 @@ never looks like a dead one. See [clients.md](clients.md).
 
 ### Monitoring
 
-Each gateway keeps, for the mesh and for each host it schedules to:
-completions and completions per hour, failures by kind (not answering,
-server error, busy, out of the client's time), and idle-with-work seconds.
+Each gateway keeps, for the mesh and for each host it schedules to, what the
+USE method asks of a resource, a host's slots here, with throughput:
+
+- **Utilization**: slot-seconds spent running a request over slot-seconds
+  offered, in the last ten minutes. A slot is offered while the host takes
+  work in it, or while it finishes a request after being drained or cut.
+  Two slots, one busy throughout, is 50%. The mesh's is every host's added
+  up, hosts that have left since included.
+- **Saturation**: requests waiting at the gateway now; how long requests
+  waited there for a slot in the last ten minutes, as a median and a 95th
+  percentile, those that got one at once included; idle-with-work seconds;
+  and each host's request time in the last ten minutes, as a median and a
+  95th percentile. The typical time follows the median, and hedging exists
+  for the tail it hides.
+- **Errors**: failures by kind (not answering, server error, busy, out of
+  the client's time), for the mesh and by host.
+- Completions, and completions per hour.
+
 The window shows them, and so does `GET /health` for a client with the token
 ([clients.md](clients.md#the-api)). Each scheduler also keeps a day of each
-host's activity by the minute: requests completed and failed, and the tokens
-read and written, from the `usage` and `timings` in each answer. The status
-charts show it. It's kept in memory, and a host that leaves keeps its history.
+host's activity by the minute: requests completed and failed, the tokens
+read and written, from the `usage` and `timings` in each answer, and slot-
+seconds busy and offered. The status charts show it, by host: requests or
+tokens stacked, or utilization as a line for each, with a red mark where a
+host failed. Selecting a mark names the hosts that failed there, and the
+legend counts each host's failures. It's kept in memory, and a host that
+leaves keeps its history.
+
+A host that leaves the scheduler and comes back with the same ID keeps its
+counts too, and its `rejoined` count goes up by one. A peer's hosts leave
+when the peer disconnects, and a host after its first leaves when the
+peer's status stops listing it, so a host that flaps would otherwise start
+from nothing each time: its completions would stop matching the chart and
+the gateway's own total, which both outlast it, and the failures that made
+it flap would be the ones lost. Counting from the start, with the number of
+times it came back beside them, keeps the history and still shows the
+flapping. This device's own hosts come back the same way when conflux stops
+and starts.
+
+A host on another device is shared with other gateways, which this gateway
+can't see. So a host counts its own slot-seconds, busy and offered,
+whichever gateway sent the work, and reports them in its status
+(`busy_slot_seconds`, `slot_seconds`). The gateway takes the difference
+between two statuses as what the host did between them, so a peer's host's
+utilization is the host's own. A host from before it counted is measured
+by this gateway's requests alone.
 
 Each host also says what kind of device it runs on, so a measurement can name
 every device's chip without anyone looking it up, and throughput can be read
@@ -421,7 +459,9 @@ device, `apple` for Apple's model.
 - `GET /conflux/0/host`: the host's model, availability, the slots it takes
   work in now, how many are busy, how many requests are held waiting for a
   slot (`held`), its typical request time, how many seconds it has had a free
-  slot since it started (`free_seconds`), the hardware it runs on
+  slot since it started (`free_seconds`), the slot-seconds it has spent
+  running requests and offered since it started (`busy_slot_seconds`,
+  `slot_seconds`, [Monitoring](#monitoring)), the hardware it runs on
   (`hardware`, below), and `generation`, which counts its status changes.
   `host` names the host it describes, and `hosts` lists every host the
   device serves, the first first. A gateway follows that list: each host

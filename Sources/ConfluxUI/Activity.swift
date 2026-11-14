@@ -22,12 +22,24 @@ public enum ActivityRange: String, CaseIterable, Identifiable, Sendable {
 /// What the activity chart counts.
 public enum ActivityMetric: String, CaseIterable, Identifiable, Sendable {
     case requests, tokens
+    /// The share of each host's slot time spent running requests.
+    case utilization
 
     public var id: Self { self }
-    public var title: String { self == .requests ? "Requests" : "Tokens" }
+    public var title: String {
+        switch self {
+        case .requests: "Requests"
+        case .tokens: "Tokens"
+        case .utilization: "Busy"
+        }
+    }
 
     func value(_ minute: ActivityMinute) -> Int {
-        self == .requests ? minute.completed : minute.completionTokens
+        switch self {
+        case .requests: minute.completed
+        case .tokens: minute.completionTokens
+        case .utilization: 0 // Drawn as a share, not stacked.
+        }
     }
 }
 
@@ -52,21 +64,30 @@ public struct ActivitySeries: Identifiable, Sendable {
     }
 }
 
+/// A share, 0 to 1, as a whole percentage.
+public func percent(_ fraction: Double) -> String {
+    "\(Int((fraction * 100).rounded()))%"
+}
+
 /// The figure over the chart, a line on how it's going, the choice of what
 /// to count and how far back, and the chart.
 public struct ActivityPanel: View {
     let series: [ActivitySeries]
     let typicalSeconds: Double?
+    let tailSeconds: Double?
     @Binding var metric: ActivityMetric
     @Binding var range: ActivityRange
     let now: Date
     /// Only this model's hosts, or nil for every host.
     @State private var model: String?
 
-    public init(series: [ActivitySeries], typicalSeconds: Double?, metric: Binding<ActivityMetric>,
-                range: Binding<ActivityRange>, now: Date = Date()) {
+    /// `tailSeconds` is the 95th percentile of request time, shown beside
+    /// the typical time, which follows the median.
+    public init(series: [ActivitySeries], typicalSeconds: Double?, tailSeconds: Double? = nil,
+                metric: Binding<ActivityMetric>, range: Binding<ActivityRange>, now: Date = Date()) {
         self.series = series
         self.typicalSeconds = typicalSeconds
+        self.tailSeconds = tailSeconds
         self._metric = metric
         self._range = range
         self.now = now
@@ -118,23 +139,42 @@ public struct ActivityPanel: View {
     private var summary: some View {
         let series = shownSeries
         let typicalSeconds = typical(series)
+        // This Mac's tail: not one model's hosts'.
+        let tailSeconds = chosen == nil ? tailSeconds : nil
         let recent = ActivityTotals(series.flatMap { $0.minutes.filter { $0.start > now.addingTimeInterval(-600) } })
-        let shown = ActivityTotals(series.flatMap { $0.minutes.filter { $0.start > now.addingTimeInterval(-range.span) } })
-        let headline = metric == .requests
-            ? "\((recent.completed * 6).formatted()) per hour"
-            : "\((recent.completionTokens / 10).formatted()) tokens a minute"
+        let shown = series.map { host in
+            (name: host.name,
+             failed: ActivityTotals(host.minutes.filter { $0.start > now.addingTimeInterval(-range.span) }).failed)
+        }
+        let failed = shown.reduce(0) { $0 + $1.failed }
+        let headline: String = switch metric {
+        case .requests: "\((recent.completed * 6).formatted()) per hour"
+        case .tokens: "\((recent.completionTokens / 10).formatted()) tokens a minute"
+        case .utilization: recent.utilization.map { "\(percent($0)) busy" } ?? "No slots offered"
+        }
         var parts: [String] = []
-        if metric == .requests {
-            if let typicalSeconds { parts.append(String(format: "typical request %.1f s", typicalSeconds)) }
-        } else {
+        switch metric {
+        case .requests:
+            if let typicalSeconds {
+                parts.append(String(format: "typical request %.1f s", typicalSeconds)
+                             + (tailSeconds.map { String(format: ", p95 %.1f s", $0) } ?? ""))
+            }
+            if let utilization = recent.utilization { parts.append("\(percent(utilization)) busy") }
+        case .tokens:
             parts.append("\((recent.promptTokens / 10).formatted()) read")
             if let speed = recent.tokensPerSecond { parts.append(String(format: "%.0f a second while writing", speed)) }
+        case .utilization:
+            if recent.utilization != nil {
+                parts.append(chosen == nil ? "of every host's slots, last ten minutes"
+                                           : "of this model's hosts' slots, last ten minutes")
+            }
         }
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(headline).font(.title2.monospacedDigit().weight(.semibold))
             Text(parts.joined(separator: " · ")).foregroundStyle(.secondary)
-            if shown.failed > 0 {
-                Text("\(shown.failed) failed").foregroundStyle(.red)
+            if failed > 0 {
+                Text("\(failed) failed").foregroundStyle(.red)
+                    .help(shown.filter { $0.failed > 0 }.map { "\($0.name): \($0.failed)" }.joined(separator: ", "))
             }
         }
         .lineLimit(1)
@@ -168,8 +208,9 @@ public struct ActivityPanel: View {
 }
 
 /// Requests or tokens written, a bar for each minute of the last hour or ten
-/// minutes of the last day, stacked by host, with a red mark where a host
-/// failed.
+/// minutes of the last day, stacked by host, or each host's share of its
+/// slot time busy as a line, with a red mark where a host failed. Selecting
+/// a mark says which hosts failed there, and the legend counts each host's.
 public struct ActivityChart: View {
     let series: [ActivitySeries]
     let metric: ActivityMetric
@@ -178,6 +219,8 @@ public struct ActivityChart: View {
     /// The hosts drawn, by ID, or nil for all of them. Each keeps the colour
     /// it has among all of them.
     let shown: Set<String>?
+    /// The time selected on the chart, to name the hosts that failed there.
+    @State private var selected: Date?
 
     public init(series: [ActivitySeries], metric: ActivityMetric, range: ActivityRange, now: Date = Date(),
                 shown: Set<String>? = nil) {
@@ -201,9 +244,24 @@ public struct ActivityChart: View {
         let high: Int
     }
 
+    /// One host's share of its slot time busy in one bin.
+    struct Point: Identifiable {
+        var id: String { "\(name)-\(at.timeIntervalSince1970)" }
+        let name: String
+        let at: Date
+        let percent: Double
+    }
+
+    /// The failures in one bin, by host.
     struct Failure: Identifiable {
         var id: Date { at }
         let at: Date
+        let hosts: [(name: String, count: Int)]
+
+        var label: String {
+            let time = at.formatted(date: .omitted, time: .shortened)
+            return "\(time): " + hosts.map { "\($0.name) \($0.count) failed" }.joined(separator: ", ")
+        }
     }
 
     private var start: Date { now.addingTimeInterval(-range.span) }
@@ -227,16 +285,34 @@ public struct ActivityChart: View {
         return Date(timeIntervalSince1970: (seconds / range.bin).rounded(.down) * range.bin)
     }
 
-    private var stacks: (segments: [Segment], failures: [Failure]) {
+    /// A host's minutes in the span, and the bin that started before it.
+    private func inRange(_ host: ActivitySeries) -> [ActivityMinute] {
+        host.minutes.filter { $0.start >= start.addingTimeInterval(-range.bin) }
+    }
+
+    private var stacks: (segments: [Segment], points: [Point], failures: [Failure]) {
         var totals: [Date: Int] = [:]
-        var failed: [Date: Int] = [:]
+        var failed: [Date: [(name: String, count: Int)]] = [:]
         var segments: [Segment] = []
+        var points: [Point] = []
         let gap = range.bin * 0.12
         for host in series where shown?.contains(host.id) ?? true {
             var values: [Date: Int] = [:]
-            for minute in host.minutes where minute.start >= start.addingTimeInterval(-range.bin) {
+            var slots: [Date: (busy: Double, offered: Double)] = [:]
+            var failures: [Date: Int] = [:]
+            for minute in inRange(host) {
                 values[bin(minute), default: 0] += metric.value(minute)
-                if minute.failed > 0 { failed[bin(minute), default: 0] += minute.failed }
+                slots[bin(minute), default: (0, 0)].busy += minute.busySlotSeconds
+                slots[bin(minute), default: (0, 0)].offered += minute.slotSeconds
+                if minute.failed > 0 { failures[bin(minute), default: 0] += minute.failed }
+            }
+            for (at, count) in failures { failed[at, default: []].append((host.name, count)) }
+            if metric == .utilization {
+                for (at, slot) in slots.sorted(by: { $0.key < $1.key }) where slot.offered > 0 {
+                    points.append(Point(name: host.name, at: at.addingTimeInterval(range.bin / 2),
+                                        percent: min(100, slot.busy / slot.offered * 100)))
+                }
+                continue
             }
             for (at, value) in values.sorted(by: { $0.key < $1.key }) where value > 0 {
                 let low = totals[at, default: 0]
@@ -246,28 +322,34 @@ public struct ActivityChart: View {
                                         end: at.addingTimeInterval(range.bin - gap / 2), low: low, high: low + value))
             }
         }
-        let failures = failed.keys.sorted().map { Failure(at: $0.addingTimeInterval(range.bin / 2)) }
-        return (segments, failures)
+        let failures = failed.keys.sorted().map { Failure(at: $0.addingTimeInterval(range.bin / 2), hosts: failed[$0] ?? []) }
+        return (segments, points, failures)
     }
 
     public var body: some View {
-        let entries = series.indices.compactMap { index -> (name: String, color: Color)? in
+        // With each host's failures on the span, for the legend.
+        let entries = series.indices.compactMap { index -> (name: String, color: Color, failed: Int)? in
             guard shown?.contains(series[index].id) ?? true else { return nil }
-            return (series[index].name, index < Self.palette.count ? Self.palette[index] : Color.gray)
+            let failed = inRange(series[index]).filter { $0.start >= start }.reduce(0) { $0 + $1.failed }
+            return (series[index].name, index < Self.palette.count ? Self.palette[index] : Color.gray, failed)
         }
         let names = entries.map(\.name)
         let colors = entries.map(\.color)
+        let failed = entries.map(\.failed)
         VStack(alignment: .leading, spacing: 6) {
             chart(names: names, colors: colors)
                 .frame(height: 116)
             // Its own, not the chart's, which keeps to one line and cuts off
             // the hosts that don't fit.
-            if series.count > 1 {
+            if series.count > 1 || failed.contains(where: { $0 > 0 }) {
                 Flow {
-                    ForEach(Array(zip(names, colors).enumerated()), id: \.offset) { _, entry in
+                    ForEach(Array(zip(names, colors).enumerated()), id: \.offset) { index, entry in
                         HStack(spacing: 4) {
                             Circle().fill(entry.1).frame(width: 7, height: 7)
                             Text(entry.0).lineLimit(1).truncationMode(.middle)
+                            if failed[index] > 0 {
+                                Text("\(failed[index]) failed").foregroundStyle(.red)
+                            }
                         }
                     }
                 }
@@ -278,24 +360,53 @@ public struct ActivityChart: View {
         }
     }
 
+    private var empty: String {
+        switch metric {
+        case .requests: "No requests yet"
+        case .tokens: "No tokens yet"
+        case .utilization: "No slots offered yet"
+        }
+    }
+
     private func chart(names: [String], colors: [Color]) -> some View {
-        let (segments, failures) = stacks
-        let top = segments.map(\.high).max() ?? 0
+        let (segments, points, failures) = stacks
+        let top = metric == .utilization ? 100 : max(segments.map(\.high).max() ?? 0, metric == .requests ? 4 : 100)
+        let pointed = selected.flatMap { selected in
+            failures.first { abs($0.at.timeIntervalSince(selected)) <= range.bin / 2 }
+        }
         return Chart {
             ForEach(segments) { segment in
                 RectangleMark(xStart: .value("Time", segment.start), xEnd: .value("Time", segment.end),
                               yStart: .value(metric.title, segment.low), yEnd: .value(metric.title, segment.high))
                     .foregroundStyle(by: .value("Host", segment.name))
             }
+            ForEach(points) { point in
+                LineMark(x: .value("Time", point.at), y: .value(metric.title, point.percent))
+                    .foregroundStyle(by: .value("Host", point.name))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
             ForEach(failures) { failure in
                 PointMark(x: .value("Time", failure.at), y: .value(metric.title, 0))
                     .foregroundStyle(.red)
                     .symbolSize(28)
+                    .accessibilityLabel(failure.label)
+            }
+            if let pointed {
+                RuleMark(x: .value("Time", pointed.at))
+                    .foregroundStyle(.red.opacity(0.3))
+                    .annotation(position: .top, spacing: 0,
+                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                        Text(pointed.label)
+                            .font(.caption)
+                            .padding(.horizontal, 6).padding(.vertical, 3)
+                            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 4))
+                    }
             }
         }
         .chartForegroundStyleScale(domain: names, range: colors)
         .chartXScale(domain: start...now)
-        .chartYScale(domain: 0...max(top, metric == .requests ? 4 : 100))
+        .chartYScale(domain: 0...top)
+        .chartXSelection(value: $selected)
         .chartXAxis {
             AxisMarks(values: ticks) { _ in
                 AxisTick()
@@ -303,20 +414,33 @@ public struct ActivityChart: View {
             }
         }
         .chartYAxis {
-            AxisMarks(values: .automatic(desiredCount: 3)) { _ in
-                AxisGridLine()
-                AxisValueLabel()
+            if metric == .utilization {
+                AxisMarks(values: [0, 50, 100]) { value in
+                    AxisGridLine()
+                    AxisValueLabel { Text("\(value.as(Int.self) ?? 0)%") }
+                }
+            } else {
+                AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel()
+                }
             }
         }
         .chartLegend(.hidden)
         .overlay {
-            if segments.isEmpty {
-                Text(metric == .requests ? "No requests yet" : "No tokens yet")
-                    .foregroundStyle(.secondary)
+            if segments.isEmpty && points.isEmpty {
+                Text(empty).foregroundStyle(.secondary)
             }
         }
-        .accessibilityLabel(metric == .requests ? "Requests completed over time, by host"
-                                                : "Tokens written over time, by host")
+        .accessibilityLabel(accessibility)
+    }
+
+    private var accessibility: String {
+        switch metric {
+        case .requests: "Requests completed over time, by host"
+        case .tokens: "Tokens written over time, by host"
+        case .utilization: "Share of each host's slot time spent running requests, over time"
+        }
     }
 }
 

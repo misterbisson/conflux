@@ -260,7 +260,7 @@ struct ProbeView: View {
                             ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
                         ])
                         ActivityPanel(series: activitySeries, typicalSeconds: primaryHost?.typicalSeconds,
-                                      metric: $metric, range: $range)
+                                      tailSeconds: primaryHost?.requestSeconds?.p95, metric: $metric, range: $range)
                         resources
                     }
                 }

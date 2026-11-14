@@ -35,8 +35,12 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
 
     func set(_ availability: HostAvailability) { lock.withLock { state = availability } }
     /// Makes this host report on its slots, like a host on another device.
-    func report(free: Int = 0, freeSeconds: Double? = nil, pulls: Bool = false, at: Date = Date()) {
-        lock.withLock { reported = HostReport(free: free, freeSeconds: freeSeconds, pulls: pulls, at: at) }
+    func report(free: Int = 0, freeSeconds: Double? = nil, busySlotSeconds: Double? = nil,
+                slotSeconds: Double? = nil, pulls: Bool = false, at: Date = Date()) {
+        lock.withLock {
+            reported = HostReport(free: free, freeSeconds: freeSeconds, busySlotSeconds: busySlotSeconds,
+                                  slotSeconds: slotSeconds, pulls: pulls, at: at)
+        }
     }
     var report: HostReport? { get async { lock.withLock { reported } } }
     /// Requests sent to it ahead, to wait for a slot.
