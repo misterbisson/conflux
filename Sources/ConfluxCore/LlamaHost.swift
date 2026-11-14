@@ -90,7 +90,15 @@ public final class LlamaHost: ManagedHost, ResizableHost, @unchecked Sendable {
     /// Identifies the model, loads it, and runs the self-check. Returns once
     /// the host is available or has failed. Asked for no slots, it identifies
     /// the model and rests, without loading it.
+    ///
+    /// Not stopped by cancelling the task that calls it (`LocalHost.start`):
+    /// cancelled, the self-check's requests stop at once, and the host
+    /// would fail it saying "cancelled", with nothing to load it again.
     public func start() async {
+        await Task { await self.load() }.value
+    }
+
+    private func load() async {
         let generation = lock.withLock { () -> Int in
             self.generation += 1
             engine = nil
@@ -307,6 +315,10 @@ public final class LlamaHost: ManagedHost, ResizableHost, @unchecked Sendable {
 
 /// A host on this device, which its node starts and stops.
 public protocol LocalHost: InferenceHost {
+    /// Brings the host up: loads its model and checks it, or fails. Runs to
+    /// the end whatever happens to the task that calls it: `stop()` stops a
+    /// host, and cancelling its caller doesn't. A caller may be a task that
+    /// is cancelled for reasons of its own, such as memory relief's timer.
     func start() async
     func stop()
 }

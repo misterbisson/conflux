@@ -327,6 +327,30 @@ struct LlamaHostIntegrationTests {
         #expect(try await ask(host, #","max_tokens":8"#).status == 200)
     }
 
+    /// Loaded again from a task that's been cancelled, as memory relief's
+    /// timer was, it still checks the model. Before, the self-check's
+    /// requests stopped at once and the host failed saying "cancelled".
+    @Test func loadsInACancelledTaskAndChecksTheModel() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "conflux-llama-\(UUID().uuidString)")
+        let config = ModelConfig(model: try #require(testModelPath), slots: 0, contextPerSlot: 256, selfCheck: true)
+        let host = LlamaHost(config: config, logURL: directory.appending(path: "llama.log"))
+        defer { host.stop() }
+        await host.start()
+        #expect(await host.availability == .paused(LlamaHost.noSlots))
+        await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await host.resize(to: 1, cancelling: false)
+        }.value
+        // This model is too small to pass: it should fail by misreading,
+        // having been asked, not by being cancelled.
+        let state = await host.availability
+        if case .failed(let why) = state {
+            #expect(why.hasPrefix("self-check failed:") && !why.contains("cancelled"), "\(why)")
+        } else {
+            #expect(state == .available)
+        }
+    }
+
     /// Stopped, it stays stopped whatever its slots.
     @Test func stoppedStaysStopped() async throws {
         let host = try await started(slots: 1)
