@@ -232,6 +232,109 @@ contribution is measured against the effort of keeping it there.
 - Capability requests and aliases beyond vision.
 - MLX for artifacts that benefit from it.
 
+## Apps on the same Mac
+
+A sandboxed app can't read conflux's token, which sits in conflux's
+container, so today it works only with "Require the token" off, and then any
+process on the Mac can use the models. Nor can it start conflux's gateway, or
+learn when the mesh changes, except by asking again and again. This work
+lets such an app turn conflux on with a switch: it launches conflux, pairs
+once with the person's approval, gets a token of its own, and follows the
+mesh as it changes. No URL to type, no token to paste, and no concurrency to
+tune.
+
+Encryption isn't part of it. Other processes can't read loopback traffic, and
+the token closes the hole that matters, any process using the models. What a
+certificate would add is proof that the server on the port is conflux, which
+the pairing reply could carry later as a fingerprint.
+
+In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
+
+1. **Serving resumes at launch, and a launch by another app stays in the
+   background.** Today the gateway starts only when someone presses Start,
+   so an app that launches conflux finds nothing listening. conflux records
+   whether it was serving when it quit, and starts again if it was. A Mac its
+   owner stopped stays stopped: an app launching conflux doesn't decide that
+   a multi-gigabyte model loads. And conflux brings itself to the front only
+   when run from the command line, the case that call is there for. Launched
+   by another app with activation off, it stays behind.
+
+   *Done when:* conflux, last quit while serving, launched with `NSWorkspace`
+   and activation off, has its gateway up on its port, without taking focus.
+
+2. **A token for each paired app.** The gateway accepts the owner's token,
+   as now, for the command line and `conflux-bench`, and one token for each
+   paired app, kept the same way, in a file only this user can read. Each is
+   tied to the app's bundle ID and Team ID, not to a name it gives. The window
+   lists the paired apps, with their icons, when each was paired and last
+   used, and **Revoke**: that app's next request gets `401`, and no other
+   app's does. Turning "Require the token" off still lets any process in, as
+   it says.
+
+   *Done when:* tests show the gateway taking each token, refusing a revoked
+   one, and comparing in constant time.
+
+3. **Pairing, through a `conflux://` URL.** The Mac app registers the
+   scheme, and handles it in its app delegate, because a SwiftUI
+   `onOpenURL` can open a second window. An app opens
+   `conflux://pair?reply=<its own URL>`, and:
+
+   - conflux identifies the app from its code signature, not from anything
+     in the URL: bundle ID, Team ID, name and icon. The get-URL Apple Event
+     carries the sender's audit token. *First, confirm* that it names the
+     app that opened the URL, not LaunchServices. Either way, the reply URL
+     must open in that same app, found with
+     `NSWorkspace.urlForApplication(toOpen:)`, and if the two differ the
+     request is refused. Then another app registering the reply scheme
+     can't receive the token, and one claiming a name it isn't shows as
+     itself.
+   - conflux comes to the front and asks: "Let *App* use your models?",
+     with its icon and developer. A build without a Team ID says it's from
+     an unidentified developer.
+   - On yes, it starts the gateway if it's stopped and can start, and opens
+     the reply URL in that app, with `NSWorkspace.open(_:withApplicationAt:)`,
+     carrying the app's token and the gateway's address,
+     `http://127.0.0.1:<port>/v1`. On no, the reply says it was declined.
+     Neither is logged.
+   - An app already paired, with the same bundle ID and Team ID, is answered
+     at once, without asking and without coming to the front, with the same
+     token and the current address. So an app that loses its token, or finds
+     nothing on the port it knew, pairs again and carries on.
+
+   *Done when:* a sandboxed test app pairs with one approval and gets answers
+   with its token; a second app that registered the same reply scheme gets
+   nothing; and pairing again after the port changes gets the new address
+   with no prompt.
+
+4. **A notice when the gateway changes.** conflux posts a distributed
+   notification, `com.caseybisson.conflux.gateway.changed`, when its gateway
+   starts or stops, conflux quits, its owner drains, pauses or resumes it, the
+   models served change, or the mesh's slots do. Slots move under memory
+   pressure and heat, so notices are coalesced to at most one a second. A
+   sandboxed app can't attach anything to a distributed notification, and
+   nothing is needed: an app re-reads `/health` and `/v1/models` with its
+   token. Anyone can post or watch the notice, and it says only that
+   something changed.
+
+   *Done when:* tests show which changes post a notice, and that a burst of
+   slot changes posts one.
+
+5. **The contract written down.** In [clients.md](clients.md): pairing, the
+   reply, keeping the token in the app's keychain, pairing again when the
+   gateway can't be reached, the notification, and sizing concurrency from
+   the slots in `/health`. In [running.md](running.md), the paired apps and
+   Revoke. In [design.md](design.md#client-authorization), tokens for each
+   app.
+
+**Done when:** a sandboxed client app with nothing typed into it launches
+conflux in the background, pairs with one approval, gets answers with its
+own token, widens and narrows its concurrency as Macs join and leave, and
+loses access when revoked, while every other process still gets `401`.
+
+*Left for later:* a certificate fingerprint in the pairing reply; which app
+sent each request, in the window's activity and in `/health`; and limits for
+each app, if one app can crowd out another.
+
 ## Phase 5: Hardening
 
 - Tokens required by default.
