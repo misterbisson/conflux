@@ -172,6 +172,10 @@ public final class Gateway: Sendable {
                                  headers: [(ContractHeader.retryAfter, String(retryAfter))])
         case .unknownModel(let message):
             return Gateway.error(404, message, type: "invalid_request_error", code: "model_not_found")
+        case .draining(let retryAfter):
+            return Gateway.error(503, "this gateway is draining: it finishes what it has and takes nothing new",
+                                 type: "server_error", code: "draining",
+                                 headers: [(ContractHeader.retryAfter, String(retryAfter))])
         case .cancelled:
             // The client closed its connection, so it won't read this.
             return Gateway.error(503, "the request was cancelled", type: "server_error", code: "unavailable",

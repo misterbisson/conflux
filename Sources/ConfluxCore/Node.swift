@@ -656,6 +656,7 @@ public final class ConfluxNode: @unchecked Sendable {
         for monitor in monitors { monitor.stop() }
         for host in hosts { host.stop() }
         server?.stop()
+        await scheduler.setDraining(false)
         await stopMesh()
         lock.withLock {
             meshFailure = nil
@@ -681,8 +682,14 @@ public final class ConfluxNode: @unchecked Sendable {
         mesh?.stop()
     }
 
+    /// Sets this device's hosts' intent. Draining drains the gateway too:
+    /// it finishes what clients sent it, on any host, and takes nothing new
+    /// from them, so the device can stop without cutting anything off.
+    /// Pausing is for this device's hosts alone, and its gateway goes on
+    /// sending clients' work to peers.
     public func setIntent(_ intent: OwnerIntent) async {
         for host in localHosts { await scheduler.setIntent(intent, for: host.id) }
+        await scheduler.setDraining(intent == .draining)
     }
 
     public var logURL: URL? { lock.withLock { host?.logURL } }

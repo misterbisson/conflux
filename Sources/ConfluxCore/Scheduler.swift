@@ -13,6 +13,9 @@ public enum Outcome: Sendable, Equatable {
     case unavailable(retryAfter: Int, message: String)
     /// No host has served a model this request accepts: 404.
     case unknownModel(String)
+    /// This gateway is draining: it finishes what clients already sent it
+    /// and takes nothing new. 503.
+    case draining(retryAfter: Int)
     /// Whoever sent it cancelled it: another device's gateway, for a hedged
     /// copy that lost, or a client that closed its connection, which isn't
     /// there to read the answer.
@@ -264,7 +267,8 @@ public struct SchedulerSnapshot: Sendable, Equatable {
     public var rerouted = 0
     /// Answers of 429: no slot in time.
     public var busy: Int
-    /// Answers of 503: hosts failed and time ran out, or none was up.
+    /// Answers of 503: hosts failed and time ran out, none was up, or this
+    /// gateway was draining.
     public var unavailable: Int
     /// Copies of requests sent to an idle host at the tail of a batch.
     public var hedged: Int
@@ -284,6 +288,12 @@ public struct SchedulerSnapshot: Sendable, Equatable {
     /// those that got one at once included: the queue's other half, with
     /// `queued` and idle-with-work.
     public var waitSeconds: Percentiles? = nil
+    /// Whether this gateway is draining: finishing what clients sent it,
+    /// taking nothing new from them.
+    public var draining = false
+    /// Requests clients sent this gateway that it's running or holding now,
+    /// on any host. Each runs once however many clients share its key.
+    public var clientRequests = 0
 
     /// Requests that failed because of a host.
     public var failed: Int { failures.hostFaults }
@@ -529,6 +539,13 @@ public actor Scheduler {
     /// Each copy's task, by lease, to cancel the one that loses.
     private var copies: [UUID: Task<Void, Never>] = [:]
     private var hedgeCount = 0, hedgeWinCount = 0
+    /// Whether `submit` turns new requests away (`setDraining`).
+    private var draining = false
+    /// Requests from `submit` running or waiting now.
+    private var clientRequests = 0
+    /// What a draining gateway tells clients to wait before trying again:
+    /// it takes nothing new until its owner resumes it, so not soon.
+    static let drainingRetryAfter = 30
 
     public init(config: SchedulerConfig = SchedulerConfig()) {
         self.config = config
@@ -662,14 +679,21 @@ public actor Scheduler {
     /// its connection, stops the request and frees its slot, and the answer
     /// is `.cancelled`. A request other clients wait for with the same key
     /// runs on for them.
+    ///
+    /// While draining, a request is turned away unless it shares its key
+    /// with one already running or answered.
     public func submit(_ body: Data, choice: ModelChoice, deadline: Date?, key: String?) async -> Outcome {
         pruneFinished()
-        guard let key else { return await execute(body, choice: choice, deadline: deadline) }
+        guard let key else {
+            guard !draining else { return turnAway() }
+            return await executeForClient(body, choice: choice, deadline: deadline)
+        }
         if let done = finished[key] { return done.outcome }
         if inFlight[key] == nil {
+            guard !draining else { return turnAway() }
             let shared = UUID()
             let task = Task {
-                let outcome = await self.execute(body, choice: choice, deadline: deadline)
+                let outcome = await self.executeForClient(body, choice: choice, deadline: deadline)
                 self.finish(key, shared: shared, outcome)
             }
             inFlight[key] = Shared(id: shared, task: task)
@@ -682,6 +706,26 @@ public actor Scheduler {
         }, onCancel: {
             Task { await self.leave(key, shared: shared, as: id) }
         }, isolation: self)
+    }
+
+    /// Drains this gateway, or opens it again. Draining, it finishes the
+    /// requests clients already sent it, on any host, and answers new ones
+    /// `.draining`. Hosts' own intents, and requests other devices' gateways
+    /// send this device's hosts, are apart from it.
+    public func setDraining(_ draining: Bool) {
+        self.draining = draining
+    }
+
+    private func turnAway() -> Outcome {
+        unavailableCount += 1
+        return .draining(retryAfter: Self.drainingRetryAfter)
+    }
+
+    /// Runs a request a client sent, counted while it runs or waits.
+    private func executeForClient(_ body: Data, choice: ModelChoice, deadline: Date?) async -> Outcome {
+        clientRequests += 1
+        defer { clientRequests -= 1 }
+        return await execute(body, choice: choice, deadline: deadline)
     }
 
     private func join(_ key: String, shared: UUID, as id: UUID) async -> Outcome {
@@ -1499,6 +1543,7 @@ public actor Scheduler {
                                  perHour: Double(recent.filter { $0 > cutoff }.count) * 6,
                                  idleWithWorkSeconds: idleWithWork,
                                  utilization: mesh.offered > 0 ? min(1, mesh.busy / mesh.offered) : nil,
-                                 waitSeconds: Percentiles(waits.filter { $0.at > cutoff }.map(\.seconds)))
+                                 waitSeconds: Percentiles(waits.filter { $0.at > cutoff }.map(\.seconds)),
+                                 draining: draining, clientRequests: clientRequests)
     }
 }

@@ -113,6 +113,17 @@ import Testing
         #expect(host?["model"] as? String == "model-a")
     }
 
+    @Test func aDrainingGatewayAnswers503() async {
+        let scheduler = await Scheduler.with([FakeHost(id: "h")])
+        let gateway = Gateway(scheduler: scheduler, token: "t")
+        await scheduler.setDraining(true)
+        let response = await gateway.handle(request())
+        #expect(response.status == 503)
+        #expect(response.headers.first { $0.name == ContractHeader.retryAfter }?.value
+                    == String(Scheduler.drainingRetryAfter))
+        #expect((json(response)["error"] as? [String: Any])?["code"] as? String == "draining")
+    }
+
     @Test func responsesNameWhatRan() async {
         let gateway = Gateway(scheduler: await Scheduler.with([FakeHost(id: "h")]), token: "t")
         let body = json(await gateway.handle(request()))

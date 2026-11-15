@@ -319,6 +319,10 @@ final class HostService: Sendable {
                          [(ContractHeader.retryAfter, String(retryAfter))])
         case .unknownModel(let message):
             return reply(503, "unavailable", ChatCompletionResult.error(message, type: "server_error"))
+        case .draining(let retryAfter):
+            // A gateway's answer, which a host's requests never get.
+            return reply(503, "unavailable", ChatCompletionResult.error("draining", type: "server_error"),
+                         [(ContractHeader.retryAfter, String(retryAfter))])
         case .cancelled:
             return reply(409, "cancelled", ChatCompletionResult.error("cancelled by the gateway that sent it",
                                                                       type: "server_error"))

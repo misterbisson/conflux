@@ -88,6 +88,23 @@ struct Peer {
         #expect(node.peers.isEmpty)
     }
 
+    /// Draining a node drains its gateway; pausing leaves the gateway
+    /// sending clients' work to peers. Stopping opens it again.
+    @Test func drainingANodeDrainsItsGateway() async throws {
+        let node = ConfluxNode()
+        try await node.start(NodeSettings(port: 0, requireToken: false),
+                             identity: try { () throws -> DeviceIdentity in throw MeshFailure(description: "not asked") }())
+        await node.setIntent(.paused)
+        #expect(await !node.scheduler.snapshot().draining)
+        await node.setIntent(.draining)
+        #expect(await node.scheduler.snapshot().draining)
+        await node.setIntent(.serving)
+        #expect(await !node.scheduler.snapshot().draining)
+        await node.setIntent(.draining)
+        await node.stop()
+        #expect(await !node.scheduler.snapshot().draining)
+    }
+
     /// Listed devices are peers. One listed while running joins the running
     /// mesh; one forgotten leaves it; an unreadable directory keeps what it
     /// had.

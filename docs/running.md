@@ -28,8 +28,12 @@ each ten minutes of the last day, stacked by host, with a red mark where a
 host failed. Under the chart are the requests waiting, conflux's memory
 (nearly all of it the model's) against the Mac's, and the thermal state, over
 the same span. The history is kept in memory, from when conflux opened.
-**Drain** finishes what's running and takes nothing new. **Pause** takes
-nothing new straight away. **Stop** ends serving and unloads the model.
+**Drain** finishes what's running and waiting and takes nothing new: on
+this Mac's models, and at its gateway, which finishes the requests its clients
+sent, wherever they run, and answers new ones `503` with `error.code`
+`draining`. The window shows Draining until both are done. **Pause** takes
+nothing new on this Mac's models straight away, while the gateway goes on
+sending clients' work to peers. **Stop** ends serving and unloads the model.
 
 The slots change while conflux runs; the other model settings need a stop.
 More slots are made without reloading the model. Fewer free idle slots at
@@ -220,7 +224,8 @@ Two numbers need reading beside others:
   rejected and unavailable (`503`) answers the gateway gave.
 
 To take a host out of a busy mesh without those failures, **Drain** it first
-and **Stop** it once it's idle. Stopped at once, every request running on it
+and **Stop** it once it's idle: once its own models and its gateway have
+finished what they had. Stopped at once, every request running on it
 fails there and goes elsewhere, and so does each request waiting at a
 gateway that tries it before that gateway hears it has stopped.
 
