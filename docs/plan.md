@@ -102,9 +102,9 @@ throughput, and never hits a client timeout while the mesh is busy.
   is idle and nothing waits, gets a copy there, and the loser is cancelled by
   request ID ([design.md](design.md#failures-and-stragglers)).
 - Monitoring: throughput per host and for the mesh, failures, idle time while
-  compatible work waits. *Built*: in the window's Monitoring section and in
-  `/health` for clients with the token. Peers count their own free time, so
-  a gateway sees the round trips its peers sit idle for
+  compatible work waits. *Built*: in the window, beside each host and under
+  Gateway, and in `/health` for clients with the token. Peers count their own
+  free time, so a gateway sees the round trips its peers sit idle for
   ([design.md](design.md#monitoring)). Each host reports its hardware class,
   chip, cores and memory, so results can name each device's chip.
 
