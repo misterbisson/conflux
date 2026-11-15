@@ -387,6 +387,23 @@ import Testing
                                               deadline: nil, key: nil)
         if case .completed = anything {} else { Issue.record("\(anything)") }
     }
+
+    @Test func unfilteredAliasSkipsModelsThatFilterContent() async {
+        let filtered = FakeHost(id: "f", model: "filtered", contentFilter: true)
+        let scheduler = await Scheduler.with([filtered])
+        let choice = ModelChoice(model: "any-vision-unfiltered", preference: nil)
+        let none = await scheduler.submit(Data(), choice: choice, deadline: nil, key: nil)
+        if case .unknownModel(let message) = none {
+            #expect(message.contains("any-vision-unfiltered"))
+        } else { Issue.record("\(none)") }
+
+        await scheduler.add(FakeHost(id: "o", model: "open"))
+        for _ in 0..<3 {
+            let outcome = await scheduler.submit(Data(), choice: choice, deadline: nil, key: nil)
+            if case .completed(_, let model) = outcome { #expect(model.id == "open") } else { Issue.record("\(outcome)") }
+        }
+        #expect(filtered.calls == 0)
+    }
 }
 
 @Suite struct ModelChoiceTests {
@@ -398,12 +415,35 @@ import Testing
         #expect(ModelChoice(model: "m", preference: nil).options == [.exact("m")])
         #expect(ModelChoice(model: "m", preference: " a, any-vision ,b ").options
             == [.exact("a"), .capability(.vision), .exact("b")])
+        #expect(ModelChoice(model: "any-vision-unfiltered", preference: nil).options == [.unfiltered(.vision)])
     }
 
     @Test func ranking() {
         #expect(ModelChoice(model: nil, preference: "x, m").rank(model) == 1)
         #expect(ModelChoice(model: nil, preference: "any-vision").rank(model) == 0)
         #expect(ModelChoice(model: "x", preference: nil).rank(model) == nil)
+        let filtered = ModelInfo(id: "f", capabilities: [.text, .vision], fingerprint: "f", contentFilter: true)
+        let text = ModelInfo(id: "t", capabilities: [.text], fingerprint: "t")
+        #expect(ModelChoice(model: "any-vision-unfiltered", preference: nil).rank(model) == 0)
+        #expect(ModelChoice(model: "any-vision-unfiltered", preference: nil).rank(filtered) == nil)
+        #expect(ModelChoice(model: "any-vision-unfiltered", preference: nil).rank(text) == nil)
+        #expect(ModelChoice(model: "any-vision", preference: nil).rank(filtered) == 0)
+    }
+
+    @Test func contentFilterCrossesTheMesh() throws {
+        let filtered = ModelInfo(id: "f", capabilities: [.vision], fingerprint: "f", contentFilter: true)
+        let encoded = try HostService.encoder.encode(filtered)
+        #expect(String(decoding: encoded, as: UTF8.self).contains(#""content_filter":true"#))
+        #expect(try HostService.decoder.decode(ModelInfo.self, from: encoded) == filtered)
+    }
+
+    @Test func peersThatDontReportAContentFilterHaveOneOnlyForApplesModel() throws {
+        func decode(_ id: String) throws -> ModelInfo {
+            let json = #"{"id":"\#(id)","capabilities":["text","vision"],"fingerprint":"x"}"#
+            return try HostService.decoder.decode(ModelInfo.self, from: Data(json.utf8))
+        }
+        #expect(try decode(AppleModelHost.modelID).contentFilter)
+        #expect(try !decode("gemma").contentFilter)
     }
 }
 

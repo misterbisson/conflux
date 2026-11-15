@@ -135,10 +135,33 @@ import Testing
     @Test func modelsListsAliasesFirst() async {
         let gateway = Gateway(scheduler: await Scheduler.with([FakeHost(id: "h")]), token: "t")
         let data = json(await gateway.handle(request("GET", "/v1/models"))) ["data"] as? [[String: Any]] ?? []
-        #expect(data.map { $0["id"] as? String } == ["any", "any-vision", "model-a"])
+        #expect(data.map { $0["id"] as? String } == ["any", "any-vision", "any-vision-unfiltered", "model-a"])
         let conflux = data.last?["conflux"] as? [String: Any]
         #expect(conflux?["max_image_dimension"] as? Int == 1024)
         #expect(conflux?["capabilities"] as? [String] == ["text", "vision"])
+        #expect(conflux?["content_filter"] as? Bool == false)
+    }
+
+    @Test func modelsLabelContentFiltersAndAliasTheUnfiltered() async {
+        let filtered = FakeHost(id: "f", model: "filtered", contentFilter: true)
+        let open = FakeHost(id: "o", model: "open")
+        let gateway = Gateway(scheduler: await Scheduler.with([filtered, open]), token: "t")
+        let data = json(await gateway.handle(request("GET", "/v1/models"))) ["data"] as? [[String: Any]] ?? []
+        #expect(data.map { $0["id"] as? String } == ["any", "any-vision", "any-vision-unfiltered", "filtered", "open"])
+        let filters = Dictionary(uniqueKeysWithValues: data.compactMap { entry -> (String, Bool)? in
+            guard let id = entry["id"] as? String,
+                  let filter = (entry["conflux"] as? [String: Any])?["content_filter"] as? Bool else { return nil }
+            return (id, filter)
+        })
+        #expect(filters == ["filtered": true, "open": false])
+    }
+
+    @Test func noUnfilteredAliasWhenEveryVisionModelFilters() async {
+        let filtered = FakeHost(id: "f", model: "filtered", contentFilter: true)
+        let text = FakeHost(id: "t", model: "text", capabilities: [.text])
+        let gateway = Gateway(scheduler: await Scheduler.with([filtered, text]), token: "t")
+        let data = json(await gateway.handle(request("GET", "/v1/models"))) ["data"] as? [[String: Any]] ?? []
+        #expect(data.map { $0["id"] as? String } == ["any", "any-vision", "filtered", "text"])
     }
 
     @Test func busyCarriesRetryAfter() async {

@@ -72,7 +72,7 @@ public final class AppleModelHost: ResizableHost, @unchecked Sendable {
         self.selfCheck = selfCheck
         self.recheck = recheck
         identity = ModelInfo(id: Self.modelID, capabilities: [.text, .vision], fingerprint: Self.fingerprint,
-                             maxImageDimension: maxImageDimension)
+                             maxImageDimension: maxImageDimension, contentFilter: true)
     }
 
     /// The runtime and the OS build, such as

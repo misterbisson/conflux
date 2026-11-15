@@ -57,12 +57,16 @@ public final class Gateway: Sendable {
         if models.contains(where: { $0.serving > 0 }) {
             data.append(Gateway.alias("any", "any model that's being served"))
         }
-        if models.contains(where: { $0.serving > 0 && $0.model.capabilities.contains(.vision) }) {
+        if models.contains(where: { $0.serving > 0 && ModelChoice.Option.capability(.vision).accepts($0.model) }) {
             data.append(Gateway.alias("any-vision", "any model that accepts images"))
+        }
+        if models.contains(where: { $0.serving > 0 && ModelChoice.Option.unfiltered(.vision).accepts($0.model) }) {
+            data.append(Gateway.alias("any-vision-unfiltered", "any model that accepts images and filters no content"))
         }
         for entry in models {
             var conflux: [String: Any] = [
                 "capabilities": entry.model.capabilities.map(\.rawValue).sorted(),
+                "content_filter": entry.model.contentFilter,
                 "fingerprint": entry.model.fingerprint,
                 "hosts": entry.hosts,
                 "serving": entry.serving,

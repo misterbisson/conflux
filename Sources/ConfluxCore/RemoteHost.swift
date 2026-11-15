@@ -310,7 +310,8 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         else { return nil }
         let known = lock.withLock { status?.model }
         if let known, known.id == id, known.fingerprint == fingerprint { return known }
-        return ModelInfo(id: id, capabilities: known?.id == id ? known?.capabilities ?? [] : [],
-                         fingerprint: fingerprint)
+        let same = known?.id == id
+        return ModelInfo(id: id, capabilities: same ? known?.capabilities ?? [] : [], fingerprint: fingerprint,
+                         contentFilter: same ? known?.contentFilter ?? false : id == AppleModelHost.modelID)
     }
 }

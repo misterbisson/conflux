@@ -17,11 +17,12 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
     var behavior: @Sendable (Int) async throws -> HostReply
 
     init(id: String, model: String = "model-a", capabilities: Set<ModelInfo.Capability> = [.text, .vision],
-         slots: Int = 1, availability: HostAvailability = .available,
+         contentFilter: Bool = false, slots: Int = 1, availability: HostAvailability = .available,
          behavior: @escaping @Sendable (Int) async throws -> HostReply = FakeHost.reply(after: 0)) {
         self.id = id
         slotCount = slots
-        info = ModelInfo(id: model, capabilities: capabilities, fingerprint: "fake-\(model)", maxImageDimension: 1024)
+        info = ModelInfo(id: model, capabilities: capabilities, fingerprint: "fake-\(model)", maxImageDimension: 1024,
+                         contentFilter: contentFilter)
         state = availability
         self.behavior = behavior
     }

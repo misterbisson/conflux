@@ -554,6 +554,12 @@ import Testing
         Task { try await host.run(Self.body, deadline: Date().addingTimeInterval(30)) }
     }
 
+    @Test func reportsItsContentFilter() async {
+        let model = await host(slots: 1, gate: Gate()).model
+        #expect(model?.contentFilter == true)
+        #expect(model?.id == AppleModelHost.modelID)
+    }
+
     @Test func moreSlotsTakeMoreAtOnce() async throws {
         let gate = Gate()
         let host = host(slots: 1, gate: gate)

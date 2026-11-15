@@ -110,7 +110,8 @@ some content, and it takes only short requests. Those go to the model file's
 host, or a peer's, when the client accepts that model: with
 `Conflux-Models: apple-on-device, <model ID>`, for example. A request that
 only Apple's model may run gets the refusal, a `400` with code
-`content_filter` or `context_length_exceeded`. It follows a
+`content_filter` or `context_length_exceeded`. `/v1/models` marks it
+`content_filter: true`, and `any-vision-unfiltered` leaves it out. It follows a
 `response_format` schema with its guided generation, but a schema that asks
 for what it can't enforce, such as a `pattern`, goes elsewhere the same way
 ([clients.md](clients.md#ask-for-a-schema)), and so do requests with tools.
@@ -128,8 +129,9 @@ when it has no model file.
   `Authorization: Bearer <token>`. To allow clients that can't send one, use
   `--no-token`, or turn off "Require the token" in the app. Any process on
   the Mac can then use the gateway.
-- **Model:** `any`, `any-vision`, or the ID `/v1/models` lists, which is the
-  GGUF file name without `.gguf`.
+- **Model:** `any`, `any-vision`, `any-vision-unfiltered` (a vision model
+  other than Apple's, whose guardrails decline some content), or the ID
+  `/v1/models` lists, which is the GGUF file name without `.gguf`.
 
 [clients.md](clients.md) has the full contract: deadlines, `Retry-After`,
 request IDs, and recording which model answered.
