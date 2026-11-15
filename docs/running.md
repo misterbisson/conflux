@@ -54,7 +54,10 @@ model's memory once its last request ends, and sends every request to its
 peers. The model stays chosen, and peers can still copy it. Raising the slots
 loads it again.
 
-Settings are kept between launches.
+Settings are kept between launches, and so is serving: conflux quit while
+serving starts again when it next opens. Stopped, paused or draining, it
+opens stopped. Opened by another app, such as a client launching it in the
+background, it stays behind that app and doesn't take focus.
 
 The app also comes from TestFlight ([releasing.md](releasing.md)). That build
 runs in the App Sandbox, so it can open only the model files chosen in it, and

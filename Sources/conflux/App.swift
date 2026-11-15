@@ -9,10 +9,15 @@ struct ConfluxApp: App {
     @StateObject private var model = AppModel()
 
     init() {
-        // Run from the command line, the process starts as a background tool.
-        // This makes it an ordinary app with a Dock icon and a window in front.
-        NSApplication.shared.setActivationPolicy(.regular)
-        NSApplication.shared.activate()
+        // Run from the command line, with no bundle, the process starts as a
+        // background tool. This makes it an ordinary app with a Dock icon and
+        // a window in front. The app bundle is one already, and comes to the
+        // front only when whoever opened it asks: a client app can launch it
+        // in the background.
+        if Bundle.main.bundleIdentifier == nil {
+            NSApplication.shared.setActivationPolicy(.regular)
+            NSApplication.shared.activate()
+        }
         // One control panel, so one window: no tabs to open a second.
         NSWindow.allowsAutomaticWindowTabbing = false
     }
@@ -50,9 +55,13 @@ final class AppModel: ObservableObject {
     /// their neighbours, so it can't suggest a projector, but it can say this.
     @Published private(set) var fileProblems: [String] = []
     @Published private(set) var snapshot: SchedulerSnapshot?
-    @Published private(set) var running = false
+    @Published private(set) var running = false {
+        didSet { servingAtLaunch.record(running: running, intent: intent) }
+    }
     @Published private(set) var port: UInt16?
-    @Published private(set) var intent: OwnerIntent = .serving
+    @Published private(set) var intent: OwnerIntent = .serving {
+        didSet { servingAtLaunch.record(running: running, intent: intent) }
+    }
     @Published var problem: String?
     @Published private(set) var peers: [PeerStatus] = []
     @Published private(set) var meshProblem: String?
@@ -102,6 +111,8 @@ final class AppModel: ObservableObject {
     /// listing. The keychain sends no notice of changes.
     private static let directoryInterval: Duration = .seconds(10)
     private static let key = "settings"
+    /// Whether conflux was serving when it quit, to serve again at launch.
+    private let servingAtLaunch = ServingAtLaunch()
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
@@ -159,6 +170,9 @@ final class AppModel: ObservableObject {
             _ = done.wait(timeout: .now() + 3)
         }
         checkFiles()
+        // Serving when it quit, so serving again, whether the owner opened it
+        // or a client app launched it in the background.
+        if servingAtLaunch.resumes && canStart { start() }
     }
 
     /// Reads the chosen files' headers, off the main thread, and says what's
