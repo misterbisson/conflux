@@ -172,6 +172,11 @@ public final class ConfluxNode: @unchecked Sendable {
     /// Whether this node uses peers' hosts: only with a gateway to send them
     /// work.
     private var usesPeers = true
+    /// Whether it has started since it last stopped, so stopping says so
+    /// in the event log once.
+    private var started = false
+    /// The peers the event log last said it trusts.
+    private var loggedTrust: [String]?
     /// How often a running node reads the directory. The keychain sends no
     /// notice of changes, so it asks.
     static let directoryInterval: Duration = .seconds(10)
@@ -213,7 +218,12 @@ public final class ConfluxNode: @unchecked Sendable {
         lock.withLock {
             usesPeers = settings.gateway
             coolDown = settings.coolDown
+            started = true
         }
+        events?.record("node", "started: conflux \(AppVersion.current), "
+                       + (settings.gateway ? "gateway on 127.0.0.1:\(port)" : "no gateway")
+                       + ", \(settings.peers.count) peer\(settings.peers.count == 1 ? "" : "s") added by hand"
+                       + (settings.iCloudKeychain && directory != nil ? ", iCloud Keychain on" : ""))
         await scheduler.startRefreshing()
 
         // With no slots, a host that can't change its slots isn't started:
@@ -248,6 +258,7 @@ public final class ConfluxNode: @unchecked Sendable {
             lock.withLock { self.identity = identity }
         } catch {
             lock.withLock { meshFailure = "\(error)" }
+            events?.record("node", "mesh not running: \(error)")
             return port
         }
         await refreshPeers()
@@ -447,12 +458,17 @@ public final class ConfluxNode: @unchecked Sendable {
         if let directory {
             do {
                 let listed = try directory.others(than: identity.endpointID)
-                lock.withLock {
-                    self.listed = listed
-                    directoryFailure = nil
+                let recovered = lock.withLock { () -> Bool in
+                    defer { self.listed = listed; directoryFailure = nil }
+                    return directoryFailure != nil
                 }
+                if recovered { events?.record("node", "reading the device directory again") }
             } catch {
-                lock.withLock { directoryFailure = "\(error)" }
+                let first = lock.withLock { () -> Bool in
+                    defer { directoryFailure = "\(error)" }
+                    return directoryFailure == nil
+                }
+                if first { events?.record("node", "can't read the device directory: \(error)") }
             }
         }
         let trusted = TrustedPeer.merge(manual: manual, listed: lock.withLock { listed }, this: identity.endpointID)
@@ -470,6 +486,13 @@ public final class ConfluxNode: @unchecked Sendable {
         }
         let current = Set(mesh?.peers ?? [])
         guard Set(wanted) != current || (mesh == nil && !wanted.isEmpty) else { return }
+        // By the IDs the scheduler gives their hosts, which the rest of the
+        // log uses; not by name.
+        if lock.withLock({ defer { loggedTrust = wanted }; return loggedTrust != wanted }) {
+            events?.record("node", wanted.isEmpty ? "trusts no peers"
+                           : "trusts \(wanted.count) peer\(wanted.count == 1 ? "" : "s"): "
+                           + wanted.map { RemoteHost.id($0) }.joined(separator: ", "))
+        }
         do {
             if let mesh, current.isSubset(of: wanted) {
                 let added = wanted.filter { !current.contains($0) }
@@ -485,7 +508,11 @@ public final class ConfluxNode: @unchecked Sendable {
             }
             lock.withLock { meshFailure = nil }
         } catch {
-            lock.withLock { meshFailure = "\(error)" }
+            // It tries again with each read of the directory: said once.
+            let message = "\(error)"
+            if lock.withLock({ defer { meshFailure = message }; return meshFailure != message }) {
+                events?.record("node", "mesh not running: \(message)")
+            }
         }
     }
 
@@ -667,9 +694,11 @@ public final class ConfluxNode: @unchecked Sendable {
             listed = []
             directoryFailure = nil
             trusted = []
+            loggedTrust = nil
         }
         await scheduler.stopRefreshing()
         for host in hosts { await scheduler.remove(hostID: host.id) }
+        if lock.withLock({ defer { started = false }; return started }) { events?.record("node", "stopped") }
     }
 
     private func stopMesh() async {
@@ -693,4 +722,7 @@ public final class ConfluxNode: @unchecked Sendable {
     }
 
     public var logURL: URL? { lock.withLock { host?.logURL } }
+
+    /// Where it writes what happens to the mesh: its scheduler's log.
+    public var events: EventLog? { scheduler.events }
 }

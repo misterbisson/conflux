@@ -49,6 +49,15 @@ public struct SchedulerConfig: Sendable {
     public var hedge = true
     /// Well past is this many times the host's typical time.
     public var hedgeAfter = 2.0
+    /// The event log writes a host's new state once it has held this long,
+    /// so a moment's blip, which the summaries count, isn't a line of its
+    /// own...
+    public var eventSettle: TimeInterval = 5
+    /// ...and at most one line per host this often, so a host that keeps
+    /// changing can't fill it. Each line keeps the time its state began.
+    public var eventGap: TimeInterval = 60
+    /// How often it sums up what each host did.
+    public var eventSummary: TimeInterval = 300
 
     public init() {}
 }
@@ -358,6 +367,8 @@ public actor Scheduler {
         /// are kept.
         var durations: [(at: Date, seconds: Double)] = []
         var rejoined = 0
+        /// Why the last request that failed here failed, for the event log.
+        var lastFailure: String?
 
         /// What's counted about a host, kept when it leaves so that its
         /// counts carry over if it comes back with the same ID.
@@ -547,8 +558,24 @@ public actor Scheduler {
     /// it takes nothing new until its owner resumes it, so not soon.
     static let drainingRetryAfter = 30
 
-    public init(config: SchedulerConfig = SchedulerConfig()) {
+    /// Where it writes what happens to its hosts, kept between launches.
+    public nonisolated let events: EventLog?
+    /// Each host's state as last written, and when it began and was written.
+    private var logged: [String: (kind: String, text: String, since: Date, written: Date)] = [:]
+    /// A state not yet written: settling, or waiting for `eventGap`.
+    private var pendingState: [String: (kind: String, text: String, since: Date)] = [:]
+    /// States that settled but changed before they could be written.
+    private var unlogged: [String: Int] = [:]
+    /// Hosts whose device has been described once.
+    private var described: Set<String> = []
+    /// Counts when the last summary was written, to say what changed since.
+    private var tallies: [String: Tally] = [:]
+    private var gatewayTally: GatewayTally?
+    private var nextSummary: Date?
+
+    public init(config: SchedulerConfig = SchedulerConfig(), events: EventLog? = nil) {
         self.config = config
+        self.events = events
     }
 
     // MARK: Hosts
@@ -575,7 +602,10 @@ public actor Scheduler {
 
     public func remove(hostID: String) {
         account() // Its slot and idle time, up to now.
-        if let entry = entries.removeValue(forKey: hostID) { departed[hostID] = entry.counts }
+        if let entry = entries.removeValue(forKey: hostID) {
+            departed[hostID] = entry.counts
+            noteRemoved(hostID, entry)
+        }
         order.removeAll { $0 == hostID }
     }
 
@@ -931,6 +961,7 @@ public actor Scheduler {
         case .failure(let error):
             let outOfTime = remaining().map { $0 <= 0.5 } ?? false
             entries[lease.host]?.failures.record(error, outOfTime: outOfTime)
+            entries[lease.host]?.lastFailure = error.reason
             if !outOfTime, error.isHostFault { activity[lease.host, default: ActivityLog()].failed() }
             if case .unavailable(let why) = error, !outOfTime {
                 entries[lease.host]?.availability = .starting("not answering: \(why)")
@@ -1186,6 +1217,7 @@ public actor Scheduler {
             for id in attempts.keys { hedge(id) }
         }
         account()
+        noteEvents()
     }
 
     // MARK: Hedging
@@ -1547,4 +1579,157 @@ public actor Scheduler {
                                  waitSeconds: Percentiles(waits.filter { $0.at > cutoff }.map(\.seconds)),
                                  draining: draining, clientRequests: clientRequests)
     }
+
+    // MARK: Event log
+
+    /// Writes each host's state once it changes and settles, and every few
+    /// minutes what each host did. Runs with each dispatch, so at least
+    /// every second while refreshing.
+    private func noteEvents() {
+        guard let events else { return }
+        let now = Date()
+        for id in order {
+            guard let entry = entries[id] else { continue }
+            if tallies[id] == nil { tallies[id] = Tally(entry) }
+            let (kind, text) = Self.describe(entry)
+            if logged[id]?.text == text {
+                pendingState[id] = nil
+                continue
+            }
+            if pendingState[id]?.text != text {
+                if let pending = pendingState[id], now.timeIntervalSince(pending.since) >= config.eventSettle {
+                    unlogged[id, default: 0] += 1
+                }
+                pendingState[id] = (kind, text, now)
+            }
+            guard let pending = pendingState[id], now.timeIntervalSince(pending.since) >= config.eventSettle,
+                  now.timeIntervalSince(logged[id]?.written ?? .distantPast) >= config.eventGap else { continue }
+            var line = pending.text
+            if kind == "serving", !described.contains(id), let device = Self.describe(entry.host.hardware) {
+                line += ", on \(device)"
+                described.insert(id)
+            }
+            if let before = logged[id] {
+                let changes = unlogged.removeValue(forKey: id) ?? 0
+                line += changes == 0
+                    ? " (\(before.kind) for \(EventLog.duration(pending.since.timeIntervalSince(before.since))))"
+                    : " (\(changes) shorter change\(changes == 1 ? "" : "s") since \(before.kind))"
+            }
+            events.record(id, line, at: pending.since)
+            logged[id] = (kind, pending.text, pending.since, now)
+            pendingState[id] = nil
+        }
+        guard let due = nextSummary else {
+            nextSummary = now.addingTimeInterval(config.eventSummary)
+            gatewayTally = gatewayCounts
+            return
+        }
+        if now >= due {
+            summarize(events)
+            nextSummary = now.addingTimeInterval(config.eventSummary)
+        }
+    }
+
+    private func noteRemoved(_ id: String, _ entry: Entry) {
+        guard let events else { return }
+        var line = "removed"
+        if let before = logged[id] {
+            line += " (\(before.kind) for \(EventLog.duration(-before.since.timeIntervalSinceNow)))"
+        }
+        events.record(id, line)
+        logged[id] = nil
+        pendingState[id] = nil
+        unlogged[id] = nil
+        tallies[id] = nil
+        described.remove(id)
+    }
+
+    /// What each host did since the last summary, for those that did
+    /// anything, and what the gateway answered its clients.
+    private func summarize(_ events: EventLog) {
+        let span = "last \(EventLog.duration(config.eventSummary))"
+        for id in order {
+            guard let entry = entries[id] else { continue }
+            let now = Tally(entry), before = tallies[id] ?? now
+            tallies[id] = now
+            let failures = FailureCounts(unavailable: now.failures.unavailable - before.failures.unavailable,
+                                         failed: now.failures.failed - before.failures.failed,
+                                         busy: now.failures.busy - before.failures.busy,
+                                         deadline: now.failures.deadline - before.failures.deadline)
+            let parts = Self.counted([(now.completed - before.completed, "completed"),
+                                      (now.declined - before.declined, "declined"),
+                                      (failures.unavailable, "unavailable"), (failures.failed, "failed"),
+                                      (failures.busy, "busy"), (failures.deadline, "out of time")])
+            guard !parts.isEmpty else { continue }
+            var line = "\(span): \(parts)"
+            if failures.total > 0, let why = entry.lastFailure { line += "; last failure: \(why)" }
+            events.record(id, line)
+        }
+        let now = gatewayCounts, before = gatewayTally ?? now
+        gatewayTally = now
+        let parts = Self.counted([(now.completed - before.completed, "completed"),
+                                  (now.rejected - before.rejected, "rejected"),
+                                  (now.rerouted - before.rerouted, "sent to another host"),
+                                  (now.busy - before.busy, "answered busy (429)"),
+                                  (now.unavailable - before.unavailable, "answered unavailable (503)")])
+        if !parts.isEmpty { events.record("gateway", "\(span): \(parts)") }
+    }
+
+    private var gatewayCounts: GatewayTally {
+        GatewayTally(completed: completedCount, rejected: rejectedCount, rerouted: reroutedCount,
+                     busy: busyCount, unavailable: unavailableCount)
+    }
+
+    /// "3 completed, 2 unavailable", leaving out what didn't happen.
+    private static func counted(_ counts: [(Int, String)]) -> String {
+        counts.filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }.joined(separator: ", ")
+    }
+
+    /// A host's state for the log, and its kind, which says how long it
+    /// lasted. Ready and busy are both serving: a host goes between them
+    /// with every request.
+    static func describe(_ entry: Entry) -> (kind: String, text: String) {
+        switch entry.state {
+        case .ready, .busy:
+            let slots = entry.host.slots, capacity = entry.capacity
+            var text = "serving \(entry.model?.id ?? "no model"), \(capacity) slot\(capacity == 1 ? "" : "s")"
+            if capacity < slots, let reason = entry.limit?.reason { text += " of \(slots): \(reason)" }
+            return ("serving", text)
+        case .draining: return ("draining", "draining")
+        case .paused(let why): return ("paused", "paused: \(why)")
+        case .starting(let why): return ("starting", "starting: \(why)")
+        case .failed(let why): return ("failed", "failed: \(why)")
+        case .offline: return ("offline", "offline")
+        }
+    }
+
+    /// "Mac14,15, Apple M2, 24 GB": which kind of device, never which one.
+    static func describe(_ hardware: HardwareInfo?) -> String? {
+        guard let hardware else { return nil }
+        let parts = [hardware.modelIdentifier, hardware.chip,
+                     hardware.memoryBytes.map { "\(Int((Double($0) / 1_073_741_824).rounded(.up))) GB" }].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+}
+
+/// What the event log counts of a host between summaries.
+struct Tally {
+    var completed: Int
+    var declined: Int
+    var failures: FailureCounts
+
+    init(_ entry: Scheduler.Entry) {
+        completed = entry.completed
+        declined = entry.declined.total
+        failures = entry.failures
+    }
+}
+
+/// What the event log counts of the gateway between summaries.
+struct GatewayTally {
+    var completed: Int
+    var rejected: Int
+    var rerouted: Int
+    var busy: Int
+    var unavailable: Int
 }

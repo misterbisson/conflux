@@ -151,4 +151,13 @@ public enum HostError: Error, Equatable {
         case .busy, .cancelled: false
         }
     }
+
+    /// Why, in words, for the event log.
+    var reason: String {
+        switch self {
+        case .unavailable(let why), .busy(let why): why
+        case .failed(let status, let message): "runtime answered \(status): \(message)"
+        case .cancelled: "cancelled"
+        }
+    }
 }
