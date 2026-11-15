@@ -185,6 +185,10 @@ An iPad takes part while the app is in the foreground. The intended setup is an
 iPad plugged in, on a stand, running overnight. The app:
 
 - keeps the screen awake (`isIdleTimerDisabled`) while serving;
+- can lock its own screen, showing its status and charts with no controls
+  but Unlock, which takes the device owner's passcode, Face ID or Touch ID
+  (`LAPolicy.deviceOwnerAuthentication`); locked, it's dark, dims what never
+  changes, and drifts slowly, against OLED burn-in;
 - requests the `com.apple.developer.kernel.increased-memory-limit` entitlement;
 - withdraws from the mesh when it leaves the foreground, and finishes or gives
   up its in-flight work;

@@ -47,6 +47,9 @@ expect CFBundleDocumentTypes:0:LSItemContentTypes:0 ai.ggml.gguf
 expect UTImportedTypeDeclarations:0:UTTypeIdentifier ai.ggml.gguf
 expect UTImportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:0 gguf
 expect ITSAppUsesNonExemptEncryption false
+# Unlocking the screen lock asks for Face ID, which ends an app without this
+# (Sources/conflux-ipad/ScreenLock.swift).
+expect NSFaceIDUsageDescription "$(sed -nE 's/^ *NSFaceIDUsageDescription: (.+)$/\1/p' project.yml)"
 expect MinimumOSVersion 27.0
 expect CFBundleShortVersionString "$(sed -nE 's/^ *MARKETING_VERSION: "([^"]+)".*/\1/p' project.yml)"
 for file in Credits.html PrivacyInfo.xcprivacy; do

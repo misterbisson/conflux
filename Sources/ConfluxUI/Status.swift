@@ -12,6 +12,9 @@ public struct StatusHeadline<Accessory: View>: View {
     let color: Color
     let detail: String?
     let accessory: Accessory
+    /// Set where it stays on screen for hours, as on a locked iPad: the
+    /// state, which seldom changes, is drawn dimmer, against burn-in.
+    @Environment(\.isLuminanceReduced) private var reduced
 
     public init(_ title: String, color: Color, detail: String?, @ViewBuilder accessory: () -> Accessory) {
         self.title = title
@@ -26,6 +29,7 @@ public struct StatusHeadline<Accessory: View>: View {
                 Text(title)
                     .font(.system(size: Self.size, weight: .bold))
                     .foregroundStyle(color)
+                    .opacity(reduced ? 0.7 : 1)
                 Spacer()
                 accessory
             }
@@ -51,6 +55,9 @@ extension StatusHeadline where Accessory == EmptyView {
 /// A row of figures under the headline: a number, and what it counts.
 public struct StatusFigures: View {
     let figures: [(value: String, label: String)]
+    /// The labels never change, so where it stays on screen for hours
+    /// they're dimmer than the figures, against burn-in.
+    @Environment(\.isLuminanceReduced) private var reduced
 
     public init(_ figures: [(value: String, label: String)]) {
         self.figures = figures
@@ -61,7 +68,8 @@ public struct StatusFigures: View {
             ForEach(figures.indices, id: \.self) { index in
                 VStack(alignment: .leading) {
                     Text(figures[index].value).font(.title.monospacedDigit().weight(.semibold))
-                    Text(figures[index].label).font(.subheadline).foregroundStyle(.secondary)
+                    Text(figures[index].label).font(.subheadline)
+                        .foregroundStyle(reduced ? .tertiary : .secondary)
                 }
             }
         }
