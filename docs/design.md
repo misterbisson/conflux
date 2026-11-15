@@ -385,6 +385,19 @@ host failed. Selecting a mark names the hosts that failed there, and the
 legend counts each host's failures. It's kept in memory, and a host that
 leaves keeps its history.
 
+All of that is gone once conflux quits, and a night's run that went wrong
+is read the next morning, so each device also writes an event log,
+`mesh.log` ([running.md](running.md#the-mesh-log)). The scheduler writes
+each host's state when it changes, coalescing ready and busy, which change
+with every request; once it has held for five seconds; and at most once a
+minute per host, each line with the time its state began, so a host that
+flaps can't fill the file. Every five minutes it sums up what each host
+completed, declined and failed, with the last failure's reason, which is
+how a host that answers but refuses all its work shows up. The node adds
+its starting and stopping, the peers it trusts, and the device sleeping
+and waking. It names hosts by their scheduler IDs and devices by their
+kind, never by name, and keeps at most twice 4 MB.
+
 A host that leaves the scheduler and comes back with the same ID keeps its
 counts too, and its `rejoined` count goes up by one. A peer's hosts leave
 when the peer disconnects, and a host after its first leaves when the

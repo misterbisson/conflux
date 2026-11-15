@@ -9,6 +9,9 @@ enum ServeCommand {
            conflux token [--rotate] print the gateway's bearer token
            conflux id [--identity NAME]
                                     print this device's endpoint ID, for peers
+           conflux log [--identity NAME]
+                                    print what happened to the mesh: hosts
+                                    coming and going, and what each did
 
     serve: run the gateway on 127.0.0.1, serve a model file, Apple's
     on-device model or both, and use peers'. It needs a model, peers, or both.
@@ -124,7 +127,7 @@ enum ServeCommand {
             say("conflux: \(error)\n\n\(usage)")
             return 64
         }
-        let node = ConfluxNode()
+        let node = ConfluxNode(scheduler: Scheduler(events: EventLog(url: EventLog.defaultURL(identity: identity))))
         let port: UInt16
         do {
             port = try await node.start(settings, identity: try DeviceIdentity.load(label: identity))
@@ -140,6 +143,7 @@ enum ServeCommand {
         say(settings.requireToken ? "token: conflux token (stored at \(TokenStore.defaultURL.path))"
             : "no token required: any process on this Mac can use the gateway")
         if let log = node.logURL { say("llama.cpp log: \(log.path)") }
+        if let events = node.events { say("mesh log: \(events.url.path), or conflux log") }
         if !settings.peers.isEmpty {
             if let problem = node.meshProblem {
                 say("mesh: not running: \(problem)")

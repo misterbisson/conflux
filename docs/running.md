@@ -263,6 +263,54 @@ swift run -c release conflux serve --identity a --port 8091 --model ... --peer "
 swift run -c release conflux serve --identity b --port 8092 --peer "$(swift run -c release conflux id --identity a)"
 ```
 
+## The mesh log
+
+The window and `/health` say how things stand now, and they're gone once
+conflux quits. For a long run that went wrong, each device also keeps a log
+of what happened, `mesh.log` ([Files](#files)). It says:
+
+- **Each host's state as it changes**: serving, with its model and slots,
+  and why it has fewer than it could; starting, paused or failed, and why;
+  and how long the state before lasted. A state is written once it has held
+  for five seconds, so a moment's blip isn't a line of its own, and a host
+  that keeps changing gets at most a line a minute, saying how many changes
+  it skipped. Each line has the time its state began. The first time a
+  host serves, its line says what kind of device it's on.
+- **Every five minutes, what each host did**: requests completed, declined
+  and failed, by kind, and why the last failure failed. A host that did
+  nothing gets no line. `gateway` says what clients were answered, the busy
+  (`429`) and unavailable (`503`) answers included.
+- **This device**: conflux starting, with its version, and stopping; the
+  peers it trusts; the mesh or the device directory failing; and a Mac
+  going to sleep and waking, or an iPad going to the background and back. A
+  start with no stop before it means conflux quit without stopping, as a
+  crash does.
+
+```text
+2026-11-15T00:11:35.204-08:00  node  started: conflux 0.9.0 (22), gateway on 127.0.0.1:8090, 0 peers added by hand, iCloud Keychain on
+2026-11-15T00:11:36.010-08:00  node  trusts 2 peers: peer-3f2a9c41d0, peer-8b07e5d2c4
+2026-11-15T00:11:41.388-08:00  peer-3f2a9c41d0  serving gemma-3-4b-it-Q4_K_M, 2 slots, on Mac14,15, Apple M2, 24 GB
+2026-11-15T05:30:02.921-08:00  peer-8b07e5d2c4  last 5m: 3 completed, 176 unavailable; last failure: this device isn't taking work
+2026-11-15T06:36:50.117-08:00  peer-3f2a9c41d0  starting: the peer isn't answering (serving for 6h 25m)
+```
+
+Hosts are named as `/health` names them: `local` and `apple` for this
+device's, and `peer-` with the start of a peer's endpoint ID for a peer's.
+A line can be written a few seconds after its time, so lines about different
+hosts can be slightly out of order. The log moves aside to `mesh.log.1` at
+4 MB, replacing the one before.
+
+`conflux log` prints it, the older file first. Run from inside the app's
+bundle, it reads the app's log, in the app's container:
+
+```bash
+/Applications/conflux.app/Contents/MacOS/conflux log
+```
+
+It names no device or person, only kinds of device, but a peer's ID belongs
+to one device: replace them before posting a log in an issue. An iPad
+writes its log in its app's container too, where nothing reads it yet.
+
 ## What the states mean
 
 | State | Meaning |
@@ -547,6 +595,7 @@ conflux's own folder, where copied models go.
 | Device directory, the TestFlight app | iCloud Keychain, as `conflux.device` items: each Mac's endpoint ID and name, nothing secret |
 | llama.cpp log | `~/Library/Logs/conflux/llama.log` |
 | `llama-server` log, with that runtime | `~/Library/Logs/conflux/llama-server.log` |
+| [Mesh log](#the-mesh-log), and the one before it | `~/Library/Logs/conflux/mesh.log`, `mesh.log.1`; `mesh-<identity>.log` for another `--identity` |
 | Model file hashes, cached | `~/Library/Caches/conflux/hashes.json` |
 
 Those are for conflux built from source. The TestFlight app keeps the same

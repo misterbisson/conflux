@@ -12,7 +12,7 @@ import UIKit
 /// drains first, and gateways send their work elsewhere.
 @MainActor @Observable
 final class Server {
-    let node = ConfluxNode()
+    let node = ConfluxNode(scheduler: Scheduler(events: EventLog(url: EventLog.defaultURL())))
     /// iCloud Keychain's device directory: the Macs it trusts, and where it
     /// lists itself so they trust it. Nil in a build that isn't signed for
     /// the team, where Macs are added by hand.
@@ -305,6 +305,9 @@ final class Server {
 
     /// Called as the app comes and goes from the foreground.
     func setForeground(_ foreground: Bool) {
+        if foreground != self.foreground {
+            node.events?.record("device", foreground ? "in the foreground" : "in the background")
+        }
         self.foreground = foreground
         applyIntent()
     }
@@ -320,6 +323,7 @@ final class Server {
     private func applyIntent() {
         guard running else { return }
         let held: OwnerIntent
+        let heldBefore = self.held
         if !foreground {
             // iPadOS suspends it soon: finish what's running, take nothing
             // new, and gateways send work elsewhere.
@@ -333,6 +337,9 @@ final class Server {
             self.held = nil
         }
         let intent = Self.least(intent, held)
+        if self.held != heldBefore {
+            node.events?.record("device", self.held.map { "held back: \($0)" } ?? "not held back")
+        }
         Task { await node.setIntent(intent) }
     }
 

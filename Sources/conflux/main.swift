@@ -3,8 +3,9 @@ import ConfluxCore
 import Foundation
 
 // `conflux` opens the window. `conflux serve ...` runs without one,
-// `conflux token` prints the gateway's token, and `conflux id` this device's
-// endpoint ID.
+// `conflux token` prints the gateway's token, `conflux id` this device's
+// endpoint ID, and `conflux log` the mesh's event log. Run from inside the
+// app's bundle, the last reads the app's, in its sandbox.
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 switch arguments.first {
@@ -32,6 +33,17 @@ case "id":
         FileHandle.standardError.write(Data("conflux: \(error)\n".utf8))
         exit(1)
     }
+case "log":
+    let rest = Array(arguments.dropFirst())
+    let label = rest.first == "--identity" && rest.count > 1 ? rest[1] : "default"
+    let log = EventLog(url: EventLog.defaultURL(identity: label))
+    let text = log.read()
+    if text.isEmpty {
+        FileHandle.standardError.write(Data("conflux: nothing logged yet at \(log.url.path)\n".utf8))
+        exit(1)
+    }
+    print(text, terminator: "")
+    exit(0)
 case "help", "-h", "--help":
     print(ServeCommand.usage)
 default:
