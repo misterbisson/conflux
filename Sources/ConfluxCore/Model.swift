@@ -53,15 +53,17 @@ public struct ModelChoice: Sendable, Equatable {
         case exact(String)
         case any
         case capability(ModelInfo.Capability)
-        /// A model with the capability and no content filter.
-        case unfiltered(ModelInfo.Capability)
+        /// A model with no content filter, and with the capability if one is
+        /// given.
+        case unfiltered(ModelInfo.Capability?)
 
         public func accepts(_ model: ModelInfo) -> Bool {
             switch self {
             case .exact(let id): id == model.id
             case .any: true
             case .capability(let capability): model.capabilities.contains(capability)
-            case .unfiltered(let capability): model.capabilities.contains(capability) && !model.contentFilter
+            case .unfiltered(let capability):
+                !model.contentFilter && (capability.map { model.capabilities.contains($0) } ?? true)
             }
         }
     }
@@ -70,7 +72,8 @@ public struct ModelChoice: Sendable, Equatable {
     public var options: [Option]
 
     public static let aliases: [String: Option] = [
-        "any": .any, "any-vision": .capability(.vision), "any-vision-unfiltered": .unfiltered(.vision),
+        "any": .any, "any-unfiltered": .unfiltered(nil),
+        "any-vision": .capability(.vision), "any-vision-unfiltered": .unfiltered(.vision),
     ]
 
     public init(options: [Option]) { self.options = options }

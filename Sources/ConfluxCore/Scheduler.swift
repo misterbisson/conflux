@@ -1310,7 +1310,8 @@ public actor Scheduler {
             case .exact(let id): id
             case .any: "any"
             case .capability(let capability): "any-\(capability.rawValue)"
-            case .unfiltered(let capability): "any-\(capability.rawValue)-unfiltered"
+            case .unfiltered(let capability): ["any", capability?.rawValue, "unfiltered"].compactMap(\.self)
+                .joined(separator: "-")
             }
         }
         return "no host serves \(names.joined(separator: ", "))"

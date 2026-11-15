@@ -404,6 +404,23 @@ import Testing
         }
         #expect(filtered.calls == 0)
     }
+
+    @Test func anyUnfilteredTakesTextModelsAndSkipsFilteringOnes() async {
+        let filtered = FakeHost(id: "f", model: "filtered", capabilities: [.text], contentFilter: true)
+        let scheduler = await Scheduler.with([filtered])
+        let choice = ModelChoice(model: "any-unfiltered", preference: nil)
+        let none = await scheduler.submit(Data(), choice: choice, deadline: nil, key: nil)
+        if case .unknownModel(let message) = none {
+            #expect(message.contains("any-unfiltered"))
+        } else { Issue.record("\(none)") }
+
+        await scheduler.add(FakeHost(id: "t", model: "text", capabilities: [.text]))
+        for _ in 0..<3 {
+            let outcome = await scheduler.submit(Data(), choice: choice, deadline: nil, key: nil)
+            if case .completed(_, let model) = outcome { #expect(model.id == "text") } else { Issue.record("\(outcome)") }
+        }
+        #expect(filtered.calls == 0)
+    }
 }
 
 @Suite struct ModelChoiceTests {
@@ -416,6 +433,7 @@ import Testing
         #expect(ModelChoice(model: "m", preference: " a, any-vision ,b ").options
             == [.exact("a"), .capability(.vision), .exact("b")])
         #expect(ModelChoice(model: "any-vision-unfiltered", preference: nil).options == [.unfiltered(.vision)])
+        #expect(ModelChoice(model: "any-unfiltered", preference: nil).options == [.unfiltered(nil)])
     }
 
     @Test func ranking() {
@@ -428,6 +446,9 @@ import Testing
         #expect(ModelChoice(model: "any-vision-unfiltered", preference: nil).rank(filtered) == nil)
         #expect(ModelChoice(model: "any-vision-unfiltered", preference: nil).rank(text) == nil)
         #expect(ModelChoice(model: "any-vision", preference: nil).rank(filtered) == 0)
+        #expect(ModelChoice(model: "any-unfiltered", preference: nil).rank(model) == 0)
+        #expect(ModelChoice(model: "any-unfiltered", preference: nil).rank(text) == 0)
+        #expect(ModelChoice(model: "any-unfiltered", preference: nil).rank(filtered) == nil)
     }
 
     @Test func contentFilterCrossesTheMesh() throws {
