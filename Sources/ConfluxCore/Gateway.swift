@@ -57,6 +57,9 @@ public final class Gateway: Sendable {
         if models.contains(where: { $0.serving > 0 }) {
             data.append(Gateway.alias("any", "any model that's being served"))
         }
+        if models.contains(where: { $0.serving > 0 && ModelChoice.Option.unfiltered(nil).accepts($0.model) }) {
+            data.append(Gateway.alias("any-unfiltered", "any model that filters no content"))
+        }
         if models.contains(where: { $0.serving > 0 && ModelChoice.Option.capability(.vision).accepts($0.model) }) {
             data.append(Gateway.alias("any-vision", "any model that accepts images"))
         }

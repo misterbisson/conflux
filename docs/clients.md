@@ -141,6 +141,7 @@ Set `model` to one of:
 |---|---|
 | An exact artifact ID from `/v1/models` | Only hosts serving that artifact |
 | `any` | Any host |
+| `any-unfiltered` | Any host whose model has no `content_filter` |
 | `any-vision` | Any host whose model reads images |
 | `any-vision-unfiltered` | Any host whose model reads images and has no `content_filter` |
 
@@ -165,8 +166,8 @@ so the response names the models that declined in `Conflux-Declined`, and
 same model decline the same kind of request again and again saves that time
 by leaving the model out of what that kind of request accepts. `/v1/models`
 marks the models that decline content with `content_filter: true`, and
-`any-vision-unfiltered` leaves them out. It's listed only while a model it
-accepts is served.
+`any-unfiltered` and `any-vision-unfiltered` leave them out. Each is listed
+only while a model it accepts is served.
 
 ### Ask for a schema
 
