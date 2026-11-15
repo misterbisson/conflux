@@ -258,7 +258,7 @@ struct ContentView: View {
                 slotsRow
                 slotNotes
                 if let host = model.host, model.running {
-                    hostRow(host, title: "Requests", hardware: true)
+                    HostRow(host, title: "Requests", hardware: true)
                 }
                 Group { modelOptions }.disabled(model.running)
                 slotsHelp
@@ -448,7 +448,7 @@ struct ContentView: View {
                         Text(detail).font(.caption).foregroundStyle(.secondary)
                     }
                     LabeledContent("Slots", value: "\(apple.active) busy of \(apple.capacity)")
-                    hostRow(apple, title: "Requests", hardware: false)
+                    HostRow(apple, title: "Requests", hardware: false)
                 }
                 appleSlotsRow
             }
@@ -548,7 +548,7 @@ struct ContentView: View {
             }
             if model.running {
                 ForEach(otherHosts) { host in
-                    hostRow(host, title: model.hostName(host.id), hardware: true)
+                    HostRow(host, title: model.hostName(host.id), hardware: true)
                 }
             }
             if model.refused > 0 {
@@ -675,7 +675,7 @@ struct ContentView: View {
             // How each of its hosts has done, as this Mac's gateway sees it.
             if model.running {
                 ForEach(hosts) { host in
-                    hostRow(host, title: host.model?.id ?? model.hostName(host.id), hardware: false)
+                    HostRow(host, title: host.model?.id ?? model.hostName(host.id), hardware: false)
                         .padding(.leading, 16)
                 }
             }
@@ -719,16 +719,16 @@ struct ContentView: View {
             Section {
                 LabeledContent("Completed", value: "\(snapshot.completed)")
                     .help("Requests this gateway completed, on any host")
-                LabeledContent("Waiting", value: Self.waiting(queued: snapshot.queued, wait: snapshot.waitSeconds))
+                LabeledContent("Waiting", value: Counts.waiting(queued: snapshot.queued, wait: snapshot.waitSeconds))
                     .help("Requests waiting here for a slot now, and how long requests waited in the last ten minutes")
-                LabeledContent("Idle while work waited", value: Self.seconds(snapshot.idleWithWorkSeconds))
+                LabeledContent("Idle while work waited", value: Counts.seconds(snapshot.idleWithWorkSeconds))
                     .help("Time a host had a free slot while work it could run waited here: it should stay near zero")
-                LabeledContent("Host failures", value: Self.describe(snapshot.failures))
+                LabeledContent("Host failures", value: Counts.describe(snapshot.failures))
                     .help("What went wrong with requests sent to hosts. Most were retried on another host.")
                 LabeledContent("Answered busy · unavailable", value: "\(snapshot.busy) · \(snapshot.unavailable)")
                     .help("Answers of 429, no slot in time, and 503, hosts failed or none up")
                 if snapshot.declined.total > 0 {
-                    LabeledContent("Declined", value: Self.describe(snapshot.declined, rerouted: snapshot.rerouted))
+                    LabeledContent("Declined", value: Counts.describe(snapshot.declined, rerouted: snapshot.rerouted))
                         .help("Requests a model declined that another might take, the slot time they took, "
                               + "and how many another host then answered")
                 }
@@ -748,67 +748,6 @@ struct ContentView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-    }
-
-    /// One host, as this Mac's gateway sees it: its rate, and below, its
-    /// counts and times. A peer's host that leaves and comes back keeps its
-    /// counts, and says how often it has.
-    func hostRow(_ host: HostSnapshot, title: String, hardware: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title).lineLimit(1).truncationMode(.middle)
-                Spacer()
-                Text("\(Int(host.perHour.rounded())) per hour").monospacedDigit()
-            }
-            let parts = [hardware ? host.hardware?.summary : nil,
-                         "\(host.completed) completed",
-                         host.utilization.map { "\(percent($0)) busy" },
-                         host.typicalSeconds.map {
-                             String(format: "typical %.1f s", $0)
-                                 + (host.requestSeconds.map { String(format: ", p95 %.1f s", $0.p95) } ?? "")
-                         },
-                         "idle with work \(Self.seconds(host.idleWithWorkSeconds))",
-                         host.prefetched > 0 ? "\(host.prefetched) sent ahead" : nil,
-                         host.failures.total > 0 ? Self.describe(host.failures) : nil,
-                         host.declined.total > 0 ? "declined \(Self.describe(host.declined))" : nil,
-                         // This Mac's hosts leave and come back with Stop and Start.
-                         host.rejoined > 0 && host.id.hasPrefix("peer-")
-                             ? "rejoined \(host.rejoined) \(host.rejoined == 1 ? "time" : "times")" : nil]
-                .compactMap { $0 }
-            Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
-        }
-        .help("Over the last ten minutes, where it gives a rate, a share or a time")
-    }
-
-    static func seconds(_ value: Double) -> String {
-        value < 10 ? String(format: "%.1f s", value) : String(format: "%.0f s", value)
-    }
-
-    /// Requests waiting now, and how long they waited lately.
-    static func waiting(queued: Int, wait: Percentiles?) -> String {
-        let now = "\(queued) now"
-        guard let wait else { return now }
-        return "\(now) · waited \(seconds(wait.p50)) median, \(seconds(wait.p95)) p95"
-    }
-
-    /// Declines by reason, and the slot time they took.
-    static func describe(_ declined: DeclineCounts) -> String {
-        let reasons = [(declined.content, "content"), (declined.length, "too long"),
-                       (declined.unsupported, "unsupported")]
-            .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
-        return (reasons + [seconds(declined.seconds)]).joined(separator: ", ")
-    }
-
-    /// The mesh's declines, and how many another host then answered.
-    static func describe(_ declined: DeclineCounts, rerouted: Int) -> String {
-        "\(describe(declined)) · \(rerouted) answered elsewhere"
-    }
-
-    static func describe(_ failures: FailureCounts) -> String {
-        guard failures.total > 0 else { return "none" }
-        return [(failures.unavailable, "not answering"), (failures.failed, "server error"),
-                (failures.busy, "busy"), (failures.deadline, "out of time")]
-            .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
     }
 
     // MARK: Gateway

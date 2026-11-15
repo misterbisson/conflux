@@ -402,15 +402,24 @@ mesh with no model while conflux is open, so a Mac sees it as serving none.
   one model. **Delete** deletes each, and the folder with the last of them.
   A pair that's already here, the starter model's included, is marked so.
 
-**Serving.** Under **Custom Model**, choose the model, its projector, the
-slots and the context, and press **Serve this model to my Macs**, at the
-top. The top of the screen says what the
-iPad is doing, in type big enough to read across a room: its state, the slots
-in use and how many Macs are connected. Below that, the same chart as the
-Mac's shows its own requests or tokens over the last hour or day, and under
-it the memory left before iPadOS would end conflux, the whole iPad's memory
-pressure, the thermal state, and whether it's charging, over the same span,
-while it serves.
+**Serving.** The iPad's window has the Mac's tabs, but no **Gateway**, since
+it runs none: **Models**, for its models, the files it has and getting one
+from a Mac, and **Mesh**, for its Macs. In **Models**, under **Custom
+Model**, choose the model, its projector, the slots and the context, and
+press **Start**, at the top. The iPad keeps that choice, and chooses it again
+at its next launch: a model that's gone, as on a drive that isn't connected,
+gives way to the first one listed.
+
+Above the tabs, the iPad says what it's doing, in type big enough to read
+across a room: its state, the slots in use, how many Macs are connected, and
+its requests an hour and utilization. Beside its state are the Mac's
+controls: **Start**, then **Drain**, **Pause** or **Resume**, and **Stop**,
+which asks first when requests are running and offers **Drain** instead. At
+the top of each tab, the same chart as the Mac's shows its own requests or
+tokens over the last hour or day, and under it the memory left before iPadOS
+would end conflux, the whole iPad's memory pressure, the thermal state, and
+whether it's charging, over the same span, while it serves. Each model's own
+numbers are under it, in **Models**.
 
 **Apple's model.** Turn on **Serve Apple's on-device model**, and the iPad
 serves Apple's on-device model to its Macs as `apple-on-device`, as a Mac
@@ -418,8 +427,7 @@ does ([Apple's on-device model](#apples-on-device-model)): beside the model
 file, or alone, with **Serve a custom model** off under **Custom Model**,
 which folds that section to its switch. Both switches work while it
 serves, as a Mac's do: off with requests running asks whether to let them
-finish first or stop them now. **Serve** sits at the top, beside **Stop
-serving**. Apple's model runs in a system process, so it takes none of the memory
+finish first or stop them now. Apple's model runs in a system process, so it takes none of the memory
 iPadOS lets conflux use, and an iPad too small for a useful model file can
 still serve it. It needs an iPad that runs Apple Intelligence, with Apple
 Intelligence turned on in Settings; until then the switch says why, and
@@ -437,13 +445,15 @@ for the model file: only in the foreground, and only while charging unless
   Macs find it and send it work, as they do another Mac. A build not signed
   for the team has no device list: under **Pair by hand**, copy the iPad's ID
   into each Mac's conflux, and each Mac's ID into the iPad's. The iPad lists
-  its Macs under **Your Macs**, with whether each is connected.
+  its Macs under **Mesh**, in **Your Macs**, with whether each is connected.
 - **Only in the foreground.** iPadOS suspends an app in the background, so
   when conflux leaves the foreground it finishes what's running and takes
   nothing new, and the Macs send their work elsewhere. It keeps the screen
   awake while it serves.
 - **Only while charging**, by default. Unplugged, it pauses, until it's
-  plugged in again or **Serve on battery** is on.
+  plugged in again or **Serve on battery** is on, under **This iPad** in
+  **Models**. A **Drain** or **Pause** of its owner's holds as well: it takes
+  work only when none of them holds it back.
 - **Resting when hot**, with **Cool down** checked in the Heat tile: at
   serious heat it pauses until it's back to fair ([What the states
   mean](#what-the-states-mean)). An iPad serves one request at a time, and

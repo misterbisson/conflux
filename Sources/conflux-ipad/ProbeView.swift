@@ -3,6 +3,21 @@ import ConfluxUI
 import SwiftUI
 import WebKit
 
+/// The iPad's tabs, under the status that stays above them: its models,
+/// and the Macs it serves. It runs no gateway, so it has no Gateway tab.
+enum PadTab: String, CaseIterable, Identifiable {
+    case models, mesh
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .models: "Models"
+        case .mesh: "Mesh"
+        }
+    }
+}
+
 struct ProbeView: View {
     @State private var probe = Probe()
     @State private var server: Server
@@ -26,6 +41,7 @@ struct ProbeView: View {
     /// Whether Lock found no passcode to unlock with, while it says so.
     @State private var noPasscode = false
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("windowTab") private var tab = PadTab.models
 
     init() {
         let server = Server()
@@ -35,25 +51,46 @@ struct ProbeView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                serving
-                choice
-                appleModel
-                modelFiles
-                fromMacs
-                mesh
-                pair
-                device
-                results
-                Section("About") {
-                    LabeledContent("Version") {
-                        Text(AppVersion.current).textSelection(.enabled)
+            VStack(spacing: 0) {
+                header
+                // One form for both tabs, so the activity at its top keeps
+                // its state from tab to tab.
+                Form {
+                    activity
+                    switch tab {
+                    case .models:
+                        choice
+                        appleModel
+                        modelFiles
+                        fromMacs
+                        results
+                        device
+                        Section("About") {
+                            LabeledContent("Version") {
+                                Text(AppVersion.current).textSelection(.enabled)
+                            }
+                            NavigationLink("Acknowledgements") { CreditsView().navigationTitle("Acknowledgements") }
+                        }
+                    case .mesh:
+                        mesh
+                        pair
                     }
-                    NavigationLink("Acknowledgements") { CreditsView().navigationTitle("Acknowledgements") }
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("conflux")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Picker("Show", selection: $tab) {
+                        ForEach(PadTab.allCases) { tab in
+                            tabLabel(tab).tag(tab)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 320)
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Lock", systemImage: "lock", action: lock)
                 }
@@ -124,27 +161,79 @@ struct ProbeView: View {
             if server.meshUp { macModels.refresh() }
         }
         .onChange(of: probe.models) { _, models in
-            if model.map({ !models.contains($0) }) ?? true { model = models.first }
+            if model.map({ !models.contains($0) }) ?? true {
+                let next = server.settings.choice?.model.find(in: models) ?? models.first
+                model = next
+                projector = suggestedProjector(for: next)
+            }
         }
         .onChange(of: probe.projectors) { _, projectors in
             if let chosen = projector, !projectors.contains(chosen) { projector = nil }
-            if projector == nil { projector = suggestedProjector }
+            if projector == nil { projector = suggestedProjector(for: model) }
         }
-        .onChange(of: model) { _, _ in projector = suggestedProjector }
         .onAppear {
-            model = probe.models.first
-            projector = suggestedProjector
+            restoreChoice()
             macModels.arrived = { [probe] in probe.reload() }
             server.startMesh()
             if server.meshUp { macModels.startRefreshing() }
         }
     }
 
-    /// The projector that goes with the chosen model: the starter model's
-    /// with it, and otherwise the one whose header says it fits, if there's
-    /// one (Projectors.suggestion). A projector made for another model fails
-    /// to load, so with no fit there's no suggestion.
-    private var suggestedProjector: URL? {
+    /// A tab's name, marked when something in it needs looking at, since
+    /// it can't be seen from the other tab.
+    private func tabLabel(_ tab: PadTab) -> Text {
+        needsAttention(tab) ? Text("\(tab.title) \(Image(systemName: "exclamationmark.circle"))") : Text(tab.title)
+    }
+
+    private func needsAttention(_ tab: PadTab) -> Bool {
+        switch tab {
+        case .models: !pairProblems.isEmpty || probe.files.problem != nil
+        case .mesh: server.meshProblem != nil || server.directoryProblem != nil || server.directoryNotice != nil
+        }
+    }
+
+    /// The model file, projector, slots and context last chosen, kept from
+    /// the launch before. A model that's gone, as on a drive that isn't
+    /// connected, gives way to the first, and its projector to the one
+    /// suggested for that.
+    private func restoreChoice() {
+        let saved = server.settings.choice
+        let found = saved?.model.find(in: probe.models)
+        let model = found ?? probe.models.first
+        self.model = model
+        if let saved {
+            slots = min(max(saved.slots, 1), 4)
+            contextPerSlot = saved.contextPerSlot
+        }
+        if let saved, found != nil {
+            // Nil was chosen: text only.
+            projector = saved.projector.map { $0.find(in: probe.projectors) ?? suggestedProjector(for: model) } ?? nil
+        } else {
+            projector = suggestedProjector(for: model)
+        }
+    }
+
+    /// Keeps what's chosen for the next launch.
+    private func saveChoice() {
+        guard let model else { return }
+        server.settings.choice = ChosenModelFile(model: model, projector: projector, slots: slots,
+                                                 contextPerSlot: contextPerSlot)
+    }
+
+    /// What a choice in the window changes, kept for the next launch.
+    private func chosen<T>(_ value: Binding<T>, then: @escaping (T) -> Void = { _ in }) -> Binding<T> {
+        Binding(get: { value.wrappedValue }, set: {
+            value.wrappedValue = $0
+            then($0)
+            saveChoice()
+        })
+    }
+
+    /// The projector that goes with a model: the starter model's with it,
+    /// and otherwise the one whose header says it fits, if there's one
+    /// (Projectors.suggestion). A projector made for another model fails to
+    /// load, so with no fit there's no suggestion.
+    private func suggestedProjector(for model: URL?) -> URL? {
         guard let model else { return nil }
         if Probe.included(model) { return probe.projectors.first(where: Probe.included) }
         return Projectors.suggestion(for: GGUFFile(model), among: probe.projectors.map { GGUFFile($0) })
@@ -279,76 +368,121 @@ struct ProbeView: View {
         }
     }
 
-    /// Read from across a room: what this iPad is doing, and how much.
-    /// Locked, with nothing to change what's counted or how far back, and no
-    /// Cool down box.
+    /// Read from across a room, on the lock screen: what this iPad is
+    /// doing, how much, and how it's gone. Locked, with no controls, nothing
+    /// to change what's counted or how far back, and no Cool down box.
     private func status(locked: Bool) -> some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             VStack(alignment: .leading, spacing: 12) {
-                // Not serving, the detail points at the choices below, which
-                // the lock hides.
-                StatusHeadline(headline, color: headlineColor,
-                               detail: locked && !server.running ? nil : headlineDetail)
-                if server.running {
-                    // Now; how it's gone is below.
-                    let connected = server.peers.filter { $0.path != .none }.count
-                    let own = server.ownHosts
-                    StatusFigures([
-                        ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy"),
-                        ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
-                    ])
-                    if locked {
-                        ActivityPanel(series: activitySeries, typicalSeconds: primaryHost?.typicalSeconds,
-                                      tailSeconds: primaryHost?.requestSeconds?.p95, metric: metric, range: range)
-                    } else {
-                        ActivityPanel(series: activitySeries, typicalSeconds: primaryHost?.typicalSeconds,
-                                      tailSeconds: primaryHost?.requestSeconds?.p95, metric: $metric, range: $range)
-                    }
-                    resources(locked: locked)
-                }
+                summary(locked: locked)
+                if server.running { charts(locked: locked) }
             }
         }
     }
 
-    /// The status, and what starts and stops serving.
-    private var serving: some View {
-        Section {
-            status(locked: false)
-                .padding(.vertical, 8)
-            if !server.running {
-                Button {
-                    server.start(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot)
-                } label: {
-                    Text(serveLabel)
-                }
-                // Starting would cut off the Mac a model is coming from.
-                .disabled(probe.running || macModels.active || !canServe)
+    /// Above both tabs: what this iPad is doing, how much, and the controls
+    /// for it, the way a Mac's window has them.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            summary(locked: false)
+            if let problem = server.problem {
+                Text(problem).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
-            // Left enabled while serving: it applies at once.
-            Toggle(isOn: Binding(get: { server.settings.servesOnBattery },
-                                 set: { server.setServesOnBattery($0) })) {
-                Text("Serve on battery")
-                Text("Otherwise it serves only while charging, and pauses when unplugged.")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+    }
+
+    /// At the top of each tab: how it's gone, by host, and the iPad's side
+    /// of things over the same span.
+    @ViewBuilder private var activity: some View {
+        if server.running {
+            Section {
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    charts(locked: false)
+                }
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    /// The headline, its controls unless locked, and the figures.
+    private func summary(locked: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Not serving, the detail points at the choices under the tabs,
+            // which the lock hides.
+            StatusHeadline(headline, color: headlineColor,
+                           detail: locked && !server.running ? nil : headlineDetail) {
+                if !locked { controls }
             }
             if server.running {
-                Button("Stop serving", role: .destructive, action: askToStop)
+                // Now; how it's gone is in the chart.
+                let connected = server.peers.filter { $0.path != .none }.count
+                let own = server.ownHosts
+                StatusFigures([
+                    ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy"),
+                    ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
+                    ("\(Int(own.reduce(0) { $0 + $1.perHour }.rounded()))", "per hour"),
+                    (server.snapshot?.utilization.map(percent) ?? "–", "utilization"),
+                ])
+            }
+        }
+    }
+
+    private func charts(locked: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if locked {
+                ActivityPanel(series: activitySeries, typicalSeconds: primaryHost?.typicalSeconds,
+                              tailSeconds: primaryHost?.requestSeconds?.p95, metric: metric, range: range)
+            } else {
+                ActivityPanel(series: activitySeries, typicalSeconds: primaryHost?.typicalSeconds,
+                              tailSeconds: primaryHost?.requestSeconds?.p95, metric: $metric, range: $range)
+            }
+            resources(locked: locked)
+        }
+    }
+
+    /// Start, then Drain, Pause or Resume, and Stop: the Mac's controls,
+    /// beside the headline as there.
+    @ViewBuilder private var controls: some View {
+        HStack(spacing: 8) {
+            if server.running {
+                if server.intent == .serving {
+                    Button("Drain") { server.setIntent(.draining) }
+                        .help("Finish what's running here and take nothing new")
+                    Button("Pause") { server.setIntent(.paused) }
+                        .help("Take nothing new on this iPad's models until you resume")
+                } else {
+                    Button("Resume") { server.setIntent(.serving) }
+                        .help("Take new requests again")
+                }
+                Button("Stop", action: askToStop)
+                    .help("Stop serving. Requests running here are cut off.")
+                    .padding(.leading, 12)
                     .confirmationDialog("Stop serving?",
                                         isPresented: Binding(get: { stopping != nil },
                                                              set: { if !$0 { stopping = nil } }),
                                         titleVisibility: .visible, presenting: stopping) { _ in
-                        Button("Stop serving", role: .destructive) { server.stop() }
+                        Button("Stop", role: .destructive) { server.stop() }
+                        if server.intent == .serving {
+                            Button("Drain") { server.setIntent(.draining) }
+                        }
                     } message: { warning in
                         Text(warning)
                     }
+            } else {
+                Button("Start") {
+                    saveChoice()
+                    server.start(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                // Starting would cut off the Mac a model is coming from.
+                .disabled(probe.running || macModels.active || !canServe)
             }
-            if let problem = server.problem {
-                Text(problem).foregroundStyle(.red)
-            }
-        } footer: {
-            Text("This iPad serves its models to your Macs' conflux gateways over iroh. It runs no gateway of its "
-                + "own, and clients send it nothing directly. Keep conflux open while it serves: in the background "
-                + "iPadOS suspends it, and the Macs send their work elsewhere.")
         }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 
     /// Each of this iPad's hosts that has served, the model file's first.
@@ -385,10 +519,12 @@ struct ProbeView: View {
     private var primaryHost: HostSnapshot? { server.host ?? server.appleHost }
 
     /// Stops at once when no request is running here. Otherwise it asks
-    /// first. An iPad runs no gateway, so nothing waits here.
+    /// first, offering Drain instead, as a Mac does. An iPad runs no
+    /// gateway, so nothing waits here.
     private func askToStop() {
         if let warning = stopWarning(running: server.ownHosts.reduce(0) { $0 + $1.active }, waiting: 0) {
-            stopping = warning
+            stopping = warning + (server.intent == .serving
+                ? " Drain instead to finish what's running and take nothing new." : "")
         } else {
             server.stop()
         }
@@ -403,8 +539,8 @@ struct ProbeView: View {
     }
 
     private var headlineDetail: String? {
-        guard server.running else { return "Choose what to serve below, and serve it to your Macs." }
-        guard servesAny else { return "Turn on the custom model or Apple's model below." }
+        guard server.running else { return "Start to serve \(servedName) to your Macs." }
+        guard servesAny else { return "Turn on the custom model or Apple's model, under Models." }
         if let held = server.held { return held }
         switch primaryHost?.state {
         case .starting(let why)?, .failed(let why)?, .paused(let why)?: return why
@@ -527,7 +663,13 @@ struct ProbeView: View {
     }
 
     private var device: some View {
-        Section("This iPad") {
+        Section {
+            // Left enabled while serving: it applies at once.
+            Toggle(isOn: Binding(get: { server.settings.servesOnBattery },
+                                 set: { server.setServesOnBattery($0) })) {
+                Text("Serve on battery")
+                Text("Otherwise it serves only while charging, and pauses when unplugged.")
+            }
             LabeledContent("Model", value: Memory.machine)
             if let chip = HardwareInfo.current.chip {
                 LabeledContent("Chip", value: chip)
@@ -546,6 +688,12 @@ struct ProbeView: View {
                     LabeledContent("Power", value: probe.charging.map { $0 ? "charging" : "on battery" } ?? "unknown")
                 }
             }
+        } header: {
+            Text("This iPad")
+        } footer: {
+            Text("This iPad serves its models to your Macs' conflux gateways over iroh. It runs no gateway of its "
+                + "own, and clients send it nothing directly. Keep conflux open while it serves: in the background "
+                + "iPadOS suspends it, and the Macs send their work elsewhere.")
         }
     }
 
@@ -574,12 +722,12 @@ struct ProbeView: View {
         }
     }
 
-    /// What Serve would serve: the custom model, Apple's, or both.
-    private var serveLabel: String {
+    /// What Start would serve: the custom model, Apple's, or both.
+    private var servedName: String {
         switch (server.settings.modelFile, server.settings.appleModel) {
-        case (true, true): "Serve this model and Apple's to my Macs"
-        case (false, true): "Serve Apple's model to my Macs"
-        default: "Serve this model to my Macs"
+        case (true, true): "this model and Apple's"
+        case (false, true): "Apple's model"
+        default: "this model"
         }
     }
 
@@ -615,9 +763,7 @@ struct ProbeView: View {
                                 Text(detail).font(.footnote).foregroundStyle(.secondary)
                             }
                             LabeledContent("Slots", value: "\(apple.active) busy of \(apple.capacity)")
-                            if let typical = apple.typicalSeconds {
-                                LabeledContent("Typical request", value: String(format: "%.1f s", typical))
-                            }
+                            HostRow(apple, title: "Requests", hardware: false)
                         } else {
                             Text("Starting").foregroundStyle(.secondary)
                         }
@@ -652,12 +798,12 @@ struct ProbeView: View {
             } else {
                 Text(allowance).font(.callout)
                 Group {
-                    Picker("Model", selection: $model) {
+                    Picker("Model", selection: chosen($model) { projector = suggestedProjector(for: $0) }) {
                         ForEach(probe.models, id: \.self) { url in
                             Text(probe.label(url)).tag(Optional(url))
                         }
                     }
-                    Picker("Projector", selection: $projector) {
+                    Picker("Projector", selection: chosen($projector)) {
                         Text("None, text only").tag(URL?.none)
                         ForEach(probe.projectors, id: \.self) { url in
                             Text(probe.label(url)).tag(Optional(url))
@@ -666,8 +812,8 @@ struct ProbeView: View {
                     ForEach(pairProblems, id: \.self) { problem in
                         Text(problem).foregroundStyle(.red)
                     }
-                    StepperRow("Slots", value: $slots, in: 1...4)
-                    Picker("Context per slot", selection: $contextPerSlot) {
+                    StepperRow("Slots", value: chosen($slots), in: 1...4)
+                    Picker("Context per slot", selection: chosen($contextPerSlot)) {
                         ForEach(ModelConfig.choices(ModelConfig.contextSizes, including: contextPerSlot),
                                 id: \.self) {
                             Text("\($0.formatted()) tokens").tag($0)
@@ -675,6 +821,9 @@ struct ProbeView: View {
                     }
                 }
                 .disabled(server.running || probe.running)
+                if let host = server.host, server.running {
+                    HostRow(host, title: "Requests", hardware: false)
+                }
                 fit
                 Link(destination: Self.measurements) {
                     Label("Models measured on iPads", systemImage: "arrow.up.right.square")
@@ -785,7 +934,7 @@ struct ProbeView: View {
                 pullRow(pull)
             }
             if !server.meshUp {
-                Text(server.trusted.isEmpty ? "No Mac yet. Pair one under Your Macs, below."
+                Text(server.trusted.isEmpty ? "No Mac yet. Pair one under Mesh."
                                             : "Connecting to your Macs…")
                     .foregroundStyle(.secondary)
             } else if server.peers.isEmpty {
