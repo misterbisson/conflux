@@ -230,7 +230,7 @@ so a smaller image saves time only with a model that handles it
 | `401` | Missing or wrong token | Fix configuration |
 | `404` | No host has served a model this request accepts since the gateway started | Check the model ID, or widen the accepted models |
 | `429` | Mesh busy: no slot in time | Retry after `Retry-After` |
-| `503` | Hosts failed and the deadline ran out, or every host for an accepted model is offline | Retry after `Retry-After` |
+| `503` | Hosts failed and the deadline ran out, or every host for an accepted model is offline. With `error.code` set to `draining`, the gateway's owner is taking it out of service: it finishes what it has and takes nothing new until they resume it | Retry after `Retry-After`. For `draining`, a client that knows another gateway can use that one |
 | `500` | The gateway itself failed | Treat as a broken server |
 
 A failing host never shows up as `500`. The gateway retries on another host, or

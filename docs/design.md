@@ -164,7 +164,10 @@ A host refuses work before it hurts the device. It watches:
   ages a battery. The system slows the chip without saying so, so a host
   can report only what it does itself.
 - **Power**: on battery or not, battery level, Low Power Mode.
-- **Its owner**: a person can pause or drain a host at any time.
+- **Its owner**: a person can pause or drain a host at any time. Draining a
+  Mac drains its gateway too: it finishes the requests its clients sent, on
+  any host, and answers new ones `503`, so the Mac can stop without cutting
+  anything off. Pausing is for the host alone.
 
 ### Self-check
 

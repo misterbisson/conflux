@@ -98,12 +98,12 @@ struct ContentView: View {
         if model.running {
             if model.intent == .serving {
                 Button("Drain") { model.setIntent(.draining) }
-                    .help("Finish what's running and take nothing new")
+                    .help("Finish what's running and waiting, here and on peers, and take nothing new")
                 Button("Pause") { model.setIntent(.paused) }
                     .help("Take nothing new on this Mac's models until you resume")
             } else {
                 Button("Resume") { model.setIntent(.serving) }
-                    .help("Take new requests on this Mac's models again")
+                    .help("Take new requests again")
             }
             Button("Stop", action: askToStop)
                 .help("Stop the gateway and this Mac's models, and leave the mesh. Requests running or waiting are cut off.")
@@ -139,7 +139,7 @@ struct ContentView: View {
 
     func stopMessage(running: Int, waiting: Int) -> String {
         let drain = model.intent == .serving
-            ? " Drain instead to let this Mac's models finish what they're running and take nothing new."
+            ? " Drain instead to finish what's running and waiting, here and on peers, and take nothing new."
             : ""
         return (stopWarning(running: running, waiting: waiting) ?? "") + drain
     }
@@ -150,22 +150,43 @@ struct ContentView: View {
         model.servesNoSlots ? model.appleHost : model.host ?? model.appleHost
     }
 
+    /// Requests clients sent this Mac's gateway that it still runs or
+    /// holds while it drains, on any host, or nil when it isn't draining.
+    var drainingRequests: Int? {
+        guard let snapshot = model.snapshot, snapshot.draining else { return nil }
+        return snapshot.clientRequests
+    }
+
+    /// The headline's state: the headline host's, except while the gateway
+    /// drains, which isn't done until what clients sent it is.
+    var headlineState: HostState? {
+        if let left = drainingRequests {
+            if left > 0 { return .draining }
+            if headlineHost == nil { return .paused("drained") }
+        }
+        return headlineHost?.state
+    }
+
     var stateLabel: String {
         guard model.running else { return "Stopped" }
-        return headlineHost?.state.label ?? "Gateway only"
+        return headlineState?.label ?? "Gateway only"
     }
 
     /// Why it's in the state it's in, or else what it serves.
     var stateDetail: String? {
         guard model.running else { return "Start to open the gateway, serve this Mac's models and join the mesh." }
+        if let left = drainingRequests, left > 0 {
+            return "Finishing \(left) \(left == 1 ? "request" : "requests") clients sent here, on any host"
+        }
         guard let state = headlineHost else {
+            if let detail = headlineState?.detail { return detail }
             return model.servesNoSlots ? "This Mac's model serves no slots: requests go to peers." : nil
         }
         return state.state.detail ?? state.model?.id
     }
 
     var color: Color {
-        guard model.running, let state = headlineHost?.state else { return .secondary }
+        guard model.running, let state = headlineState else { return .secondary }
         return state.color
     }
 

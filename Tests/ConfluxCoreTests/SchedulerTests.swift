@@ -359,6 +359,63 @@ import Testing
         #expect(await scheduler.snapshot().hosts.first?.state == .paused("drained"))
     }
 
+    /// A draining gateway finishes what clients sent it, on any host, and
+    /// turns new requests away until it's opened again.
+    @Test func aDrainingGatewayFinishesWhatItHasAndTakesNothingNew() async {
+        let host = FakeHost(id: "peer", behavior: FakeHost.reply(after: 0.3))
+        let scheduler = await Scheduler.with([host])
+        let running = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) }
+        while await scheduler.snapshot().hosts.first?.active == 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(await scheduler.snapshot().clientRequests == 1)
+        await scheduler.setDraining(true)
+        let turnedAway = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
+        #expect(turnedAway == .draining(retryAfter: Scheduler.drainingRetryAfter))
+        if case .completed = await running.value {} else { Issue.record("the running request should finish") }
+        var snapshot = await scheduler.snapshot()
+        #expect(snapshot.draining && snapshot.clientRequests == 0)
+        #expect(snapshot.unavailable == 1)
+        // The host itself was never drained.
+        #expect(snapshot.hosts.first?.state == .ready)
+        #expect(host.callCount == 1)
+
+        await scheduler.setDraining(false)
+        if case .completed = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil) {} else {
+            Issue.record("an open gateway should take it")
+        }
+        snapshot = await scheduler.snapshot()
+        #expect(!snapshot.draining)
+    }
+
+    /// A client retrying with the key of a request the gateway already has
+    /// gets that request's answer, draining or not.
+    @Test func aDrainingGatewayStillAnswersKeysItHas() async {
+        let host = FakeHost(id: "h", behavior: FakeHost.reply(after: 0.3))
+        let scheduler = await Scheduler.with([host])
+        let first = Task { await scheduler.submit(Data(), choice: any, deadline: nil, key: "k") }
+        while await scheduler.snapshot().hosts.first?.active == 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        await scheduler.setDraining(true)
+        let retry = await scheduler.submit(Data(), choice: any, deadline: nil, key: "k")
+        if case .completed = retry {} else { Issue.record("\(retry)") }
+        if case .completed = await first.value {} else { Issue.record("the first should finish") }
+        if case .completed = await scheduler.submit(Data(), choice: any, deadline: nil, key: "k") {} else {
+            Issue.record("an answered key should be answered again")
+        }
+        #expect(host.callCount == 1)
+        #expect(await scheduler.submit(Data(), choice: any, deadline: nil, key: "other")
+                    == .draining(retryAfter: Scheduler.drainingRetryAfter))
+    }
+
+    /// Draining the gateway leaves this device's hosts serving other
+    /// devices' gateways.
+    @Test func aDrainingGatewayLeavesItsHostsToPeers() async {
+        let host = FakeHost(id: "local")
+        let scheduler = await Scheduler.with([host])
+        await scheduler.setDraining(true)
+        if case .completed = await scheduler.run(Data(), onHost: "local", deadline: nil) {} else {
+            Issue.record("a peer's request should run")
+        }
+    }
+
     @Test func preferenceListTakesTheFirstFreeModel() async {
         let a = FakeHost(id: "a", model: "model-a", behavior: FakeHost.reply(after: 0.5))
         let b = FakeHost(id: "b", model: "model-b")
