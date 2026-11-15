@@ -132,6 +132,10 @@ enum ServeCommand {
             say("conflux: can't start the gateway: \(error.localizedDescription)")
             return 1
         }
+        // Serving until stopped, so awake until stopped: a Mac that idle
+        // sleeps is woken by every request a peer sends, and sleeps again
+        // in the middle of running it.
+        awake.set(true)
         say("gateway on http://127.0.0.1:\(port)/v1")
         say(settings.requireToken ? "token: conflux token (stored at \(TokenStore.defaultURL.path))"
             : "no token required: any process on this Mac can use the gateway")
@@ -181,6 +185,7 @@ enum ServeCommand {
     }
 
     nonisolated(unsafe) static var signalSources: [DispatchSourceSignal] = []
+    static let awake = IdleSleepHold(reason: "conflux serve is serving models")
 
     static func say(_ text: String) {
         print(text)

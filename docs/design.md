@@ -168,6 +168,13 @@ A host refuses work before it hurts the device. It watches:
   Mac drains its gateway too: it finishes the requests its clients sent, on
   any host, and answers new ones `503`, so the Mac can stop without cutting
   anything off. Pausing is for the host alone.
+- **Sleep**: a Mac keeps itself out of idle sleep while it serves, and
+  while anything it runs or relays is unfinished (`IdleSleepHold`, a
+  `ProcessInfo` activity with `.idleSystemSleepDisabled`). Left to idle sleep,
+  a serving Mac is woken over the network by peers' requests, starts running
+  them, and is put back to sleep mid-request, every few seconds: one night of
+  that ended in a Mac resetting during a sleep transition, with no panic
+  report. Closing the lid still sleeps it.
 
 ### Self-check
 
