@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.13.0](https://github.com/misterbisson/conflux/compare/v0.12.0...v0.13.0) (2026-11-15)
+
+
+### Features
+
+* add an any-unfiltered alias, for any model that filters no content ([#109](https://github.com/misterbisson/conflux/issues/109)) ([b361dcb](https://github.com/misterbisson/conflux/commit/b361dcb3799bf51b3f436deda5a594e35c1e23d0))
+* give the iPad Models and Mesh tabs, the Mac's serving controls, and keep its chosen model ([#113](https://github.com/misterbisson/conflux/issues/113)) ([8485855](https://github.com/misterbisson/conflux/commit/8485855daf64a3eb76f78717249417b7a1f92fed))
+* keep a log of what happened to the mesh, and print it with conflux log ([#114](https://github.com/misterbisson/conflux/issues/114)) ([9b78fca](https://github.com/misterbisson/conflux/commit/9b78fca43d6aa7b97e59036090916dbfd91d21e7))
+* resume serving at launch, and stay in the background when another app opens conflux ([#111](https://github.com/misterbisson/conflux/issues/111)) ([6b2ba8b](https://github.com/misterbisson/conflux/commit/6b2ba8b625e7de90f15cb30e9fb0eff8106ea233))
+* show why each host last failed, and when, in the window and /health ([#117](https://github.com/misterbisson/conflux/issues/117)) ([ef63e98](https://github.com/misterbisson/conflux/commit/ef63e983f0678a3e326caf840f7ca39f7f04592b))
+* split the Mac window into Models, Mesh and Gateway tabs ([#112](https://github.com/misterbisson/conflux/issues/112)) ([cfa3953](https://github.com/misterbisson/conflux/commit/cfa395338c02c207e4b9a8312098ee54ba6f78c7))
+
+
+### Bug Fixes
+
+* drain the Mac's gateway too, so a drained Mac can stop without cutting off clients' requests ([#106](https://github.com/misterbisson/conflux/issues/106)) ([fd32755](https://github.com/misterbisson/conflux/commit/fd327557500c4bc4d2e0ac61c78aa9e6a62fe9de))
+* keep the Mac awake while it serves, so idle sleep doesn't cut requests off ([#115](https://github.com/misterbisson/conflux/issues/115)) ([70ab2d9](https://github.com/misterbisson/conflux/commit/70ab2d9c5410b9e3f3a222b25c2ef3c2a43c6507))
+
 ## [0.12.0](https://github.com/misterbisson/conflux/compare/v0.11.0...v0.12.0) (2026-11-15)
 
 
