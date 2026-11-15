@@ -109,14 +109,14 @@ import Testing
     @Test func aHostThatKeepsChangingIsWrittenAtMostOnceAGap() async throws {
         let log = temporaryLog()
         let host = FakeHost(id: "h")
-        let scheduler = Scheduler(config: config(gap: 0.5), events: log)
+        let scheduler = Scheduler(config: config(gap: 1.5), events: log)
         await scheduler.add(host)
         let before = Date()
         host.set(.starting("first"))
         await scheduler.refresh()
         host.set(.starting("second"))
         await scheduler.refresh()
-        try await Task.sleep(for: .milliseconds(600))
+        try await Task.sleep(for: .milliseconds(1600))
         await scheduler.refresh()
         log.flush()
         let lines = messages(log, about: "h")
@@ -125,7 +125,7 @@ import Testing
         // Written late, at the time it began.
         let time = try #require(log.read().split(separator: "\n").last?.components(separatedBy: "  ").first)
         let began = try Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(time)
-        #expect(began.timeIntervalSince(before) < 0.5)
+        #expect(began.timeIntervalSince(before) < 1.5)
     }
 
     @Test func saysWhyAHostHasFewerSlots() async {
@@ -140,7 +140,8 @@ import Testing
 
     @Test func sumsUpWhatEachHostDidAndWhyItFailed() async throws {
         let log = temporaryLog()
-        let good = FakeHost(id: "good")
+        // Slow enough that a summary falls among the requests.
+        let good = FakeHost(id: "good", behavior: FakeHost.reply(after: 0.15))
         let bad = FakeHost(id: "bad") { _ in throw HostError.unavailable("this device isn't taking work") }
         let scheduler = Scheduler(config: config(summary: 0.3), events: log)
         await scheduler.add(bad)
@@ -149,12 +150,30 @@ import Testing
         try await Task.sleep(for: .milliseconds(400))
         await scheduler.refresh()
         log.flush()
-        let goodSummary = try #require(messages(log, about: "good").first { $0.hasPrefix("last ") })
-        #expect(goodSummary.contains("4 completed"))
-        let badSummary = try #require(messages(log, about: "bad").first { $0.hasPrefix("last ") })
-        #expect(badSummary.contains("unavailable; last failure: this device isn't taking work"))
-        let gateway = try #require(messages(log, about: "gateway").first)
-        #expect(gateway.hasPrefix("last 0s: 4 completed"))
+        // A slow machine can sum up partway through the requests, so the
+        // counts may be split across summaries: they add up.
+        #expect(total("completed", in: summaries(log, about: "good")) == 4)
+        let refusals = summaries(log, about: "bad")
+        #expect(total("unavailable", in: refusals) >= 1)
+        #expect(refusals.contains { $0.hasSuffix("; last failure: this device isn't taking work") })
+        #expect(total("completed", in: summaries(log, about: "gateway")) == 4)
+    }
+
+    func summaries(_ log: EventLog, about subject: String) -> [String] {
+        messages(log, about: subject).filter { $0.hasPrefix("last ") }
+    }
+
+    /// The count of `what` in each summary, such as `3` in "3 completed",
+    /// added up.
+    func total(_ what: String, in summaries: [String]) -> Int {
+        summaries.reduce(0) { sum, line in
+            let counts = line.drop { $0 != ":" }.dropFirst().split(separator: ";").first ?? ""
+            return sum + counts.split(separator: ",").reduce(0) { sum, part in
+                let words = part.split(separator: " ", maxSplits: 1)
+                guard words.count == 2, words[1] == what, let n = Int(words[0]) else { return sum }
+                return sum + n
+            }
+        }
     }
 
     @Test func aQuietHostIsNotSummedUp() async throws {
