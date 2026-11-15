@@ -83,7 +83,7 @@ public final class Gateway: Sendable {
 
     /// `/health` for a client with the token: the mesh's and each host's
     /// counts, as the window shows them.
-    static func health(_ snapshot: SchedulerSnapshot) -> [String: Any] {
+    static func health(_ snapshot: SchedulerSnapshot, now: Date = Date()) -> [String: Any] {
         func failures(_ counts: FailureCounts) -> [String: Any] {
             ["unavailable": counts.unavailable, "failed": counts.failed, "busy": counts.busy,
              "deadline": counts.deadline]
@@ -112,6 +112,11 @@ public final class Gateway: Sendable {
             if let request = host.requestSeconds { entry["request_seconds"] = percentiles(request) }
             if let utilization = host.utilization { entry["utilization"] = fraction(utilization) }
             if let hardware = host.hardware.map(Gateway.hardware), !hardware.isEmpty { entry["hardware"] = hardware }
+            if let failure = host.lastFailure {
+                entry["last_failure"] = ["reason": failure.reason,
+                                         "at": failure.at.formatted(.iso8601),
+                                         "seconds_ago": seconds(max(0, now.timeIntervalSince(failure.at)))]
+            }
             return entry
         }
         var mesh: [String: Any] = [

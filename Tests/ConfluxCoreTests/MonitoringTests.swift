@@ -245,4 +245,70 @@ import Testing
         #expect(read.busySlotSeconds == nil)
         #expect(read.slotSeconds == nil)
     }
+
+    // MARK: The last failure
+
+    @Test func aHostKeepsItsLastFailureAndWhen() async throws {
+        let failing = FakeHost(id: "failing") { call in
+            if call == 1 { throw HostError.failed(status: 500, message: "no ANE resources (transient; retry)") }
+            return HostReply(status: 200, body: FakeHost.okBody)
+        }
+        let scheduler = await Scheduler.with([failing])
+        let before = Date()
+        _ = await scheduler.run(Data(), onHost: "failing", deadline: nil)
+        // A later success doesn't clear it: it's the last failure, however
+        // long ago, which is what's wanted the morning after.
+        _ = await scheduler.run(Data(), onHost: "failing", deadline: nil)
+        var host = try #require(await scheduler.snapshot().hosts.first)
+        #expect(host.completed == 1)
+        let failure = try #require(host.lastFailure)
+        #expect(failure.reason == "runtime answered 500: no ANE resources (transient; retry)")
+        #expect(failure.at >= before && failure.at <= Date())
+        // And it outlasts the host leaving and coming back, as its counts do.
+        await scheduler.remove(hostID: "failing")
+        await scheduler.add(failing)
+        host = try #require(await scheduler.snapshot().hosts.first)
+        #expect(host.lastFailure == failure)
+    }
+
+    @Test func aHostThatNeverFailedHasNoLastFailure() async throws {
+        let scheduler = await Scheduler.with([FakeHost(id: "h")])
+        _ = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
+        #expect(try #require(await scheduler.snapshot().hosts.first).lastFailure == nil)
+    }
+
+    @Test func aCancelledRequestIsNoFailure() async throws {
+        let host = FakeHost(id: "h") { _ in throw HostError.cancelled }
+        let scheduler = await Scheduler.with([host])
+        _ = await scheduler.run(Data(), onHost: "h", deadline: nil)
+        #expect(try #require(await scheduler.snapshot().hosts.first).lastFailure == nil)
+    }
+
+    @Test func theLastFailureSaysHowLongAgo() {
+        let now = Date()
+        func ago(_ seconds: TimeInterval) -> String {
+            HostFailure(reason: "gone", at: now.addingTimeInterval(-seconds)).summary(now: now)
+        }
+        #expect(ago(12) == "12 s ago: gone")
+        #expect(ago(190) == "3 min ago: gone")
+        #expect(ago(2 * 3600 + 59) == "2 h ago: gone")
+        #expect(ago(3 * 86400) == "3 d ago: gone")
+        #expect(ago(-5) == "0 s ago: gone")
+    }
+
+    @Test func healthGivesEachHostsLastFailure() throws {
+        let now = Date(timeIntervalSince1970: 1_794_730_098)
+        let failure = HostFailure(reason: "this device isn't taking work", at: now.addingTimeInterval(-90.25))
+        let snapshot = SchedulerSnapshot(
+            hosts: [HostSnapshot(id: "peer-0123456789", state: .ready, lastFailure: failure),
+                    HostSnapshot(id: "local", state: .ready)],
+            queued: 0, completed: 0, failures: FailureCounts(), rejected: 0, busy: 0, unavailable: 0,
+            hedged: 0, hedgeWins: 0, perHour: 0, idleWithWorkSeconds: 0)
+        let hosts = try #require(Gateway.health(snapshot, now: now)["hosts"] as? [[String: Any]])
+        let last = try #require(hosts[0]["last_failure"] as? [String: Any])
+        #expect(last["reason"] as? String == "this device isn't taking work")
+        #expect(last["at"] as? String == "2026-11-15T08:06:47Z")
+        #expect(last["seconds_ago"] as? Double == 90.25)
+        #expect(hosts[1]["last_failure"] == nil)
+    }
 }
