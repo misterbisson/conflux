@@ -99,7 +99,7 @@ final class AppModel: ObservableObject {
     /// having been forgotten.
     @Published private(set) var directoryNotice: String?
 
-    let node = ConfluxNode()
+    let node = ConfluxNode(scheduler: Scheduler(events: EventLog(url: EventLog.defaultURL())))
     private let access = ModelAccess()
     private var polling: Task<Void, Never>?
     /// The last change of slots sent to the node. Each waits for the one
@@ -158,6 +158,14 @@ final class AppModel: ObservableObject {
                     try? await Task.sleep(for: Self.directoryInterval)
                 }
             }
+        }
+        // Peers lose this Mac while it sleeps: the event log says when.
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) { [node] _ in
+            node.events?.record("device", "going to sleep")
+        }
+        workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) { [node] _ in
+            node.events?.record("device", "woke")
         }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
                                                queue: .main) { [node] _ in
