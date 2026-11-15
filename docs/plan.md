@@ -251,8 +251,8 @@ the pairing reply could carry later as a fingerprint.
 In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
 
 1. **Serving resumes at launch, and a launch by another app stays in the
-   background.** Today the gateway starts only when someone presses Start,
-   so an app that launches conflux finds nothing listening. conflux records
+   background.** The gateway used to start only when someone pressed Start,
+   so an app that launched conflux found nothing listening. conflux records
    whether it was serving when it quit, and starts again if it was. A Mac its
    owner stopped stays stopped: an app launching conflux doesn't decide that
    a multi-gigabyte model loads. And conflux brings itself to the front only
@@ -261,6 +261,10 @@ In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
 
    *Done when:* conflux, last quit while serving, launched with `NSWorkspace`
    and activation off, has its gateway up on its port, without taking focus.
+   *Built*: it records serving at every start, stop and change of intent, so
+   a crash keeps the owner's last choice, and paused or draining counts as
+   not serving ([running.md](running.md#the-app)). Not yet checked by
+   launching it from another app.
 
 2. **A token for each paired app.** The gateway accepts the owner's token,
    as now, for the command line and `conflux-bench`, and one token for each
