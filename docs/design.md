@@ -362,7 +362,11 @@ USE method asks of a resource, a host's slots here, with throughput:
   95th percentile. The typical time follows the median, and hedging exists
   for the tail it hides.
 - **Errors**: failures by kind (not answering, server error, busy, out of
-  the client's time), for the mesh and by host.
+  the client's time), for the mesh and by host; and for each host, why its
+  last failure happened and when. The counts say how often a host fails
+  but not why, and a host can keep failing while its status says it's
+  available. Without the reason here, it would have to be read on the
+  failing device.
 - **Declines**: requests a host refused that another might take, by reason
   (content the model declined, too long for it, something it doesn't do),
   and the seconds they took, for the mesh and by host; and for the mesh,

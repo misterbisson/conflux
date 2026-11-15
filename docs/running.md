@@ -221,9 +221,11 @@ Keychain or by hand, starts no iroh endpoint and contacts nothing.
 
 Under **Mesh**, the window shows each peer's state, its model, and whether
 the connection is direct or relayed, with its round trip, and under each
-peer, its hosts' throughput, failures and idle time. The mesh's are under
-**Gateway**, in **Requests**. `/health` with the token gives the same
-numbers:
+peer, its hosts' throughput, failures and idle time. A host that has
+failed says why the last failure happened and how long ago, so a peer that
+keeps failing can be understood from this Mac, without going to it. The
+mesh's are under **Gateway**, in **Requests**. `/health` with the token
+gives the same numbers:
 
 ```bash
 curl -s -H "Authorization: Bearer $(swift run -c release conflux token)" http://127.0.0.1:8090/health

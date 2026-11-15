@@ -177,6 +177,34 @@ public struct DeclineCounts: Sendable, Equatable {
     }
 }
 
+/// Why the last request that failed on a host failed, and when: what the
+/// failure counts leave out, so the reason can be read on the gateway's
+/// device rather than dug out of the failing one's log.
+public struct HostFailure: Sendable, Equatable {
+    public var reason: String
+    public var at: Date
+
+    public init(reason: String, at: Date) {
+        self.reason = reason
+        self.at = at
+    }
+
+    /// "3 min ago: runtime answered 500: …", for the window.
+    public func summary(now: Date = Date()) -> String {
+        "\(Self.ago(now.timeIntervalSince(at))): \(reason)"
+    }
+
+    static func ago(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, Int(seconds))
+        switch seconds {
+        case ..<60: return "\(seconds) s ago"
+        case ..<3600: return "\(seconds / 60) min ago"
+        case ..<86400: return "\(seconds / 3600) h ago"
+        default: return "\(seconds / 86400) d ago"
+        }
+    }
+}
+
 public struct HostSnapshot: Sendable, Equatable, Identifiable {
     public var id: String
     public var model: ModelInfo?
@@ -224,6 +252,9 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
     /// Times it left this scheduler and was added again: a peer's host when
     /// the peer reconnects or lists it again. Its counts carry over.
     public var rejoined: Int
+    /// The last request that failed on it, by this scheduler's count: why,
+    /// and when. Kept, like its counts, if it leaves and comes back.
+    public var lastFailure: HostFailure?
 
     public init(id: String, model: ModelInfo? = nil, state: HostState, slots: Int = 0, capacity: Int = 0,
                 active: Int = 0, completed: Int = 0, failures: FailureCounts = FailureCounts(),
@@ -231,7 +262,7 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
                 idleWithWorkSeconds: Double = 0,
                 freeSeconds: Double = 0, held: Int = 0, prefetched: Int = 0, hardware: HardwareInfo? = nil,
                 utilization: Double? = nil, requestSeconds: Percentiles? = nil, busySlotSeconds: Double = 0,
-                slotSeconds: Double = 0, rejoined: Int = 0) {
+                slotSeconds: Double = 0, rejoined: Int = 0, lastFailure: HostFailure? = nil) {
         self.id = id
         self.model = model
         self.state = state
@@ -253,6 +284,7 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
         self.busySlotSeconds = busySlotSeconds
         self.slotSeconds = slotSeconds
         self.rejoined = rejoined
+        self.lastFailure = lastFailure
     }
 
     /// Requests that failed because of the host.
@@ -367,8 +399,8 @@ public actor Scheduler {
         /// are kept.
         var durations: [(at: Date, seconds: Double)] = []
         var rejoined = 0
-        /// Why the last request that failed here failed, for the event log.
-        var lastFailure: String?
+        /// Why the last request that failed here failed, and when.
+        var lastFailure: HostFailure?
 
         /// What's counted about a host, kept when it leaves so that its
         /// counts carry over if it comes back with the same ID.
@@ -384,13 +416,15 @@ public actor Scheduler {
             var busySlotTime: TimeInterval
             var slotTime: TimeInterval
             var rejoined: Int
+            var lastFailure: HostFailure?
         }
 
         var counts: Counts {
             get {
                 Counts(completed: completed, failures: failures, declined: declined, prefetched: prefetched,
                        recent: recent, durations: durations, freeTime: freeTime, idleTime: idleTime,
-                       busySlotTime: busySlotTime, slotTime: slotTime, rejoined: rejoined)
+                       busySlotTime: busySlotTime, slotTime: slotTime, rejoined: rejoined,
+                       lastFailure: lastFailure)
             }
             set {
                 completed = newValue.completed
@@ -404,6 +438,7 @@ public actor Scheduler {
                 busySlotTime = newValue.busySlotTime
                 slotTime = newValue.slotTime
                 rejoined = newValue.rejoined
+                lastFailure = newValue.lastFailure
             }
         }
 
@@ -961,7 +996,7 @@ public actor Scheduler {
         case .failure(let error):
             let outOfTime = remaining().map { $0 <= 0.5 } ?? false
             entries[lease.host]?.failures.record(error, outOfTime: outOfTime)
-            entries[lease.host]?.lastFailure = error.reason
+            entries[lease.host]?.lastFailure = HostFailure(reason: error.reason, at: Date())
             if !outOfTime, error.isHostFault { activity[lease.host, default: ActivityLog()].failed() }
             if case .unavailable(let why) = error, !outOfTime {
                 entries[lease.host]?.availability = .starting("not answering: \(why)")
@@ -1557,7 +1592,8 @@ public actor Scheduler {
                             hardware: e.host.hardware,
                             utilization: activity[id].flatMap { ActivityTotals($0.since(cutoff)).utilization },
                             requestSeconds: Percentiles(e.durations.filter { $0.at > cutoff }.map(\.seconds)),
-                            busySlotSeconds: e.busySlotTime, slotSeconds: e.slotTime, rejoined: e.rejoined)
+                            busySlotSeconds: e.busySlotTime, slotSeconds: e.slotTime, rejoined: e.rejoined,
+                            lastFailure: e.lastFailure)
     }
 
     public func snapshot() -> SchedulerSnapshot {
@@ -1662,7 +1698,7 @@ public actor Scheduler {
                                       (failures.busy, "busy"), (failures.deadline, "out of time")])
             guard !parts.isEmpty else { continue }
             var line = "\(span): \(parts)"
-            if failures.total > 0, let why = entry.lastFailure { line += "; last failure: \(why)" }
+            if failures.total > 0, let why = entry.lastFailure?.reason { line += "; last failure: \(why)" }
             events.record(id, line)
         }
         let now = gatewayCounts, before = gatewayTally ?? now

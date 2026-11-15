@@ -25,6 +25,13 @@ public struct HostRow: View {
                 Text("\(Int(host.perHour.rounded())) per hour").monospacedDigit()
             }
             Text(Self.details(host, hardware: hardware)).font(Self.captionFont).foregroundStyle(.secondary)
+            // Why, which the counts don't say, so it can be read here rather
+            // than on the device that failed.
+            if let failure = host.lastFailure {
+                Text("Last failure \(failure.summary())")
+                    .font(Self.captionFont).foregroundStyle(.secondary).lineLimit(3)
+                    .textSelection(.enabled)
+            }
         }
         .help("Over the last ten minutes, where it gives a rate, a share or a time")
     }
