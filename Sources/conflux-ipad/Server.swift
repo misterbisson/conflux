@@ -35,8 +35,13 @@ final class Server {
     private(set) var directoryProblem: String?
     private(set) var directoryNotice: String?
     private(set) var listed: [ListedDevice] = []
-    /// Why it isn't taking work while running, if it isn't.
+    /// Why it isn't taking work while running, if it isn't: the background
+    /// or the battery, not its owner's Drain or Pause.
     private(set) var held: String?
+    /// What its owner asked of it while it serves, with Drain, Pause and
+    /// Resume, as on a Mac. The background and the battery hold it back on
+    /// top of that.
+    private(set) var intent = OwnerIntent.serving
     /// This iPad's hosts' last day by the minute, for the activity chart:
     /// its model file's and Apple's model's.
     private(set) var activity: [String: [ActivityMinute]] = [:]
@@ -73,6 +78,9 @@ final class Server {
         var modelFile = true
         /// Serve Apple's on-device model, with the model file or alone.
         var appleModel = false
+        /// The model file last chosen, its projector, slots and context,
+        /// chosen again at the next launch.
+        var choice: ChosenModelFile?
     }
 
     private var foreground = true
@@ -137,7 +145,7 @@ final class Server {
         let config = settings.modelFile
             ? Self.config(model: model, projector: projector, slots: slots, contextPerSlot: contextPerSlot) : nil
         guard config != nil || settings.appleModel else {
-            problem = "Turn on a custom model or Apple's model, below."
+            problem = "Turn on a custom model or Apple's model, under Models."
             return
         }
         let node = NodeSettings(host: config, requireToken: false, peers: settings.peers,
@@ -146,11 +154,12 @@ final class Server {
                                 coolDown: settings.coolDown)
         let directory = settings.iCloudKeychain ? directory : nil
         guard directory != nil || !settings.peers.isEmpty else {
-            problem = "No Mac to serve. Turn on iCloud Keychain, or add a Mac's ID below."
+            problem = "No Mac to serve. Turn on iCloud Keychain, or add a Mac's ID, under Mesh."
             return
         }
         meshOnly = false
         running = true
+        intent = .serving
         KeepAwake.set(.serving, true)
         // Starting the node stops the mesh it ran alone.
         change {
@@ -300,23 +309,37 @@ final class Server {
         applyIntent()
     }
 
-    /// Serving, draining or paused, from the foreground and the power.
+    /// Drains, pauses or resumes, as its owner asks.
+    func setIntent(_ intent: OwnerIntent) {
+        self.intent = intent
+        applyIntent()
+    }
+
+    /// Serving, draining or paused, from what its owner asked, the
+    /// foreground and the power: whichever takes the least work.
     private func applyIntent() {
         guard running else { return }
-        let intent: OwnerIntent
+        let held: OwnerIntent
         if !foreground {
             // iPadOS suspends it soon: finish what's running, take nothing
             // new, and gateways send work elsewhere.
-            intent = .draining
-            held = "conflux is in the background"
+            held = .draining
+            self.held = "conflux is in the background"
         } else if !charging && !settings.servesOnBattery {
-            intent = .paused
-            held = "on battery: plug in this iPad, or turn on Serve on battery"
+            held = .paused
+            self.held = "on battery: plug in this iPad, or turn on Serve on battery"
         } else {
-            intent = .serving
-            held = nil
+            held = .serving
+            self.held = nil
         }
+        let intent = Self.least(intent, held)
         Task { await node.setIntent(intent) }
+    }
+
+    /// Of two intents, the one that takes less: draining, then paused.
+    static func least(_ a: OwnerIntent, _ b: OwnerIntent) -> OwnerIntent {
+        let order: [OwnerIntent] = [.draining, .paused, .serving]
+        return order.first { $0 == a || $0 == b } ?? .serving
     }
 
     /// Rests this iPad's model at serious heat, or stops, at once while it
@@ -421,6 +444,7 @@ extension Server.Settings {
         coolDown = try values.decodeIfPresent(Bool.self, forKey: .coolDown) ?? defaults.coolDown
         modelFile = try values.decodeIfPresent(Bool.self, forKey: .modelFile) ?? defaults.modelFile
         appleModel = try values.decodeIfPresent(Bool.self, forKey: .appleModel) ?? defaults.appleModel
+        choice = try? values.decodeIfPresent(ChosenModelFile.self, forKey: .choice)
     }
 }
 
