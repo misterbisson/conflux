@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/misterbisson/conflux/compare/v0.11.0...v0.12.0) (2026-11-15)
+
+
+### Features
+
+* add an any-vision-unfiltered alias, and mark models that filter content in /v1/models ([#105](https://github.com/misterbisson/conflux/issues/105)) ([af94a15](https://github.com/misterbisson/conflux/commit/af94a1542c1673d049168b6623987b1085f29c37))
+* count requests a model declines, and name those models in the response ([#100](https://github.com/misterbisson/conflux/issues/100)) ([d34b727](https://github.com/misterbisson/conflux/commit/d34b7272be57f9dd7358162df67ba9e619763aaa))
+* **ipad:** lock the screen while serving, unlocked with the passcode, Face ID or Touch ID ([#103](https://github.com/misterbisson/conflux/issues/103)) ([83bb216](https://github.com/misterbisson/conflux/commit/83bb216883281802ed9fc899b6fd562359d8f4db))
+
+
+### Bug Fixes
+
+* Apple's model's slots change while conflux runs, as a custom model's do ([#101](https://github.com/misterbisson/conflux/issues/101)) ([62e5041](https://github.com/misterbisson/conflux/commit/62e5041b6d1c4a5215f3463adb7fc8f3b2282cb0))
+
 ## [0.11.0](https://github.com/misterbisson/conflux/compare/v0.10.0...v0.11.0) (2026-11-14)
 
 
