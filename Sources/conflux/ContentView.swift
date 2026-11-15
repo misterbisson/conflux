@@ -2,67 +2,116 @@ import ConfluxCore
 import ConfluxUI
 import SwiftUI
 
+/// The window's tabs, under the status that stays above them: this Mac's
+/// models, the devices it shares them with, and the gateway its clients use.
+enum WindowTab: String, CaseIterable, Identifiable {
+    case models, mesh, gateway
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .models: "Models"
+        case .mesh: "Mesh"
+        case .gateway: "Gateway"
+        }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @AppStorage("windowTab") private var tab = WindowTab.models
 
     var body: some View {
-        Form {
+        VStack(spacing: 0) {
             status
-            modelSection
-            appleSection
-            meshSection
-            pairSection
-            monitoringSection
-            gatewaySection
-            aboutSection
+            // One form for every tab, so the activity at its top keeps its
+            // state, such as the model it shows, from tab to tab.
+            Form {
+                activity
+                switch tab {
+                case .models:
+                    modelSection
+                    appleSection
+                case .mesh:
+                    meshSection
+                    pairSection
+                case .gateway:
+                    gatewaySection
+                    requestsSection
+                }
+            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
         .padding(.bottom, 8)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Show", selection: $tab) {
+                    ForEach(WindowTab.allCases) { tab in
+                        tabLabel(tab).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+        }
+    }
+
+    /// A tab's name, marked when something in it needs looking at, since
+    /// it can't be seen from another tab.
+    func tabLabel(_ tab: WindowTab) -> Text {
+        needsAttention(tab) ? Text("\(tab.title) \(Image(systemName: "exclamationmark.circle"))") : Text(tab.title)
+    }
+
+    func needsAttention(_ tab: WindowTab) -> Bool {
+        switch tab {
+        case .models: !model.fileProblems.isEmpty || (model.running && model.slotProblem != nil)
+        case .mesh: model.meshProblem != nil || model.directoryProblem != nil || model.directoryNotice != nil
+        case .gateway: false
+        }
     }
 
     // MARK: Status
 
-    /// Read from across a room: what this Mac is doing, and how much.
-    @ViewBuilder var status: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 12) {
-                StatusHeadline(stateLabel, color: color, detail: stateDetail) { controls }
-                if model.running {
-                    // Now; how it's gone is below. Waiting has its own tile.
-                    let own = [model.host, model.appleHost].compactMap { $0 }
-                    let connected = model.peers.filter { $0.path != .none }.count
-                    StatusFigures([
-                        ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy here"),
-                        ("\(connected)", connected == 1 ? "peer connected" : "peers connected"),
-                    ])
+    /// Read from across a room, above every tab: what this Mac is doing,
+    /// how much, and the controls for it.
+    var status: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            StatusHeadline(stateLabel, color: color, detail: stateDetail) { controls }
+            if model.running {
+                // Now; how it's gone is in the chart. Waiting has its own tile.
+                let own = [model.host, model.appleHost].compactMap { $0 }
+                let connected = model.peers.filter { $0.path != .none }.count
+                StatusFigures([
+                    ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy here"),
+                    ("\(connected)", connected == 1 ? "peer connected" : "peers connected"),
+                    ("\(Int((model.snapshot?.perHour ?? 0).rounded()))", "per hour"),
+                    (model.snapshot?.utilization.map(percent) ?? "–", "utilization"),
+                ])
+                .help("""
+                    Requests this Mac's gateway completed in the last ten minutes, scaled to an hour, and the \
+                    share of slot time spent running requests on every host in that time.
+                    """)
+            }
+            if let problem = model.problem {
+                Text(problem).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+    }
+
+    /// At the top of every tab: how it's gone, by host, and the Mac's side
+    /// of things over the same span.
+    @ViewBuilder var activity: some View {
+        if model.running {
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
                     ActivityPanel(series: model.activitySeries, typicalSeconds: model.host?.typicalSeconds,
                                   tailSeconds: model.host?.requestSeconds?.p95, metric: $metric, range: $range)
                     resources
                 }
-            }
-            .padding(.vertical, 8)
-            if let problem = model.problem {
-                Text(problem).foregroundStyle(.red)
-            }
-            if let host = model.host, model.running {
-                let wanted = model.settings.host?.slots ?? host.slots
-                let finishing = host.active - wanted
-                if finishing > 0 {
-                    Text("\(finishing) \(finishing == 1 ? "request is" : "requests are") finishing in slots being removed.")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else if host.capacity < host.slots {
-                    Text("Running \(host.capacity) of \(host.slots) slots: the rest didn't fit.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if let problem = model.slotProblem {
-                    Text("Running \(host.slots) of \(wanted) slots: \(problem).")
-                        .font(.caption).foregroundStyle(.orange)
-                }
-                if let served = host.model {
-                    LabeledContent("Fingerprint") {
-                        Text(served.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                }
+                .padding(.vertical, 8)
             }
         }
     }
@@ -201,7 +250,16 @@ struct ContentView: View {
                                                          set: { turn(.custom, on: $0) }))
             if model.settings.servesModelFile {
                 Group { modelFiles }.disabled(model.running)
+                if let served = model.host?.model, model.running {
+                    LabeledContent("Fingerprint") {
+                        Text(served.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
+                    }
+                }
                 slotsRow
+                slotNotes
+                if let host = model.host, model.running {
+                    hostRow(host, title: "Requests", hardware: true)
+                }
                 Group { modelOptions }.disabled(model.running)
                 slotsHelp
                 if model.running {
@@ -294,6 +352,26 @@ struct ContentView: View {
             }
     }
 
+    /// Under the slots while conflux runs: slots that haven't gone yet,
+    /// or didn't fit.
+    @ViewBuilder var slotNotes: some View {
+        if let host = model.host, model.running {
+            let wanted = model.settings.host?.slots ?? host.slots
+            let finishing = host.active - wanted
+            if finishing > 0 {
+                Text("\(finishing) \(finishing == 1 ? "request is" : "requests are") finishing in slots being removed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if host.capacity < host.slots {
+                Text("Running \(host.capacity) of \(host.slots) slots: the rest didn't fit.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let problem = model.slotProblem {
+                Text("Running \(host.slots) of \(wanted) slots: \(problem).")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+
     static func shrinkMessage(cut: Int) -> String {
         cut == 1
             ? "A request is running in a slot that goes. It can finish there first, or stop now and go to another host with a free slot; with none, its client hears to try again shortly."
@@ -370,9 +448,7 @@ struct ContentView: View {
                         Text(detail).font(.caption).foregroundStyle(.secondary)
                     }
                     LabeledContent("Slots", value: "\(apple.active) busy of \(apple.capacity)")
-                    if let typical = apple.typicalSeconds {
-                        LabeledContent("Typical request", value: String(format: "%.1f s", typical))
-                    }
+                    hostRow(apple, title: "Requests", hardware: false)
                 }
                 appleSlotsRow
             }
@@ -469,6 +545,11 @@ struct ContentView: View {
             }
             ForEach(model.trusted) { peer in
                 peerRow(peer)
+            }
+            if model.running {
+                ForEach(otherHosts) { host in
+                    hostRow(host, title: model.hostName(host.id), hardware: true)
+                }
             }
             if model.refused > 0 {
                 LabeledContent("Refused", value: "\(model.refused) connections from devices that aren't peers")
@@ -581,18 +662,33 @@ struct ContentView: View {
             let live = connected ? hosts : []
             let models = live.compactMap(\.model?.id)
             let capacity = live.reduce(0) { $0 + $1.capacity }
-            let completed = hosts.reduce(0) { $0 + $1.completed }
             let parts = [source(of: peer),
                          model.running ? status.map(\.path.label) : nil,
                          host?.hardware?.summary,
                          models.isEmpty ? nil : models.joined(separator: " and "),
-                         capacity > 0 ? "\(live.reduce(0) { $0 + $1.active }) busy of \(capacity)" : nil,
-                         completed > 0 ? "\(completed) completed" : nil].compactMap { $0 }
+                         capacity > 0 ? "\(live.reduce(0) { $0 + $1.active }) busy of \(capacity)" : nil]
+                .compactMap { $0 }
             Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
             if model.running, let detail = host?.state.detail {
                 Text(detail).font(.caption).foregroundStyle(connected ? .secondary : Color.orange)
             }
+            // How each of its hosts has done, as this Mac's gateway sees it.
+            if model.running {
+                ForEach(hosts) { host in
+                    hostRow(host, title: host.model?.id ?? model.hostName(host.id), hardware: false)
+                        .padding(.leading, 16)
+                }
+            }
         }
+    }
+
+    /// Hosts this Mac's gateway has sent work to that belong to no peer in
+    /// the list, such as one that was removed. Each keeps its counts.
+    var otherHosts: [HostSnapshot] {
+        let listed = Set(model.trusted.flatMap { peer in
+            model.peers.first { $0.endpointID == peer.endpointID }?.hostIDs ?? []
+        })
+        return (model.snapshot?.hosts ?? []).filter { $0.id.hasPrefix("peer-") && !listed.contains($0.id) }
     }
 
     /// Grey while stopped, orange while it can't be reached, and otherwise
@@ -611,23 +707,24 @@ struct ContentView: View {
         }
     }
 
-    // MARK: Monitoring
+    // MARK: Requests
 
-    /// The USE method's three, for the mesh and each host, as this Mac's
-    /// gateway sees them: utilization, saturation (work waiting, how long it
-    /// waits, idle-with-work and the tail of request time), and errors, with
-    /// throughput.
-    @ViewBuilder var monitoringSection: some View {
+    /// The USE method's three for the whole mesh, as this Mac's gateway sees
+    /// it: utilization, in the status above every tab; saturation (work
+    /// waiting, how long it waits, idle-with-work); and errors, with what
+    /// was declined and hedged. Each host's own are beside it: this Mac's
+    /// under Models, peers' under Mesh.
+    @ViewBuilder var requestsSection: some View {
         if model.running, let snapshot = model.snapshot {
-            Section("Monitoring") {
-                LabeledContent("Throughput", value: "\(Int(snapshot.perHour.rounded())) per hour")
+            Section {
                 LabeledContent("Completed", value: "\(snapshot.completed)")
-                LabeledContent("Utilization", value: snapshot.utilization.map(percent) ?? "no slots offered")
-                    .help("Slot time spent running requests, over slot time offered, on every host, in the last ten minutes")
+                    .help("Requests this gateway completed, on any host")
                 LabeledContent("Waiting", value: Self.waiting(queued: snapshot.queued, wait: snapshot.waitSeconds))
                     .help("Requests waiting here for a slot now, and how long requests waited in the last ten minutes")
                 LabeledContent("Idle while work waited", value: Self.seconds(snapshot.idleWithWorkSeconds))
+                    .help("Time a host had a free slot while work it could run waited here: it should stay near zero")
                 LabeledContent("Host failures", value: Self.describe(snapshot.failures))
+                    .help("What went wrong with requests sent to hosts. Most were retried on another host.")
                 LabeledContent("Answered busy · unavailable", value: "\(snapshot.busy) · \(snapshot.unavailable)")
                     .help("Answers of 429, no slot in time, and 503, hosts failed or none up")
                 if snapshot.declined.total > 0 {
@@ -639,37 +736,31 @@ struct ContentView: View {
                     LabeledContent("Hedged", value: "\(snapshot.hedged), \(snapshot.hedgeWins) answered first")
                         .help("Copies of straggling requests sent to an idle host at the end of a batch")
                 }
-                ForEach(snapshot.hosts) { host in
-                    monitoringRow(host)
-                }
+            } header: {
+                Text("Requests")
+            } footer: {
                 Text("""
-                    Utilization is the share of slot time spent running requests, and waiting is how long \
-                    requests waited here for a slot, both over the last ten minutes. Idle while work waited is \
-                    time a host had a free slot while work it could run waited here: it should stay near zero. \
-                    Declined requests are ones a model refused that another might take, such as content Apple's \
-                    model declines: they're sent on to another host, but the time they took is spent. \
-                    A peer's host that leaves and comes back keeps its counts.
+                    What became of the requests clients sent this gateway, on any host. Declined requests are \
+                    ones a model refused that another might take, such as content Apple's model declines: \
+                    they're sent on to another host, but the time they took is spent. Each host's own counts \
+                    are beside it, under Models and Mesh.
                     """)
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
 
-    func monitoringRow(_ host: HostSnapshot) -> some View {
+    /// One host, as this Mac's gateway sees it: its rate, and below, its
+    /// counts and times. A peer's host that leaves and comes back keeps its
+    /// counts, and says how often it has.
+    func hostRow(_ host: HostSnapshot, title: String, hardware: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                if let name = model.peerName(of: host) {
-                    Text(RemoteHost.hostOnPeer(in: host.id).map { "\(name), \(AppModel.otherHostName($0))" } ?? name)
-                        .lineLimit(1).truncationMode(.middle)
-                } else if host.id.hasPrefix("peer-") {
-                    Text(model.hostName(host.id)).font(.body.monospaced())
-                } else {
-                    Text("This Mac")
-                }
+                Text(title).lineLimit(1).truncationMode(.middle)
                 Spacer()
                 Text("\(Int(host.perHour.rounded())) per hour").monospacedDigit()
             }
-            let parts = [host.hardware?.summary,
+            let parts = [hardware ? host.hardware?.summary : nil,
                          "\(host.completed) completed",
                          host.utilization.map { "\(percent($0)) busy" },
                          host.typicalSeconds.map {
@@ -686,6 +777,7 @@ struct ContentView: View {
                 .compactMap { $0 }
             Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
         }
+        .help("Over the last ten minutes, where it gives a rate, a share or a time")
     }
 
     static func seconds(_ value: Double) -> String {
@@ -769,18 +861,5 @@ struct ContentView: View {
         tokenProblem = nil
         model.copy(token)
         return true
-    }
-
-    // MARK: About
-
-    @ViewBuilder var aboutSection: some View {
-        Section("About") {
-            LabeledContent("Version") {
-                Text(AppVersion.current).textSelection(.enabled)
-            }
-            LabeledContent("Acknowledgements") {
-                Button("Show…") { NSApplication.shared.orderFrontStandardAboutPanel(nil) }
-            }
-        }
     }
 }

@@ -399,9 +399,9 @@ by this gateway's requests alone.
 
 Each host also says what kind of device it runs on, so a measurement can name
 every device's chip without anyone looking it up, and throughput can be read
-against GPU cores and memory. The window's Mesh and Monitoring rows show it,
-as `M4 Pro, 16-core GPU, 48 GB`, and `/health` gives it in full. A host
-reports, in its status's `hardware`:
+against GPU cores and memory. The window shows it beside each host, under
+Models and Mesh, as `M4 Pro, 16-core GPU, 48 GB`, and `/health` gives it in
+full. A host reports, in its status's `hardware`:
 
 | Field | On a Mac | On an iPad |
 |---|---|---|

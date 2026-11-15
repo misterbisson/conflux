@@ -20,14 +20,24 @@ join the mesh as hosts later in Phase 3 ([plan.md](plan.md)).
 swift run -c release conflux
 ```
 
-Under **Custom Model**, choose the model and projector, or keep the
-[starter model](#the-starter-model), set the slots, and press **Start**. The
-window shows the host's state and what's running. Below it, a chart shows
-requests completed, or tokens written, for each minute of the last hour or
-each ten minutes of the last day, stacked by host, with a red mark where a
-host failed. Under the chart are the requests waiting, conflux's memory
-(nearly all of it the model's) against the Mac's, and the thermal state, over
-the same span. The history is kept in memory, from when conflux opened.
+The window has three tabs: **Models**, for this Mac's models; **Mesh**, for
+the devices it shares them with; and **Gateway**, for the endpoint its
+clients use. In **Models**, under **Custom Model**, choose the model and
+projector, or keep the [starter model](#the-starter-model), set the slots,
+and press **Start**. Above the tabs, the window shows the host's state,
+what's running, and the mesh's requests an hour and utilization, whichever
+tab is open. At the top of each tab, a chart shows requests completed, or
+tokens written, for each minute of the last hour or each ten minutes of the
+last day, stacked by host, with a red mark where a host failed. Under the
+chart are the requests waiting, conflux's memory (nearly all of it the
+model's) against the Mac's, and the thermal state, over the same span. The
+history is kept in memory, from when conflux opened.
+
+Each host's own numbers are beside it: this Mac's models' under **Models**,
+each peer's hosts in its row under **Mesh**. What became of the requests
+clients sent the gateway, on any host, is under **Gateway**, in
+**Requests**.
+
 **Drain** finishes what's running and waiting and takes nothing new: on
 this Mac's models, and at its gateway, which finishes the requests its clients
 sent, wherever they run, and answers new ones `503` with `error.code`
@@ -118,7 +128,7 @@ and an M2 with 8 did 1,074 at 26.6 s ([measurements.md](measurements.md#mesh-sat
 A longer request leaves less of a client's deadline, and a gateway sends
 nothing to a host it expects to finish too late. So raise them one at a time
 while conflux runs, and stop when the host's requests an hour, under
-**Monitoring**, stop rising. Its guardrails decline
+**Apple's model** in **Models**, stop rising. Its guardrails decline
 some content, and it takes only short requests. Those go to the model file's
 host, or a peer's, when the client accepts that model: with
 `Conflux-Models: apple-on-device, <model ID>`, for example. A request that
@@ -201,10 +211,11 @@ Both Macs have to add each other. Until then, each refuses the other, and the
 window counts the refused connections. A Mac with no peers, from iCloud
 Keychain or by hand, starts no iroh endpoint and contacts nothing.
 
-The window shows each peer's state, its model, and whether the connection is
-direct or relayed, with its round trip. **Monitoring** shows throughput,
-failures and idle time for the mesh and for each host. `/health` with the
-token gives the same numbers:
+Under **Mesh**, the window shows each peer's state, its model, and whether
+the connection is direct or relayed, with its round trip, and under each
+peer, its hosts' throughput, failures and idle time. The mesh's are under
+**Gateway**, in **Requests**. `/health` with the token gives the same
+numbers:
 
 ```bash
 curl -s -H "Authorization: Bearer $(swift run -c release conflux token)" http://127.0.0.1:8090/health
@@ -223,7 +234,7 @@ Two numbers need reading beside others:
   half the time can show 99% busy while doing half the work. Read its
   requests an hour beside it.
 - **A host's failures aren't its clients'.** The chart's red marks and the
-  failures under **Monitoring** count requests that failed on that host, and
+  failures beside each host count requests that failed on that host, and
   the gateway sends each to another host while the client's deadline allows.
   What clients got is the mesh's `answered` in `/health`: the busy (`429`),
   rejected and unavailable (`503`) answers the gateway gave.
