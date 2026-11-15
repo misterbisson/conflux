@@ -64,6 +64,13 @@ model's memory once its last request ends, and sends every request to its
 peers. The model stays chosen, and peers can still copy it. Raising the slots
 loads it again.
 
+While it serves, conflux keeps the Mac from idle sleep, and the display
+still sleeps. Drained or paused, it lets the Mac sleep once nothing it was
+running or relaying is left; stopped, at once. A Mac left to idle sleep would
+still be woken by peers' requests, start running them, and sleep again in the
+middle, every few seconds. Closing the lid or choosing **Sleep** still sleeps
+the Mac, and its peers send their work elsewhere.
+
 Settings are kept between launches, and so is serving: conflux quit while
 serving starts again when it next opens. Stopped, paused or draining, it
 opens stopped. Opened by another app, such as a client launching it in the
@@ -97,7 +104,8 @@ swift run -c release conflux serve --model ~/models/model.gguf --mmproj ~/models
 ```
 
 It prints the endpoint, then a line each time the host's state changes.
-`Ctrl-C` stops it. `conflux help` lists the options.
+It keeps the Mac from idle sleep until it stops, as the app does while it
+serves. `Ctrl-C` stops it. `conflux help` lists the options.
 
 ### Runtimes
 

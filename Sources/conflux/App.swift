@@ -113,6 +113,8 @@ final class AppModel: ObservableObject {
     private static let key = "settings"
     /// Whether conflux was serving when it quit, to serve again at launch.
     private let servingAtLaunch = ServingAtLaunch()
+    /// Keeps the Mac from idle sleep while it serves.
+    private let awake = IdleSleepHold(reason: "conflux is serving models")
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
@@ -136,6 +138,9 @@ final class AppModel: ObservableObject {
                     self.slotProblem = self.node.slotProblem
                     self.refused = self.node.refusedConnections
                     self.waiting.append(Double(snapshot.queued))
+                    let unfinished = snapshot.queued + snapshot.hosts.reduce(0) { $0 + $1.active }
+                    self.awake.set(IdleSleepHold.wanted(running: self.running, intent: self.intent,
+                                                        unfinished: unfinished))
                     self.memory.append(Double(ProcessMemory.footprint.now))
                     self.memoryStatus = self.node.memoryStatus
                     if let status = self.memoryStatus { self.pressure.append(Double(status.level)) }
