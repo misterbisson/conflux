@@ -270,6 +270,8 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             throw HostError.cancelled
         case "unavailable":
             throw HostError.unavailable(message)
+        case "failed":
+            throw HostError.failed(status: response.statusCode, message: message)
         default:
             if response.statusCode >= 500 { throw HostError.failed(status: response.statusCode, message: message) }
             return HostReply(status: response.statusCode, body: data)

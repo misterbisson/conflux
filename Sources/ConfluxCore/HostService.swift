@@ -15,8 +15,11 @@ public enum HostProtocol {
     /// What became of a request sent to a host: `completed`, `rejected`
     /// (the runtime refused it, a 4xx to pass on), `unsuitable` (refused
     /// here, but another host might take it: declined content, or too long
-    /// for this model), `busy`, `unavailable`, or `cancelled` by the gateway
-    /// that sent it. Gateways that predate `unsuitable` pass it on as a 4xx.
+    /// for this model), `busy`, `unavailable`, `failed` (the runtime answered
+    /// with a server error, so the host is up and another try may work), or
+    /// `cancelled` by the gateway that sent it. Gateways that predate
+    /// `unsuitable` pass it on as a 4xx, and those that predate `failed` read
+    /// it as a server error, from its 5xx status.
     public static let outcomeHeader = "Conflux-Outcome"
     /// On a status request: the `generation` the gateway last saw. The host
     /// answers once its status has changed since, or after `Conflux-Wait`
@@ -317,6 +320,8 @@ final class HostService: Sendable {
         case .unavailable(let retryAfter, let message):
             return reply(503, "unavailable", ChatCompletionResult.error(message, type: "server_error"),
                          [(ContractHeader.retryAfter, String(retryAfter))])
+        case .failed(let status, let message):
+            return reply(max(500, status), "failed", ChatCompletionResult.error(message, type: "server_error"))
         case .unknownModel(let message):
             return reply(503, "unavailable", ChatCompletionResult.error(message, type: "server_error"))
         case .draining(let retryAfter):

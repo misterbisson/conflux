@@ -206,6 +206,7 @@ import Testing
         #expect(await scheduler.snapshot().failed <= 1)
     }
 
+    /// The only host fails it twice: once, and again on its second try.
     @Test func aFailedOnlyHostMeans503() async {
         let broken = FakeHost(id: "broken") { _ in throw HostError.failed(status: 500, message: "boom") }
         let scheduler = await Scheduler.with([broken])
@@ -213,6 +214,48 @@ import Testing
         guard case .unavailable(let retryAfter, let message) = outcome else { Issue.record("\(outcome)"); return }
         #expect(retryAfter == 5)
         #expect(message.contains("500"))
+        #expect(broken.callCount == 2)
+        #expect(await scheduler.snapshot().hosts.first?.failures.failed == 2)
+    }
+
+    /// A runtime error now and then, like Apple's model on some Macs: with
+    /// no other host, the one that failed it tries once more, and the
+    /// client gets the answer. The failure still counts against the host.
+    @Test func aFailedOnlyHostTriesOnceMore() async {
+        let flaky = FakeHost(id: "flaky") { call in
+            if call == 1 { throw HostError.failed(status: 500, message: "request aborted") }
+            return HostReply(status: 200, body: FakeHost.okBody)
+        }
+        let scheduler = await Scheduler.with([flaky])
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
+        if case .completed = outcome {} else { Issue.record("\(outcome)") }
+        #expect(flaky.callCount == 2)
+        let host = await scheduler.snapshot().hosts.first
+        #expect(host?.failures.failed == 1)
+        #expect(host?.completed == 1)
+    }
+
+    /// A host that didn't answer isn't tried again: it's not answering.
+    @Test func anUnansweringOnlyHostIsNotRetried() async {
+        let broken = FakeHost(id: "broken") { _ in throw HostError.unavailable("connection refused") }
+        let scheduler = await Scheduler.with([broken])
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
+        if case .unavailable = outcome {} else { Issue.record("\(outcome)") }
+        #expect(broken.callCount == 1)
+    }
+
+    /// With another host free, a runtime error goes there, not back to the
+    /// host that failed it.
+    @Test func aFailedRequestGoesToAFreeHostFirst() async {
+        let broken = FakeHost(id: "broken") { _ in throw HostError.failed(status: 500, message: "boom") }
+        let good = FakeHost(id: "good")
+        let scheduler = await Scheduler.with([broken, good])
+        await scheduler.setTypical(0.01, for: "broken")
+        await scheduler.setTypical(1, for: "good")
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
+        if case .completed = outcome {} else { Issue.record("\(outcome)") }
+        #expect(broken.callCount == 1)
+        #expect(good.callCount == 1)
     }
 
     @Test func runtimeRefusalsPassThrough() async {
@@ -238,7 +281,7 @@ import Testing
 
     @Test func failuresAreNotRemembered() async {
         let host = FakeHost(id: "h") { call in
-            if call == 1 { throw HostError.failed(status: 500, message: "once") }
+            if call <= 2 { throw HostError.failed(status: 500, message: "twice") }
             return HostReply(status: 200, body: FakeHost.okBody)
         }
         let scheduler = await Scheduler.with([host])

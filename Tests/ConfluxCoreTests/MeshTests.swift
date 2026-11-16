@@ -246,6 +246,36 @@ struct Peer {
         #expect(object?["system_fingerprint"] as? String == "fake-model-a")
     }
 
+    /// The peer's runtime answered with a server error: the peer is up, so
+    /// the gateway hears that it failed, not that it didn't answer, and
+    /// doesn't take it for lost.
+    @Test func aPeersRuntimeErrorIsAFailure() async throws {
+        let peer = try await Peer { _ in throw HostError.failed(status: 500, message: "request aborted") }
+        defer { peer.server.stop() }
+        await #expect(throws: HostError.failed(status: 500, message: "request aborted")) {
+            try await peer.remote.complete(Data("{}".utf8), timeout: 10)
+        }
+    }
+
+    /// A peer that's the only host, whose runtime fails a request now and
+    /// then, gets one more try at it, and the client gets the answer.
+    @Test func theGatewayRetriesAPeersRuntimeError() async throws {
+        let peer = try await Peer { call in
+            if call == 1 { throw HostError.failed(status: 500, message: "request aborted") }
+            return HostReply(status: 200, body: FakeHost.okBody)
+        }
+        defer { peer.server.stop() }
+        let gateway = Scheduler()
+        await gateway.add(peer.remote)
+        let outcome = await gateway.submit(Data("{}".utf8), choice: ModelChoice(model: "any", preference: nil),
+                                           deadline: Date().addingTimeInterval(10), key: nil)
+        if case .completed = outcome {} else { Issue.record("expected a completion, got \(outcome)") }
+        #expect(peer.host.callCount == 2)
+        let host = await gateway.snapshot().hosts.first
+        #expect(host?.failures == FailureCounts(unavailable: 0, failed: 1, busy: 0))
+        #expect(host?.state == .ready)
+    }
+
     /// The peer admits work: a request without a free slot is refused, and
     /// the gateway's scheduler tries another host instead of counting a
     /// failure.
