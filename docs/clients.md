@@ -235,7 +235,10 @@ so a smaller image saves time only with a model that handles it
 | `500` | The gateway itself failed | Treat as a broken server |
 
 A failing host never shows up as `500`. The gateway retries on another host, or
-answers `503`. `500` means the gateway itself is at fault.
+answers `503`. When a host's model fails a request and no other host can take
+it, that host gets one more try before the gateway answers `503`: some
+runtimes, Apple's model among them, now and then fail a request they run the
+next time. `500` means the gateway itself is at fault.
 
 ## A client that does none of this
 

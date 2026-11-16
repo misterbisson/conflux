@@ -141,7 +141,7 @@ import Testing
             return HostReply(status: 200, body: FakeHost.okBody)
         }
         let scheduler = await Scheduler.with([FakeHost(id: "peer-h", behavior: behavior)])
-        _ = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
+        // Fails, and completes on its second try.
         _ = await scheduler.submit(Data(), choice: any, deadline: nil, key: nil)
         let before = try #require(await scheduler.snapshot().hosts.first)
         #expect(before.completed == 1)

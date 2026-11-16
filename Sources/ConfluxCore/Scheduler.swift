@@ -11,6 +11,10 @@ public enum Outcome: Sendable, Equatable {
     case busy(retryAfter: Int)
     /// Hosts failed and time ran out, or no host for an accepted model is up: 503.
     case unavailable(retryAfter: Int, message: String)
+    /// The runtime answered with a server error: a host's answer to another
+    /// device's gateway, which may try again. A gateway's own clients get
+    /// `unavailable` instead.
+    case failed(status: Int, message: String)
     /// No host has served a model this request accepts: 404.
     case unknownModel(String)
     /// This gateway is draining: it finishes what clients already sent it
@@ -863,6 +867,8 @@ public actor Scheduler {
         // The models that declined it and sent it on to another host, in
         // order, each once.
         var declinedBy: [String] = []
+        // The hosts given a second try after a runtime error.
+        var retried: Set<String> = []
         // Time spent waiting for a slot, on every try.
         var waited: TimeInterval = 0
         defer { noteWait(waited) }
@@ -933,10 +939,19 @@ public actor Scheduler {
                 }
                 let others = entries.values.contains { $0.model.map { choice.rank($0) != nil } ?? false
                     && !tried.contains($0.host.id) && $0.capacity > 0 }
-                if !others || (remaining().map { $0 <= 0 } ?? false) {
+                let outOfTimeNow = remaining().map { $0 <= 0 } ?? false
+                if !others || outOfTimeNow {
                     if case .busy = error {
                         busyCount += 1
                         return .busy(retryAfter: estimateWait(choice))
+                    }
+                    // A runtime error needn't come again: Apple's model now
+                    // and then fails a request it runs the next time. With
+                    // no other host to send it to, it gets one more try on
+                    // the host that failed it.
+                    if case .failed = error, !outOfTimeNow, retried.insert(hostID).inserted {
+                        tried.remove(hostID)
+                        continue
                     }
                     return unavailable(retryAfter: 5, message)
                 }
@@ -1064,7 +1079,7 @@ public actor Scheduler {
         case .failure(.unavailable(let why)):
             return .unavailable(retryAfter: 5, message: why)
         case .failure(.failed(let status, let why)):
-            return .unavailable(retryAfter: 5, message: "runtime answered \(status): \(why)")
+            return .failed(status: status, message: why)
         }
     }
 

@@ -178,6 +178,10 @@ public final class Gateway: Sendable {
         case .unavailable(let retryAfter, let message):
             return Gateway.error(503, message, type: "server_error", code: "unavailable",
                                  headers: [(ContractHeader.retryAfter, String(retryAfter))])
+        case .failed(let status, let message):
+            // A host's answer, which a gateway's clients never get.
+            return Gateway.error(503, "runtime answered \(status): \(message)", type: "server_error",
+                                 code: "unavailable", headers: [(ContractHeader.retryAfter, "5")])
         case .unknownModel(let message):
             return Gateway.error(404, message, type: "invalid_request_error", code: "model_not_found")
         case .draining(let retryAfter):

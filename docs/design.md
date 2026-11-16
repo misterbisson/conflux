@@ -527,7 +527,10 @@ device, `apple` for Apple's model.
   `Conflux-Outcome` says what became of it: `completed`, `rejected` (the
   runtime refused it, a 4xx the gateway passes on), `unsuitable` (refused
   here, though another host might take it: content the model declined, or a
-  request too long for it), `busy`, `unavailable`, or `cancelled`. `busy`
+  request too long for it), `busy`, `unavailable`, `failed` (the runtime
+  answered with a server error: the host is up, and another try may work),
+  or `cancelled`. Gateways that predate `failed` read it as a server error
+  from its 5xx status. `busy`
   covers a host held back on purpose as well as one whose slots are full:
   paused, draining, resting, or limited to no slots by resource policy. It
   answered, with no slot to give, so the gateway doesn't count it as not
