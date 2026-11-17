@@ -352,11 +352,21 @@ In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
    the slots in `/health`. In [running.md](running.md), the paired apps and
    Revoke. In [design.md](design.md#client-authorization), tokens for each
    app.
+   *Built*: most of it with steps 2 to 4, and last
+   [sizing concurrency](clients.md#size-concurrency-from-the-slots), which
+   replaces the advice to set a fixed concurrency at the mesh's peak. A
+   client adds up `capacity` in `/health` over the hosts serving what it asks
+   for, plus one for each host on another device, and reads it again on each
+   notice. A fixed concurrency stays the advice for a client that can't
+   follow the count.
 
 **Done when:** a sandboxed client app with nothing typed into it launches
 conflux in the background, pairs with one approval, gets answers with its
 own token, widens and narrows its concurrency as Macs join and leave, and
 loses access when revoked, while every other process still gets `401`.
+*Every step is built.* What's left is running that check end to end with a
+real client app. Each step was checked on its own, in tests and with
+stand-in apps, as it says.
 
 *Left for later:* a certificate fingerprint in the pairing reply; which app
 sent each request, in the window's activity and in `/health`; and limits for
