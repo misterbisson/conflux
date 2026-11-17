@@ -129,10 +129,12 @@ public struct FailureCounts: Sendable, Equatable {
     public var hostFaults: Int { unavailable + failed }
     public var total: Int { unavailable + failed + busy + deadline }
 
+    /// A host that said busy answered, and nothing ran there, so it's busy
+    /// however near the deadline the answer came.
     mutating func record(_ error: HostError, outOfTime: Bool) {
         switch error {
-        case _ where outOfTime: deadline += 1
         case .busy: busy += 1
+        case _ where outOfTime: deadline += 1
         case .unavailable: unavailable += 1
         case .failed: failed += 1
         case .cancelled: break
@@ -922,6 +924,12 @@ public actor Scheduler {
                 let outOfTime = remaining().map { $0 <= 0.5 } ?? false
                 failures.record(error, outOfTime: outOfTime)
                 if outOfTime {
+                    // Busy is an answer, however late: the request didn't
+                    // run, and the host has no slot for it now.
+                    if case .busy = error {
+                        busyCount += 1
+                        return .busy(retryAfter: estimateWait(choice))
+                    }
                     return unavailable(retryAfter: estimateWait(choice), "the deadline passed while the request was running")
                 }
                 if case .busy = error, entries[hostID]?.report?.pulls == true {

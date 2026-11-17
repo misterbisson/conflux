@@ -73,6 +73,23 @@ import Testing
         #expect(snapshot.failed == 0)
     }
 
+    /// A host that answers busy as the deadline nears, as a peer on a slow
+    /// link can, had no slot: nothing ran, so it's busy, not out of time.
+    @Test func busyNearTheDeadlineIsStillBusy() async {
+        let host = FakeHost(id: "h") { _ in
+            try await Task.sleep(for: .seconds(1.6))
+            throw HostError.busy("no free slot")
+        }
+        let scheduler = await Scheduler.with([host])
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(2), key: nil)
+        if case .busy = outcome {} else { Issue.record("\(outcome)") }
+        let snapshot = await scheduler.snapshot()
+        #expect(snapshot.failures == FailureCounts(busy: 1))
+        #expect(snapshot.hosts.first?.failures == FailureCounts(busy: 1))
+        #expect(snapshot.busy == 1)
+        #expect(snapshot.failed == 0)
+    }
+
     /// A host on another device reports its own free time. The part spent
     /// while work for it waited here is idle with work.
     @Test func countsAReportedFreeTimeWhileWorkWaits() async throws {
