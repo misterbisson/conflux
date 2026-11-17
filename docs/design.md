@@ -696,6 +696,21 @@ another team is another app. Revoking one refuses only that app, at its next
 request, without a restart, because the gateway reads the paired apps at
 every request and compares a token with every one in constant time.
 
+An app gets its token by pairing: it opens `conflux://pair` with a URL of its
+own to reply to, conflux asks the owner, and the reply goes to that URL, in
+that app only. conflux takes the URL as an Apple Event, which carries the
+sender's audit token, so it knows which process asked, and it identifies
+the app the reply would open in from that app's signature on disk. The two
+have to be the same app, and that app is the one the owner is asked about,
+so another app claiming a name, or registering the asking app's reply
+scheme, can't get its token. Measured: the event's audit token names the
+app that opened the URL, whether conflux was running or the URL launched
+it. Whether the sender is an app is decided by where its executable is,
+which the kernel says: the sandbox can't read code outside `/Applications`
+and the system's folders, and an app whose signature can't be checked is
+refused rather than taken for a command line tool. The app is never asked for a secret: on a
+person's own Mac, the owner's approval is what lets it in.
+
 Being a trusted peer (a device on the allow list) and being an authorized
 client are separate questions, and the design keeps them separate. A mesh shared
 between people later would need both.
