@@ -167,10 +167,14 @@ targets:
         #   key in the keychain, and derives its public half, the endpoint ID,
         #   through CryptoKit's Ed25519. A signing key's public half: nothing
         #   is encrypted here.
-        # - Sources/ConfluxCore/CodeSignature.swift: reads and checks the code
-        #   signature of an app asking to pair, through the Security framework,
-        #   to know which app it is: its bundle ID and Team ID. Verifying a
-        #   signature: no key of conflux's, nothing encrypted.
+        # - Sources/ConfluxCore/CodeSignature.swift: learns which app is asking
+        #   to pair, its bundle ID and Team ID, from its code signature. It
+        #   calls macOS's Code Signing Services, part of Security.framework
+        #   (SecStaticCodeCreateWithPath, SecCodeCopyGuestWithAttributes,
+        #   SecCodeCheckValidity, SecCodeCopySigningInformation): the
+        #   operating system checks the signature Apple's codesign made, and
+        #   hands back the fields it signed. conflux implements no
+        #   cryptography, holds no key, and encrypts nothing here.
         # - Sources/ConfluxCore/DeviceDirectory.swift: keeps each device's
         #   endpoint ID, a public key, with a name and a date, as a keychain
         #   item iCloud Keychain syncs between the user's devices. Storage
@@ -191,7 +195,14 @@ targets:
         # cryptography for authentication and data protection. The reasoning
         # is in docs/releasing.md, "Export compliance: the reasoning".
         #
-        # **Answer it again when this list changes.** tools/ci/check-app.sh
+        # The principle behind it, the maintainer's (2026-11-16): cryptography
+        # the operating system provides, or standard, publicly available open
+        # source, is fine; cryptography of conflux's own making isn't. A new
+        # entry that only calls the operating system or such a library keeps
+        # the answer; one that implements cryptography, or brings a library
+        # that isn't standard and public, means answering again.
+        #
+        # **Check it again when this list changes.** tools/ci/check-app.sh
         # fails when a source file not named above uses Apple's cryptography or
         # TLS, when the archive holds a bundled cryptography library other than
         # apple-iroh's, and when Package.swift pins an apple-iroh other than the
