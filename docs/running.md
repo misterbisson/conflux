@@ -167,7 +167,10 @@ when it has no model file.
   a token of its own, which the app's gateway takes as well as yours. They're listed under
   **Gateway**, in **Apps**, with when each was paired and last used.
   **Revoke** takes one away: that app's next request gets `401`, and it has
-  to ask again. `conflux serve` takes only the owner's token.
+  to ask again. `conflux serve` takes only the owner's token. The app tells
+  apps on the Mac when the gateway changes, with a notice they watch
+  ([clients.md](clients.md#follow-the-gateway-for-an-app-on-the-same-mac)),
+  so they follow it without asking it again and again.
 - **Model:** `any`, `any-vision`, `any-unfiltered` or `any-vision-unfiltered`
   (any model, or any vision model, other than Apple's, whose guardrails
   decline some content), or the ID `/v1/models` lists, which is the GGUF file

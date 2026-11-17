@@ -143,6 +143,8 @@ final class AppModel: ObservableObject {
     private let servingAtLaunch = ServingAtLaunch()
     /// Keeps the Mac from idle sleep while it serves.
     private let awake = IdleSleepHold(reason: "conflux is serving models")
+    /// When to tell apps on this Mac that the gateway changed.
+    private var notice = GatewayNotice.Coalescer()
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
@@ -168,6 +170,7 @@ final class AppModel: ObservableObject {
                     self.meshProblem = self.node.meshProblem
                     self.slotProblem = self.node.slotProblem
                     self.refused = self.node.refusedConnections
+                    self.noticeGateway()
                     self.waiting.append(Double(snapshot.queued))
                     let unfinished = snapshot.queued + snapshot.hosts.reduce(0) { $0 + $1.active }
                     self.awake.set(IdleSleepHold.wanted(running: self.running, intent: self.intent,
@@ -204,7 +207,7 @@ final class AppModel: ObservableObject {
             node.events?.record("device", "woke")
         }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
-                                               queue: .main) { [node] _ in
+                                               queue: .main) { [node, weak self] _ in
             // Don't leave llama-server running after the app quits.
             let done = DispatchSemaphore(value: 0)
             Task.detached {
@@ -212,6 +215,9 @@ final class AppModel: ObservableObject {
                 done.signal()
             }
             _ = done.wait(timeout: .now() + 3)
+            // Once it has stopped, so an app that reads the gateway finds
+            // nothing there.
+            MainActor.assumeIsolated { self?.noticeQuitting() }
         }
         checkFiles()
         paired = pairedApps.apps
@@ -470,6 +476,25 @@ final class AppModel: ObservableObject {
     func portForPairing() async -> UInt16 {
         if !running, canStart { await startServing() }
         return port ?? settings.port
+    }
+
+    /// Tells apps on this Mac that the gateway changed, when it has, at most
+    /// once a second (`GatewayNotice`). Called each second, as the window's
+    /// numbers are read.
+    private func noticeGateway() {
+        let state = GatewayNotice.State(port: running ? port : nil, intent: intent, snapshot: snapshot)
+        if notice.update(state, at: .now) { Self.postNotice() }
+    }
+
+    private func noticeQuitting() {
+        if notice.quitting(at: .now) { Self.postNotice() }
+    }
+
+    private static func postNotice() {
+        // Delivered at once, even to an app the system has suspended in the
+        // background: that's the app waiting to hear.
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(GatewayNotice.name), object: nil, userInfo: nil, deliverImmediately: true)
     }
 
     /// Reads the paired apps again, after one pairs.

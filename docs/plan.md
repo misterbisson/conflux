@@ -336,6 +336,15 @@ In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
 
    *Done when:* tests show which changes post a notice, and that a burst of
    slot changes posts one.
+   *Built*, with the contract in
+   [clients.md](clients.md#follow-the-gateway-for-an-app-on-the-same-mac).
+   A host's slots are the ones the gateway can fill now, `capacity` in
+   `/health`, which is none while a host starts, fails, is paused or drains,
+   so those changes post too; how busy a host is doesn't. The app checks once
+   a second, as it reads the window's numbers, and conflux launching and
+   serving again posts one, which an app that launched it can wait for. It
+   posts one last notice as it quits, once the gateway has stopped, even
+   within a second of the one before. `conflux serve` posts none.
 
 5. **The contract written down.** In [clients.md](clients.md): pairing, the
    reply, keeping the token in the app's keychain, pairing again when the
