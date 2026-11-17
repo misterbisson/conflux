@@ -6,7 +6,9 @@ import SystemConfiguration
 import UniformTypeIdentifiers
 
 struct ConfluxApp: App {
-    @StateObject private var model = AppModel()
+    /// Holds the model, so the URLs other apps open reach the same one the
+    /// window shows.
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
         // Run from the command line, with no bundle, the process starts as a
@@ -28,7 +30,7 @@ struct ConfluxApp: App {
     var body: some Scene {
         WindowGroup("conflux") {
             ContentView()
-                .environmentObject(model)
+                .environmentObject(delegate.model)
                 .frame(minWidth: 520, minHeight: 640)
         }
         .windowResizability(.contentSize)
@@ -36,6 +38,28 @@ struct ConfluxApp: App {
             // No File › New Window: a second window would be a copy of this one.
             CommandGroup(replacing: .newItem) {}
         }
+    }
+}
+
+/// Takes the URLs other apps open, `conflux://pair`, as Apple Events, which
+/// say who sent them. Handled here rather than with SwiftUI's `onOpenURL`,
+/// which can open a second window.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    let model = AppModel()
+    private lazy var pairing = PairingDesk(model: model)
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(openURL(_:reply:)),
+                                                     forEventClass: AEEventClass(kInternetEventClass),
+                                                     andEventID: AEEventID(kAEGetURL))
+    }
+
+    @objc func openURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let url = URL(string: text) else { return }
+        let sender = event.attributeDescriptor(forKeyword: keySenderAuditTokenAttr)?.data
+        pairing.open(url, sender: sender)
     }
 }
 
@@ -412,6 +436,13 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
+        Task { await startServing() }
+    }
+
+    /// Starts serving, and returns once the gateway listens, or couldn't
+    /// start, saying why in `problem`. The models load after.
+    @discardableResult
+    func startServing() async -> Bool {
         problem = nil
         var settings = settings
         if settings.servesModelFile {
@@ -419,18 +450,31 @@ final class AppModel: ObservableObject {
                 settings.host = try modelFileToServe()
             } catch {
                 problem = error.localizedDescription
-                return
+                return false
             }
         }
-        Task {
-            do {
-                port = try await node.start(settings, directory: directory, pairedApps: pairedApps)
-                running = true
-                intent = .serving
-            } catch {
-                problem = "Couldn't start the gateway on port \(settings.port): \(error.localizedDescription)"
-            }
+        do {
+            port = try await node.start(settings, directory: directory, pairedApps: pairedApps)
+            running = true
+            intent = .serving
+            return true
+        } catch {
+            problem = "Couldn't start the gateway on port \(settings.port): \(error.localizedDescription)"
+            return false
         }
+    }
+
+    /// The gateway's port for an app just allowed in, starting conflux if
+    /// it's stopped and can start: allowing an app is the owner choosing to
+    /// serve. Stopped and unable to start, the port it will listen on.
+    func portForPairing() async -> UInt16 {
+        if !running, canStart { await startServing() }
+        return port ?? settings.port
+    }
+
+    /// Reads the paired apps again, after one pairs.
+    func refreshPaired() {
+        paired = pairedApps.apps
     }
 
     /// Turns the model file on or off. While conflux runs, it starts at once,

@@ -99,6 +99,23 @@ targets:
           mkdir -p "$work"
           cp "$SRCROOT"/App/Assets.xcassets/AppIcon.appiconset/icon_*.png "$work"/
           iconutil -c icns "$work" -o "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/AppIcon.icns"
+    # Xcode generates the rest of the Info.plist from INFOPLIST_KEY_ settings,
+    # which don't cover these. XcodeGen writes them to App/conflux-Info.plist
+    # each time it generates the project, so change them here, not there.
+    info:
+      path: App/conflux-Info.plist
+      properties:
+        # Apps on this Mac ask for a token of their own by opening
+        # conflux://pair (Sources/conflux/PairingDesk.swift, docs/clients.md).
+        CFBundleURLTypes:
+          - CFBundleURLName: com.caseybisson.conflux
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - conflux
+        # XcodeGen writes 1.0 otherwise: the versions release-please and
+        # Xcode Cloud set.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     entitlements:
       path: App/conflux.entitlements
       properties:
@@ -150,6 +167,10 @@ targets:
         #   key in the keychain, and derives its public half, the endpoint ID,
         #   through CryptoKit's Ed25519. A signing key's public half: nothing
         #   is encrypted here.
+        # - Sources/ConfluxCore/CodeSignature.swift: reads and checks the code
+        #   signature of an app asking to pair, through the Security framework,
+        #   to know which app it is: its bundle ID and Team ID. Verifying a
+        #   signature: no key of conflux's, nothing encrypted.
         # - Sources/ConfluxCore/DeviceDirectory.swift: keeps each device's
         #   endpoint ID, a public key, with a name and a date, as a keychain
         #   item iCloud Keychain syncs between the user's devices. Storage

@@ -161,8 +161,10 @@ when it has no model file.
   `Authorization: Bearer <token>`. To allow clients that can't send one, use
   `--no-token`, or turn off "Require the token" in the app. Any process on
   the Mac can then use the gateway.
-- **Apps:** an app you let use your models has a token of its own, which
-  the app's gateway takes as well as yours. They're listed under
+- **Apps:** an app on the Mac asks to use your models by opening
+  `conflux://pair` ([clients.md](clients.md#pair-for-an-app-on-the-same-mac)),
+  and conflux asks you, naming the app by its signature. One you allow gets
+  a token of its own, which the app's gateway takes as well as yours. They're listed under
   **Gateway**, in **Apps**, with when each was paired and last used.
   **Revoke** takes one away: that app's next request gets `401`, and it has
   to ask again. `conflux serve` takes only the owner's token.
@@ -292,7 +294,8 @@ of what happened, `mesh.log` ([Files](#files)). It says:
   going to sleep and waking, or an iPad going to the background and back. A
   start with no stop before it means conflux quit without stopping, as a
   crash does.
-- **Apps**: an app's token revoked, under `gateway`.
+- **Apps**, under `gateway`: an app paired, declined, answered again, or
+  refused and why, and an app's token revoked.
 
 ```text
 2026-11-15T00:11:35.204-08:00  node  started: conflux 0.9.0 (22), gateway on 127.0.0.1:8090, 0 peers added by hand, iCloud Keychain on

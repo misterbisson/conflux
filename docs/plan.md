@@ -313,6 +313,14 @@ In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
    with its token; a second app that registered the same reply scheme gets
    nothing; and pairing again after the port changes gets the new address
    with no prompt.
+   *Built*, with the pairing contract in
+   [clients.md](clients.md#pair-for-an-app-on-the-same-mac). Confirmed with
+   stand-in sandboxed apps and a sandboxed build: the Apple Event's audit
+   token names the app that opened the URL, whether conflux was running or
+   the URL launched it, and an app asking for a reply to another app is
+   refused. The sandbox reads other apps' signatures only in `/Applications`
+   and the system's folders, so an app has to be there to pair. Not yet run:
+   an approval, a reply carrying a token, and a request answered with it.
 
 4. **A notice when the gateway changes.** conflux posts a distributed
    notification, `com.caseybisson.conflux.gateway.changed`, when its gateway

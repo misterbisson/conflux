@@ -45,6 +45,54 @@ read. Tokenless loopback access is an opt-in setting (`--no-token`, or
 "Require the token" off in the app), so clients that can't send a token yet
 still work. Clients should support a token from the start.
 
+### Pair, for an app on the same Mac
+
+An app can't read the owner's token: the app keeps it in its container. So
+an app on the Mac asks for a token of its own, once, by opening a URL:
+
+```
+conflux://pair?reply=<a URL your app handles, percent-encoded>
+```
+
+For example `conflux://pair?reply=example-client%3A%2F%2Fconflux`. Opening it
+launches conflux if it isn't running.
+
+- **The person is asked**, the first time: conflux comes to the front with
+  "Let *your app* use your models?", your app's icon, its bundle ID, and its
+  Team ID, or that it has none.
+- **conflux answers by opening the reply URL**, with `token` and `endpoint`
+  added to its query and its other items kept:
+  `example-client://conflux?token=cfx_…&endpoint=http%3A%2F%2F127.0.0.1%3A8090%2Fv1`.
+  If the person says no, the reply carries `error=declined` instead.
+- **Your app is known by its code signature**: the identifier it's signed
+  with, its bundle ID, and its Team ID, not by anything in the URL. The reply
+  is opened only in the app that handles the reply URL, which has to be the
+  app that asked. A request that doesn't add up gets no reply at all: one
+  from an app with no valid signature, one where the asking app isn't the one
+  the reply would open in, or one whose reply would open in a web browser.
+  Replies never go to web, file or mail URLs.
+- **Your app has to be in `/Applications`** to pair. conflux runs in the App
+  Sandbox, which lets it read other apps' signatures there and in the
+  system's folders, but not in a home folder. So a development build run
+  from Xcode's DerivedData, or an app in `~/Applications` or Downloads, can't
+  pair: copy it to `/Applications` first.
+- **Keep the token in your keychain**, with the endpoint. Send it as the
+  owner's would be sent.
+- **Pair again whenever you need to.** An app already paired is answered at
+  once, without asking and without conflux coming to the front, with the
+  same token and the gateway's current address. So pair again when the token
+  is lost, when nothing answers at the endpoint (the port may have changed),
+  or after a `401` (the owner may have revoked your app, and then they're
+  asked again).
+- **Allowing an app starts conflux** if it's stopped and can start. After
+  that, conflux serves at launch if it was serving when it quit, so your app
+  can launch it in the background, by bundle ID `com.caseybisson.conflux`
+  with activation off, and find the gateway up. One the owner stopped stays
+  stopped: tell the person to open conflux.
+
+The owner sees each paired app in conflux's window, under **Gateway**, in
+**Apps**, with when it last sent a request, and can revoke it there.
+
 ### Own your work
 
 conflux doesn't keep a durable queue. The client keeps track of what still needs
