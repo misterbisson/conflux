@@ -38,6 +38,7 @@ struct ContentView: View {
                     pairSection
                 case .gateway:
                     gatewaySection
+                    appsSection
                     requestsSection
                 }
             }
@@ -792,6 +793,42 @@ struct ContentView: View {
         }
     }
 
+    /// The apps with tokens of their own, each with Revoke. Hidden until one
+    /// has paired.
+    @ViewBuilder var appsSection: some View {
+        if !model.paired.isEmpty {
+            Section {
+                ForEach(model.paired) { app in
+                    HStack {
+                        AppIcon(bundleID: app.bundleID)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(app.name)
+                            Text(Self.pairedDetail(app)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .help("\(app.bundleID), " + (app.teamID.map { "team \($0)" } ?? "no Team ID"))
+                        Spacer()
+                        Button("Revoke") { model.revoke(app) }
+                            .help("Refuse this app's next request. It has to ask again to use your models.")
+                    }
+                }
+            } header: {
+                Text("Apps")
+            } footer: {
+                Text(model.settings.requireToken
+                     ? "Apps you let use your models, each with a token of its own."
+                     : "Apps you let use your models, each with a token of its own. While the token isn't "
+                       + "required, any process on this Mac can use the gateway, these apps included.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    static func pairedDetail(_ app: PairedApp) -> String {
+        let paired = "Paired " + app.paired.formatted(date: .abbreviated, time: .omitted)
+        guard let used = app.lastUsed else { return paired + ", not used yet" }
+        return paired + ", last used " + used.formatted(.relative(presentation: .named))
+    }
+
     private func copyToken() -> Bool {
         guard let token = model.token else {
             tokenProblem = "Couldn't read the token."
@@ -800,5 +837,21 @@ struct ContentView: View {
         tokenProblem = nil
         model.copy(token)
         return true
+    }
+}
+
+/// An app's icon, by its bundle ID, or a generic one when it can't be found.
+struct AppIcon: View {
+    let bundleID: String
+
+    var body: some View {
+        Image(nsImage: icon).resizable().frame(width: 24, height: 24)
+    }
+
+    var icon: NSImage {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return NSWorkspace.shared.icon(for: .application)
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 }

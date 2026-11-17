@@ -693,6 +693,13 @@ loopback. So the gateway issues **API tokens**, which clients send as
 an opt-in setting, so that clients that can't send a token yet still work. The
 setting is labelled for what it is.
 
+Besides the owner's token, each app the owner lets use the models gets a
+token of its own. An app is known by its code signature, bundle ID and
+Team ID, never by a name it gives, so an app with the same bundle ID from
+another team is another app. Revoking one refuses only that app, at its next
+request, without a restart, because the gateway reads the paired apps at
+every request and compares a token with every one in constant time.
+
 Being a trusted peer (a device on the allow list) and being an authorized
 client are separate questions, and the design keeps them separate. A mesh shared
 between people later would need both.

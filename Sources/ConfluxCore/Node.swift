@@ -199,15 +199,18 @@ public final class ConfluxNode: @unchecked Sendable {
     /// Peers are the hand-added ones and, with a `directory` and
     /// `settings.iCloudKeychain`, every other device listed there. The
     /// directory is read again every few seconds, and the mesh follows it.
+    ///
+    /// The gateway takes `pairedApps`' tokens as well as the owner's.
     @discardableResult
     public func start(_ settings: NodeSettings, identity: @autoclosure () throws -> DeviceIdentity = try .load(),
                       directory: (any DeviceDirectory)? = nil,
-                      tokenURL: URL = TokenStore.defaultURL) async throws -> UInt16 {
+                      tokenURL: URL = TokenStore.defaultURL,
+                      pairedApps: PairedApps? = nil) async throws -> UInt16 {
         await stop()
         var port: UInt16 = 0
         if settings.gateway {
             let token = settings.requireToken ? try TokenStore.token(at: tokenURL) : nil
-            let gateway = Gateway(scheduler: scheduler, token: token)
+            let gateway = Gateway(scheduler: scheduler, token: token, pairedApps: pairedApps)
             let server = HTTPServer { request in await gateway.handle(request) }
             port = try await server.start(port: settings.port)
             lock.withLock {

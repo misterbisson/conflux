@@ -15,13 +15,18 @@ public enum ContractHeader {
 /// The OpenAI-compatible API clients talk to, on loopback.
 public final class Gateway: Sendable {
     public let scheduler: Scheduler
-    /// The bearer token clients must send, or nil to allow requests without
-    /// one. Tokenless access is an opt-in setting.
+    /// The owner's bearer token, or nil to allow requests without one.
+    /// Tokenless access is an opt-in setting.
     public let token: String?
+    /// Apps with tokens of their own, taken as well as the owner's while a
+    /// token is required. Read at every request, so a revoked app is
+    /// refused at its next.
+    public let pairedApps: PairedApps?
 
-    public init(scheduler: Scheduler, token: String?) {
+    public init(scheduler: Scheduler, token: String?, pairedApps: PairedApps? = nil) {
         self.scheduler = scheduler
         self.token = token
+        self.pairedApps = pairedApps
     }
 
     public func handle(_ request: HTTPRequest) async -> HTTPResponse {
@@ -220,7 +225,10 @@ public final class Gateway: Sendable {
     func authorized(_ request: HTTPRequest) -> Bool {
         guard let token else { return true }
         guard let header = request.header("Authorization"), header.hasPrefix("Bearer ") else { return false }
-        return Gateway.constantTimeEqual(String(header.dropFirst("Bearer ".count)), token)
+        let sent = String(header.dropFirst("Bearer ".count))
+        let owner = Gateway.constantTimeEqual(sent, token)
+        let app = pairedApps?.app(withToken: sent) != nil
+        return owner || app
     }
 
     static func constantTimeEqual(_ a: String, _ b: String) -> Bool {
@@ -270,13 +278,7 @@ public enum TokenStore {
     /// Replaces the token with a new random one.
     @discardableResult
     public static func rotate(at url: URL = defaultURL) throws -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        let token = "cfx_" + Data(bytes).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        let token = try newToken()
         let manager = FileManager.default
         try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                     attributes: [.posixPermissions: 0o700])
@@ -284,5 +286,16 @@ public enum TokenStore {
                            attributes: [.posixPermissions: 0o600])
         try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         return token
+    }
+
+    /// A new random token, 256 bits, in the form every gateway token has.
+    static func newToken() throws -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return "cfx_" + Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
