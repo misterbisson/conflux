@@ -37,8 +37,6 @@
 	<string>$(AppIdentifierPrefix)</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
-	<key>NSFaceIDUsageDescription</key>
-	<string>conflux uses Face ID to unlock its screen when you've locked it.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>conflux connects directly to your Macs on this network, to serve them its model.</string>
 	<key>UIFileSharingEnabled</key>

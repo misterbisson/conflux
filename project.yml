@@ -249,10 +249,6 @@ targets:
         # iroh connects straight to the Macs on the same network when it can,
         # rather than through a relay, and iPadOS asks first.
         NSLocalNetworkUsageDescription: conflux connects directly to your Macs on this network, to serve them its model.
-        # Locking conflux's screen, and unlocking it with Face ID
-        # (Sources/conflux-ipad/ScreenLock.swift). Without this, asking for
-        # Face ID ends the app.
-        NSFaceIDUsageDescription: conflux uses Face ID to unlock its screen when you've locked it.
     entitlements:
       path: App/conflux-ipad.entitlements
       properties:
