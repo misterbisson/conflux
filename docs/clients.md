@@ -211,13 +211,45 @@ that the gateway is up, rather than trying the port until it answers. Read
 changes and no notice comes. And if none comes within a few seconds of a
 launch, conflux didn't serve: its owner stopped it.
 
-### Allow generous concurrency
+### Size concurrency from the slots
 
-Set the client's concurrency **at or above the mesh's peak slot count**, not
-tuned to one server. The gateway holds what hosts can't take yet, inside each
-request's deadline, and answers `429` for the rest. Hosts join and leave during
-a run. A generous fixed concurrency follows that without the client tracking
-capacity.
+Run as many requests at once as the mesh has slots for the models you ask
+for, plus one for each host on another device. Fewer leaves slots idle. More
+costs little: the gateway holds what hosts can't take yet, inside each
+request's deadline, and answers `429` for the rest.
+
+The slots are in `/health`, read with the token. Each host's `capacity` is
+how many requests the gateway can send it now, and its `model` is the model
+it serves. Add up `capacity` over the hosts serving what you ask for:
+
+- for a model by its ID, the hosts whose `model` is that ID;
+- for `any`, every host;
+- for another alias, the hosts whose model `/v1/models` lists with what the
+  alias needs: `vision` in its `capabilities`, or `content_filter` false.
+
+The one more for each host on another device is because a fast host there
+takes a request ahead of a free slot, so its next input has already crossed
+the network when a slot frees
+([design.md](design.md#hosts-pull-the-gateway-holds-a-short-queue)).
+
+The count moves. Macs join the mesh and leave it, memory pressure and heat
+take slots away and give them back, a host has none while its model loads,
+and its owner pausing or draining it takes all of them. So read it again:
+
+- an app on the same Mac, when
+  [the notice](#follow-the-gateway-for-an-app-on-the-same-mac) comes;
+- any other client every 30 seconds or so, and after a `429`.
+
+When the count drops, let the requests already running finish rather than
+cancelling them: the gateway finds them another host or holds them. When it
+reaches none, send nothing new until it rises again or a `Retry-After`
+passes.
+
+The count is a ceiling, not a promise. Other clients, and other Macs'
+gateways, send to the same hosts, and the gateway still decides what goes
+first. A client that can't follow the count, because it has no token or sets
+its concurrency once, keeps a fixed concurrency **at or above the mesh's peak
+slot count**, not tuned to one server.
 
 ### Choose models deliberately
 
