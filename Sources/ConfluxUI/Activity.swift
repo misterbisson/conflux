@@ -78,8 +78,6 @@ public struct ActivityPanel: View {
     @Binding var metric: ActivityMetric
     @Binding var range: ActivityRange
     let now: Date
-    /// Whether it offers the choice of model, count and span.
-    let controls: Bool
     /// Only this model's hosts, or nil for every host.
     @State private var model: String?
 
@@ -93,31 +91,13 @@ public struct ActivityPanel: View {
         self._metric = metric
         self._range = range
         self.now = now
-        self.controls = true
-    }
-
-    /// The same, for looking at only: every model's hosts, counted and
-    /// spanned as given, with no choice of either.
-    public init(series: [ActivitySeries], typicalSeconds: Double?, tailSeconds: Double? = nil,
-                metric: ActivityMetric, range: ActivityRange, now: Date = Date()) {
-        self.series = series
-        self.typicalSeconds = typicalSeconds
-        self.tailSeconds = tailSeconds
-        self._metric = .constant(metric)
-        self._range = .constant(range)
-        self.now = now
-        self.controls = false
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if controls {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline) { summary; Spacer(); pickers }
-                    VStack(alignment: .leading, spacing: 8) { summary; pickers }
-                }
-            } else {
-                summary
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) { summary; Spacer(); pickers }
+                VStack(alignment: .leading, spacing: 8) { summary; pickers }
             }
             ActivityChart(series: series, metric: metric, range: range, now: now,
                           shown: chosen.map { model in Set(series.filter { $0.model == model }.map(\.id)) })
@@ -666,9 +646,6 @@ public struct ResourceTile<Chart: View, Accessory: View>: View {
     let value: String
     let chart: Chart
     let accessory: Accessory
-    /// The title never changes, so where it stays on screen for hours it's
-    /// dimmer, against burn-in.
-    @Environment(\.isLuminanceReduced) private var reduced
 
     public init(_ title: String, value: String, @ViewBuilder accessory: () -> Accessory,
                 @ViewBuilder chart: () -> Chart) {
@@ -680,7 +657,7 @@ public struct ResourceTile<Chart: View, Accessory: View>: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.subheadline).foregroundStyle(reduced ? .tertiary : .secondary)
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
             Text(value).font(.title3.monospacedDigit().weight(.semibold)).lineLimit(1)
             chart
         }
@@ -699,12 +676,11 @@ extension ResourceTile where Accessory == EmptyView {
 }
 
 /// The Heat tile: the thermal state, what resource policy is doing about it,
-/// and the Cool down box (`ResourcePolicy.heat`), unless it's for looking at
-/// only.
+/// and the Cool down box (`ResourcePolicy.heat`).
 public struct HeatTile: View {
     let status: HeatStatus
     let bins: [TimeSeries.Bin]
-    let setCoolDown: (@MainActor @Sendable (Bool) -> Void)?
+    let setCoolDown: @MainActor @Sendable (Bool) -> Void
 
     public init(_ status: HeatStatus, bins: [TimeSeries.Bin],
                 setCoolDown: @escaping @MainActor @Sendable (Bool) -> Void) {
@@ -713,16 +689,9 @@ public struct HeatTile: View {
         self.setCoolDown = setCoolDown
     }
 
-    /// For looking at only: no Cool down box.
-    public init(_ status: HeatStatus, bins: [TimeSeries.Bin]) {
-        self.status = status
-        self.bins = bins
-        self.setCoolDown = nil
-    }
-
     public var body: some View {
         ResourceTile("Heat", value: Thermal.label.capitalized + (status.action.map { " · \($0)" } ?? "")) {
-            if let setCoolDown { CoolDownBox(status, set: setCoolDown) }
+            CoolDownBox(status, set: setCoolDown)
         } chart: {
             LevelBand(bins, colors: thermalColors)
         }
