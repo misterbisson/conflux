@@ -287,7 +287,9 @@ shows, and refuses or holds the build by email when they go unanswered.
   below. `check-app.sh` fails when a source file not on that list uses Apple's
   cryptography or TLS, when the archive holds a bundled cryptography library
   other than apple-iroh's, and when `Package.swift` pins an apple-iroh version
-  the note doesn't name. Any of those means answering again.
+  the note doesn't name. Any of those means checking the answer against
+  [the rule](#export-compliance-the-reasoning) and adding the file or version
+  to the note.
 - **The privacy manifest.** [`App/PrivacyInfo.xcprivacy`](../App/PrivacyInfo.xcprivacy)
   says conflux collects nothing and tracks nothing, and gives the reason for
   each required-reason API it uses: file timestamps, for the model files the
@@ -336,6 +338,13 @@ protect the requests and answers between them.
    Part 2, the app qualifies for an exemption if it's considered a "mass
    market" product or uses cryptography only for standard authentication and
    data protection.
+
+**The rule for what comes later** (2026-11-16): conflux uses cryptography the
+operating system provides, and standard, publicly available open source, and
+implements none of its own. A change that stays inside that, such as checking
+an app's code signature through macOS's Code Signing Services, keeps the
+answer. Cryptography of conflux's own making, or a library that isn't
+standard and public, means answering again.
 
 So `ITSAppUsesNonExemptEncryption` is `NO`. This is the maintainer's
 compliance call, recorded here so a change to what the app contains is checked

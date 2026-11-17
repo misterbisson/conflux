@@ -303,7 +303,8 @@ In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
      the reply URL in that app, with `NSWorkspace.open(_:withApplicationAt:)`,
      carrying the app's token and the gateway's address,
      `http://127.0.0.1:<port>/v1`. On no, the reply says it was declined.
-     Neither is logged.
+     The [mesh log](running.md#the-mesh-log) records which app was paired,
+     declined or refused, never the reply, which carries the token.
    - An app already paired, with the same bundle ID and Team ID, is answered
      at once, without asking and without coming to the front, with the same
      token and the current address. So an app that loses its token, or finds
@@ -320,7 +321,8 @@ In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
    the URL launched it, and an app asking for a reply to another app is
    refused. The sandbox reads other apps' signatures only in `/Applications`
    and the system's folders, so an app has to be there to pair. Not yet run:
-   an approval, a reply carrying a token, and a request answered with it.
+   an approval, a reply carrying a token, a request answered with it, and
+   pairing again after the port changes.
 
 4. **A notice when the gateway changes.** conflux posts a distributed
    notification, `com.caseybisson.conflux.gateway.changed`, when its gateway
