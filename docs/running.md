@@ -161,6 +161,11 @@ when it has no model file.
   `Authorization: Bearer <token>`. To allow clients that can't send one, use
   `--no-token`, or turn off "Require the token" in the app. Any process on
   the Mac can then use the gateway.
+- **Apps:** an app you let use your models has a token of its own, which
+  the app's gateway takes as well as yours. They're listed under
+  **Gateway**, in **Apps**, with when each was paired and last used.
+  **Revoke** takes one away: that app's next request gets `401`, and it has
+  to ask again. `conflux serve` takes only the owner's token.
 - **Model:** `any`, `any-vision`, `any-unfiltered` or `any-vision-unfiltered`
   (any model, or any vision model, other than Apple's, whose guardrails
   decline some content), or the ID `/v1/models` lists, which is the GGUF file
@@ -287,6 +292,7 @@ of what happened, `mesh.log` ([Files](#files)). It says:
   going to sleep and waking, or an iPad going to the background and back. A
   start with no stop before it means conflux quit without stopping, as a
   crash does.
+- **Apps**: an app's token revoked, under `gateway`.
 
 ```text
 2026-11-15T00:11:35.204-08:00  node  started: conflux 0.9.0 (22), gateway on 127.0.0.1:8090, 0 peers added by hand, iCloud Keychain on
@@ -593,6 +599,7 @@ conflux's own folder, where copied models go.
 | What | Where |
 |---|---|
 | Gateway token | `~/Library/Application Support/conflux/token` |
+| Paired apps and their tokens | `~/Library/Application Support/conflux/paired-apps.json` |
 | Device key, built from source | `~/Library/Application Support/conflux/identity/` (the app keeps it in the keychain) |
 | Device directory, the TestFlight app | iCloud Keychain, as `conflux.device` items: each Mac's endpoint ID and name, nothing secret |
 | llama.cpp log | `~/Library/Logs/conflux/llama.log` |

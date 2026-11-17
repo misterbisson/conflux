@@ -111,6 +111,10 @@ final class AppModel: ObservableObject {
     /// listing. The keychain sends no notice of changes.
     private static let directoryInterval: Duration = .seconds(10)
     private static let key = "settings"
+    /// Apps with tokens of their own, which the gateway takes as well as the
+    /// owner's.
+    let pairedApps = PairedApps()
+    @Published private(set) var paired: [PairedApp] = []
     /// Whether conflux was serving when it quit, to serve again at launch.
     private let servingAtLaunch = ServingAtLaunch()
     /// Keeps the Mac from idle sleep while it serves.
@@ -134,6 +138,9 @@ final class AppModel: ObservableObject {
                     self.snapshot = snapshot
                     for host in snapshot.hosts { if let model = host.model?.id { self.hostModels[host.id] = model } }
                     self.peers = self.node.peers
+                    // When each app was last used changes as it sends requests.
+                    let paired = self.pairedApps.apps
+                    if paired != self.paired { self.paired = paired }
                     self.meshProblem = self.node.meshProblem
                     self.slotProblem = self.node.slotProblem
                     self.refused = self.node.refusedConnections
@@ -183,6 +190,7 @@ final class AppModel: ObservableObject {
             _ = done.wait(timeout: .now() + 3)
         }
         checkFiles()
+        paired = pairedApps.apps
         // Serving when it quit, so serving again, whether the owner opened it
         // or a client app launched it in the background.
         if servingAtLaunch.resumes && canStart { start() }
@@ -416,7 +424,7 @@ final class AppModel: ObservableObject {
         }
         Task {
             do {
-                port = try await node.start(settings, directory: directory)
+                port = try await node.start(settings, directory: directory, pairedApps: pairedApps)
                 running = true
                 intent = .serving
             } catch {
@@ -481,6 +489,18 @@ final class AppModel: ObservableObject {
     func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Takes an app's token away. Its next request gets `401`, and it has to
+    /// ask again.
+    func revoke(_ app: PairedApp) {
+        do {
+            try pairedApps.revoke(app.id)
+            node.events?.record("gateway", "revoked \(app.name) (\(app.bundleID))")
+        } catch {
+            problem = "Couldn't revoke \(app.name): \(error.localizedDescription)"
+        }
+        paired = pairedApps.apps
     }
 
     func rotateToken() {

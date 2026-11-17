@@ -277,6 +277,10 @@ In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
 
    *Done when:* tests show the gateway taking each token, refusing a revoked
    one, and comparing in constant time.
+   *Built*, in the window's **Gateway** tab, under **Apps**, which shows
+   once an app has paired: until step 3, none can. A revoke goes in the
+   [mesh log](running.md#the-mesh-log). `conflux serve` takes only the
+   owner's token.
 
 3. **Pairing, through a `conflux://` URL.** The Mac app registers the
    scheme, and handles it in its app delegate, because a SwiftUI
