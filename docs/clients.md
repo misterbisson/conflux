@@ -93,6 +93,9 @@ launches conflux if it isn't running.
 The owner sees each paired app in conflux's window, under **Gateway**, in
 **Apps**, with when it last sent a request, and can revoke it there.
 
+Once paired, [follow the gateway](#follow-the-gateway-for-an-app-on-the-same-mac)
+rather than asking it again and again.
+
 ### Own your work
 
 conflux doesn't keep a durable queue. The client keeps track of what still needs
@@ -172,6 +175,41 @@ Stable across retries of the same work. The gateway uses it to:
   answer. The gateway does this at the tail of a batch, when nothing is
   waiting, and with or without a key the client gets one answer per
   request. With a key, a retry gets that same answer.
+
+### Follow the gateway, for an app on the same Mac
+
+The conflux app posts a distributed notification,
+`com.caseybisson.conflux.gateway.changed`, when its gateway changes:
+
+- it starts listening, including when conflux launches and serves again;
+  stops; moves to another port; or conflux quits;
+- the owner drains, pauses or resumes it;
+- a Mac joins the mesh or leaves it, or a host serves another model;
+- the slots a host can fill now change, which they do under memory pressure
+  and heat, and as a model loads.
+
+Not when a request starts or finishes. At most one notice a second: a change
+within a second of the last notice waits until the second is up, so a burst
+of changes posts one, and a notice comes within about two seconds of the
+change. The command line's `conflux serve` posts none.
+
+The notice carries nothing, and anyone can post one. Take it as a reason to
+look, not as news: read `/health` and `/v1/models` again, with your token.
+A sandboxed app can watch for it:
+
+```swift
+DistributedNotificationCenter.default().addObserver(
+    forName: Notification.Name("com.caseybisson.conflux.gateway.changed"),
+    object: nil, queue: .main) { _ in
+    // Read /health and /v1/models again.
+}
+```
+
+So an app that launches conflux in the background can wait for the notice
+that the gateway is up, rather than trying the port until it answers. Read
+`/health` first: if conflux was already running and serving, nothing
+changes and no notice comes. And if none comes within a few seconds of a
+launch, conflux didn't serve: its owner stopped it.
 
 ### Allow generous concurrency
 
