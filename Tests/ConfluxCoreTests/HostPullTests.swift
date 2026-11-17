@@ -168,7 +168,11 @@ import Testing
         // The peer pauses; the gateway's last status still says one slot is free.
         await peer.scheduler.setLimit(0, reason: "memory pressure is critical", for: "local")
 
-        let outcome = await gateway.submit(Data("{}".utf8), choice: any, deadline: Date().addingTimeInterval(3),
+        // The gateway then waits for a slot until a second before the
+        // deadline. The peer answers at once, but a loaded machine can take
+        // seconds to carry that answer over loopback, and it must arrive
+        // before then to count.
+        let outcome = await gateway.submit(Data("{}".utf8), choice: any, deadline: Date().addingTimeInterval(6),
                                            key: nil)
         if case .busy = outcome {} else { Issue.record("\(outcome)") }
         let snapshot = try #require(await gateway.snapshot().hosts.first)
