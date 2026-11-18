@@ -124,6 +124,7 @@ public final class Gateway: Sendable {
             if let model = host.model { entry["model"] = model.id }
             if let detail = host.state.detail { entry["detail"] = detail }
             if let typical = host.typicalSeconds { entry["typical_seconds"] = seconds(typical) }
+            if let pace = Gateway.pace(host.pace) { entry["pace"] = pace }
             if let request = host.requestSeconds { entry["request_seconds"] = percentiles(request) }
             if let utilization = host.utilization { entry["utilization"] = fraction(utilization) }
             if let hardware = host.hardware.map(Gateway.hardware), !hardware.isEmpty { entry["hardware"] = hardware }
@@ -146,6 +147,20 @@ public final class Gateway: Sendable {
         if let utilization = snapshot.utilization { mesh["utilization"] = fraction(utilization) }
         if let wait = snapshot.waitSeconds { mesh["wait_seconds"] = percentiles(wait) }
         return ["status": "ok", "mesh": mesh, "hosts": hosts]
+    }
+
+    /// How quickly a host reads and writes, for `/health`: only what's known,
+    /// or nil when nothing is.
+    static func pace(_ pace: HostPace) -> [String: Any]? {
+        func rounded(_ value: Double, _ places: Double = 1000) -> Double { (value * places).rounded() / places }
+        var entry: [String: Any] = [:]
+        if let p = pace.secondsPerPromptToken { entry["seconds_per_1k_prompt_tokens"] = rounded(p * 1000) }
+        if let w = pace.secondsPerWrittenToken { entry["seconds_per_1k_written_tokens"] = rounded(w * 1000) }
+        if let i = pace.tokensPerImage { entry["tokens_per_image"] = i.rounded() }
+        if let t = pace.templateTokens { entry["template_tokens"] = t.rounded() }
+        if let w = pace.written { entry["written_tokens"] = w.rounded() }
+        if let o = pace.overhead { entry["overhead_seconds"] = rounded(o) }
+        return entry.isEmpty ? nil : entry
     }
 
     /// A host's hardware for `/health`: only the fields it reported.
