@@ -18,6 +18,9 @@ public struct GGUFMetadata: Sendable, Equatable {
     /// `general.basename`, the name without its size or fine-tune, such as
     /// "SmolVLM".
     public var basename: String?
+    /// `general.size_label`, such as "4B", or "128x2.6B" for a mixture of
+    /// experts.
+    public var sizeLabel: String?
     /// A model's `<architecture>.embedding_length`: how wide the vectors its
     /// layers take are.
     public var embeddingLength: Int?
@@ -193,6 +196,7 @@ extension GGUFMetadata {
             case "general.architecture": metadata.architecture = try reader.string(type)
             case "general.name": metadata.name = try reader.string(type)
             case "general.basename": metadata.basename = try reader.string(type)
+            case "general.size_label": metadata.sizeLabel = try reader.string(type)
             case "clip.vision.projection_dim": projectionWidth = try reader.integer(type)
             case "clip.has_vision_encoder": metadata.hasVisionEncoder = try reader.bool(type)
             case "clip.has_audio_encoder": metadata.hasAudioEncoder = try reader.bool(type)

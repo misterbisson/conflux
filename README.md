@@ -74,9 +74,38 @@ together.
 | [Gemma 4 31B-it](https://huggingface.co/ggml-org/gemma-4-31B-it-GGUF), Q4_0 | 18.8 GB | Apache 2.0 | The largest Gemma 4, and about a quarter as fast as 26B-A4B: some 20 s a request on an M4 Pro. For Macs with 36 GB or more. See [Gemma 4](#gemma-4). |
 
 **Qwen-VL models need at least 1,024 tokens per image** to read images
-correctly. Set **Fewest tokens per image** to 1024 in the app, or pass
+correctly. conflux sets that for the Qwen3-VL models below. For another,
+set **Fewest tokens per image** to 1024 in the app, or pass
 `--image-min-tokens 1024` to `conflux serve`
 ([running.md](docs/running.md#if-the-self-check-fails)).
+
+### What conflux suggests for them
+
+conflux knows these models by their files' headers, whatever the file is
+called or how it's quantized. The first time one is chosen, it takes these
+settings, and the [tags](docs/clients.md#ask-for-what-the-work-needs) that
+say which requests reach it. Change any of them after, and conflux keeps
+what you chose ([running.md](docs/running.md#defaults-for-known-models)).
+
+| Model | Settings | Tags | Answers |
+|---|---|---|---|
+| Qwen3-VL 8B | 8,192, 1,024 per image | `image-description` | any |
+| Qwen3-VL 4B | 8,192, 1,024 per image | `image-description` | any |
+| Gemma 3 4B | 8,192 | `image-description` | any |
+| Gemma 4 26B-A4B | 32,768, 1 slot | `image-description` | any |
+| Gemma 4 31B | 32,768, 1 slot | `editorial`, `image-critique`, `reasoning`, `writing` | only when asked for |
+| SmolVLM 256M (the starter model) | 4,096 | none | any |
+| Apple's on-device model | 4,096, fixed | `image-description` | any |
+
+Settings are tokens of context per slot, then slots and tokens per image
+where measurements say. Describing one image takes a few hundred to about
+1,500 tokens. Choosing among hundreds of descriptions takes 32,768 or more,
+which costs Gemma 4 little memory: most of its layers look back only 1,024
+tokens. Gemma 4 31B is held back, so `any` never reaches it, and it answers
+requests for `editorial`, `image-critique`, `reasoning` or `writing`, the
+work it does where the smaller models fall short. Gemma 4 E4B isn't listed until it's measured.
+[`ModelCatalog.swift`](Sources/ConfluxCore/ModelCatalog.swift) says what
+each suggestion rests on.
 
 ### Getting them
 
