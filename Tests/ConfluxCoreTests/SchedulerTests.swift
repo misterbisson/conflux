@@ -76,7 +76,11 @@ import Testing
     /// A host that answers busy as the deadline nears, as a peer on a slow
     /// link can, had no slot: nothing ran, so it's busy, not out of time.
     @Test func busyNearTheDeadlineIsStillBusy() async {
-        let deadline = Date().addingTimeInterval(2)
+        // Seconds ahead: the scheduler keeps a second's margin, and sends
+        // nothing to a host once that's all that's left. A loaded runner
+        // can take more than a second to get the request there, which then
+        // ends as out of time without reaching the host.
+        let deadline = Date().addingTimeInterval(5)
         // Answers in the last half second before the deadline, timed from
         // the deadline rather than from when the request reached it: on a
         // loaded runner it can reach it late, and a fixed sleep then
