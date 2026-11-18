@@ -118,6 +118,70 @@ a message's text and image parts the way llama.cpp does.
 - The mesh's gain comes from adding devices, not from batching on small ones.
   That's the case Phase 2 is for.
 
+## M4 Pro, 48 GB: Gemma 4
+
+Gemma 4's two largest models against Gemma 3 4B, one Mac, one model at a
+time.
+
+- **Device:** a 14-inch MacBook Pro, M4 Pro (16-core GPU), 48 GB, with other
+  applications open and 18 GB already in swap
+- **Models:** Gemma 4 26B-A4B-it and 31B-it, Q4_0, each with its Q8_0
+  projector (Apache 2.0); Gemma 3 4B-it, Q4_K_M, with its F16 projector
+  ([Gemma Terms of Use](https://ai.google.dev/gemma/terms))
+- **Runtime:** `conflux serve --runtime llama-server -- --reasoning off`,
+  conflux 0.14.0, Homebrew's llama.cpp build 11669. The in-process runtime
+  can't serve Gemma 4 yet (below).
+- **Workload:** `conflux-bench run` against the gateway, twice as many
+  requests in flight as slots, 10 measured requests a slot after warmup, 64
+  images from `conflux-bench images`, at most 1,024 px, so no image was sent
+  twice. Its default prompt, "Describe this image in one paragraph.", with
+  up to 256 tokens of answer. Gemma 4 read each request as 463 prompt
+  tokens, Gemma 3 as 274, and each answered in 95 to 110 tokens.
+- **Date:** 2026-11-17
+
+| Model | Slots | Per hour | p50 latency | Reading the prompt | Generating | Peak memory |
+|---|---|---|---|---|---|---|
+| Gemma 3 4B | 1 | 1,036 | 6.8 s | 2.1 s | 1.4 s | 4.8 GB |
+| Gemma 3 4B | 2 | 1,057 | 14.1 s | 2.4 s | 4.3 s | 6.1 GB |
+| Gemma 4 26B-A4B | 1 | 738 | 9.4 s | 3.2 s | 1.6 s | 17.7 GB |
+| Gemma 4 26B-A4B | 2 | 805 | 18.4 s | 3.4 s | 5.5 s | 18.7 GB |
+| Gemma 4 31B | 1 | 178 | 40.7 s | 10.3 s | 9.5 s | 21.6 GB |
+| Gemma 4 31B | 2 | 169 | 85.5 s | 10.8 s | 17.4 s | 23.3 GB |
+
+Reading and generating are the server's times for one request, averaged.
+Peak memory is conflux and `llama-server` together, the model's weights
+included. The Mac's thermal state was fair, not nominal, throughout.
+
+- **26B-A4B is nearly as fast as a 4B model.** It's a mixture of experts:
+  each token uses 8 of its 128 experts, about 4B parameters. It generated
+  about 70 tokens/s, the same as Gemma 3 4B, and took 4.8 s of the server's
+  time a request against 3.5 s. Most of the difference is reading the
+  image: Gemma 4 reads it as more tokens.
+- **31B is about four times slower than 26B-A4B.** It's dense: every token
+  reads all 18 GB of its weights, so the M4 Pro's 273 GB/s holds it to about
+  10 tokens/s generating, and 45 tokens/s reading the prompt. A request
+  takes about 20 s of the server's time.
+- **Both described the benchmark images correctly**, text in them included,
+  in one paragraph each. This run doesn't say how much better 31B's answers
+  are; a client's own images, with answers checked, would.
+- **A second slot adds little to either.** 26B-A4B did 9% more with two,
+  and 31B none, while latency doubled. One slot each on this Mac.
+- **The 31B's first run went into swap.** Swap grew 5.1 GB as its 18 GB of
+  weights loaded into a Mac already short of memory. The run after it grew
+  0.3 GB and read prompts at the same speed, so swap didn't set the pace.
+  A 32 GB Mac is untested: 26B-A4B should fit with room, but 31B, at about
+  22 GB with one slot, would be close to what macOS lets the GPU use.
+- **Benchmark with more images than requests.** A first run of 26B-A4B
+  with only 8 images, each sent more than once, showed 1,100 an hour, half
+  again what it does. `llama-server` keeps recent prompts, and a repeated
+  image costs it almost nothing to read.
+
+The in-process runtime, the only one the app and the iPad use, fails
+Gemma 4's self-check with "llama.cpp doesn't support this model's chat
+template". It formats prompts with `llama_chat_apply_template`, which knows
+a fixed list of templates, and llama.cpp build 12110's list has no Gemma 4.
+`llama-server` reads the model's own template.
+
 ## Mesh: three Macs and two iPads
 
 The first numbers from a real mesh, read from the app's window while a client

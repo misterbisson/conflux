@@ -119,6 +119,10 @@ down. It needs llama.cpp installed (`brew install llama.cpp`), and
 everything after `--` is passed to `llama-server`. With the same llama.cpp
 build, both runtimes give the same answers ([design.md](design.md#runtimes)).
 
+Gemma 4 models need `llama-server` for now: the in-process runtime formats
+prompts with llama.cpp's built-in chat templates, which don't include Gemma
+4's ([README](../README.md#gemma-4)).
+
 ### Apple's on-device model
 
 The model Apple Intelligence uses can be served alongside the model file, as
