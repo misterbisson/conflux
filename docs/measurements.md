@@ -129,8 +129,9 @@ time.
   projector (Apache 2.0); Gemma 3 4B-it, Q4_K_M, with its F16 projector
   ([Gemma Terms of Use](https://ai.google.dev/gemma/terms))
 - **Runtime:** `conflux serve --runtime llama-server -- --reasoning off`,
-  conflux 0.14.0, Homebrew's llama.cpp build 11669. The in-process runtime
-  can't serve Gemma 4 yet (below).
+  conflux 0.14.0, Homebrew's llama.cpp build 11669, for the table. Then
+  in-process, with build 12110, once conflux formatted Gemma 4's prompts
+  itself (below).
 - **Workload:** `conflux-bench run` against the gateway, twice as many
   requests in flight as slots, 10 measured requests a slot after warmup, 64
   images from `conflux-bench images`, at most 1,024 px, so no image was sent
@@ -176,11 +177,32 @@ included. The Mac's thermal state was fair, not nominal, throughout.
   again what it does. `llama-server` keeps recent prompts, and a repeated
   image costs it almost nothing to read.
 
-The in-process runtime, the only one the app and the iPad use, fails
-Gemma 4's self-check with "llama.cpp doesn't support this model's chat
-template". It formats prompts with `llama_chat_apply_template`, which knows
-a fixed list of templates, and llama.cpp build 12110's list has no Gemma 4.
-`llama-server` reads the model's own template.
+### In-process
+
+At first the in-process runtime, the only one the app and the iPad use,
+failed Gemma 4's self-check with "llama.cpp doesn't support this model's
+chat template". It formatted prompts with `llama_chat_apply_template`, which
+knows a fixed list of templates, and build 12110's list has no Gemma 4.
+conflux now formats Gemma 4's prompts itself. One slot, the same workload:
+
+| Model | Per hour | p50 latency | Reading the prompt | Generating |
+|---|---|---|---|---|
+| Gemma 4 26B-A4B | 686 | 10.5 s | 3.4 s | 1.8 s |
+| Gemma 4 31B | 180 | 38.9 s | 10.1 s | 9.9 s |
+
+- **The two runtimes run at the same speed**, within what this run can
+  tell. 26B-A4B's in-process run began with 21.7 GB in swap, and
+  `conflux-bench` marked it short of memory.
+- **The prompts match `llama-server`'s.** Every request was 463 prompt
+  tokens in both. At temperature 0, text-only requests, one with a system
+  message and one with an earlier answer, got identical answers, word for
+  word.
+- **Answers about images differ, because the builds do.** They begin alike
+  and part partway through. Gemma 3 4B, through the same two runtimes and
+  builds, gave identical answers about the same images. Between build 11669
+  and 12110, llama.cpp fixed Gemma 4's vision encoder and stopped
+  letterboxing its images. In-process, with 12110, has both fixes; use
+  `llama-server` from build 12110 or later.
 
 ## Mesh: three Macs and two iPads
 
