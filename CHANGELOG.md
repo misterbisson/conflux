@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.0](https://github.com/misterbisson/conflux/compare/v0.13.0...v0.14.0) (2026-11-17)
+
+
+### Features
+
+* give each paired app a gateway token of its own, with Revoke in the window ([#121](https://github.com/misterbisson/conflux/issues/121)) ([36a6837](https://github.com/misterbisson/conflux/commit/36a683717ff8f42a45e08844708ce8f647dac1be))
+* let apps on the Mac pair with conflux through conflux://pair, with the owner's approval ([#123](https://github.com/misterbisson/conflux/issues/123)) ([463781d](https://github.com/misterbisson/conflux/commit/463781dbc7604189eb2dd12c8d0e8147fe4907b8))
+* tell apps on the Mac when the gateway changes, with a distributed notification ([#125](https://github.com/misterbisson/conflux/issues/125)) ([bcb566f](https://github.com/misterbisson/conflux/commit/bcb566fb4c84396dd8e861c3a4c474fa63f94c95))
+
+
+### Bug Fixes
+
+* answer busy, not deadline passed, when a peer with no free slot answers late ([#127](https://github.com/misterbisson/conflux/issues/127)) ([c5667c1](https://github.com/misterbisson/conflux/commit/c5667c1afa62296e426070d9d139709d5f529e5c))
+* give a request one more try when its host's model fails it and no other host can take it ([#119](https://github.com/misterbisson/conflux/issues/119)) ([e64073a](https://github.com/misterbisson/conflux/commit/e64073a1f36e2fe458e383b3a6eeabd5a9ee25b4))
+* **ipad:** remove the screen lock, which crashed the app ([#122](https://github.com/misterbisson/conflux/issues/122)) ([b43ff92](https://github.com/misterbisson/conflux/commit/b43ff9218ef39fcff0cf75a113387fbd0908d56c))
+
 ## [0.13.0](https://github.com/misterbisson/conflux/compare/v0.12.0...v0.13.0) (2026-11-15)
 
 
