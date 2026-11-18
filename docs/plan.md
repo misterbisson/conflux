@@ -250,7 +250,8 @@ contribution is measured against the effort of keeping it there.
      *Built since:* suggestions for the models the README lists, in
      `ModelCatalog`, matched by header: a context per slot, slots and
      tokens per image where measurements say, and tags, with Gemma 4 31B
-     held back for `editorial` and `writing`. Applied when a model is
+     held back for `editorial`, `image-critique`, `reasoning` and
+     `writing`. Applied when a model is
      chosen, and by `conflux serve` for options not given. An iPad takes
      the tags, not yet the settings.
   2. **A request's expected time from its size**, timed per thousand prompt

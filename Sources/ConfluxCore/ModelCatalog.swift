@@ -84,9 +84,9 @@ public enum ModelCatalog {
         ModelDefaults(
             name: "Gemma 4 31B", architecture: "gemma4", sizeLabel: "31B", basename: nil,
             contextPerSlot: 32768, slots: 1, imageMinTokens: nil,
-            labels: ModelLabels(tags: ["editorial", "writing"], onlyWhenAsked: true),
-            basis: "Chose among hundreds of items, and wrote, where smaller models fell short, in testing with "
-                + "real work. About 20 s a request, and a second slot added nothing (docs/measurements.md, "
+            labels: ModelLabels(tags: ["editorial", "image-critique", "reasoning", "writing"], onlyWhenAsked: true),
+            basis: "Chose among hundreds of items, wrote, judged images and reasoned through problems where "
+                + "smaller models fell short, in testing with real work. About 20 s a request, and a second slot added nothing (docs/measurements.md, "
                 + "M4 Pro), so it's held back for the requests that ask for it."),
         ModelDefaults(
             name: "SmolVLM 256M (the starter model)", architecture: "llama", sizeLabel: "256M", basename: "SmolVLM",

@@ -93,7 +93,7 @@ what you chose ([running.md](docs/running.md#defaults-for-known-models)).
 | Qwen3-VL 4B | 8,192, 1,024 per image | `image-description` | any |
 | Gemma 3 4B | 8,192 | `image-description` | any |
 | Gemma 4 26B-A4B | 32,768, 1 slot | `image-description` | any |
-| Gemma 4 31B | 32,768, 1 slot | `editorial`, `writing` | only when asked for |
+| Gemma 4 31B | 32,768, 1 slot | `editorial`, `image-critique`, `reasoning`, `writing` | only when asked for |
 | SmolVLM 256M (the starter model) | 4,096 | none | any |
 | Apple's on-device model | 4,096, fixed | `image-description` | any |
 
@@ -102,8 +102,8 @@ where measurements say. Describing one image takes a few hundred to about
 1,500 tokens. Choosing among hundreds of descriptions takes 32,768 or more,
 which costs Gemma 4 little memory: most of its layers look back only 1,024
 tokens. Gemma 4 31B is held back, so `any` never reaches it, and it answers
-requests for `editorial` or `writing`, the work it does where the smaller
-models fall short. Gemma 4 E4B isn't listed until it's measured.
+requests for `editorial`, `image-critique`, `reasoning` or `writing`, the
+work it does where the smaller models fall short. Gemma 4 E4B isn't listed until it's measured.
 [`ModelCatalog.swift`](Sources/ConfluxCore/ModelCatalog.swift) says what
 each suggestion rests on.
 

@@ -30,7 +30,8 @@ import Testing
 
     @Test func theLargeModelIsHeldBackForTheWorkItDoes() throws {
         let large = try #require(ModelCatalog.defaults(for: metadata("gemma4", "31B")))
-        #expect(large.labels == ModelLabels(tags: ["editorial", "writing"], onlyWhenAsked: true))
+        #expect(large.labels == ModelLabels(tags: ["editorial", "image-critique", "reasoning", "writing"],
+                                                     onlyWhenAsked: true))
         #expect(large.contextPerSlot == 32768)
         #expect(large.slots == 1)
     }
@@ -76,7 +77,8 @@ import Testing
         defer { try? FileManager.default.removeItem(at: url) }
         let config = ModelConfig(model: url.path)
         var settings = NodeSettings()
-        #expect(settings.labels(for: config) == ModelLabels(tags: ["editorial", "writing"], onlyWhenAsked: true))
+        #expect(settings.labels(for: config) == ModelLabels(tags: ["editorial", "image-critique", "reasoning", "writing"],
+                                                     onlyWhenAsked: true))
         settings.labels[config.modelID] = ModelLabels(tags: ["reasoning"])
         #expect(settings.labels(for: config) == ModelLabels(tags: ["reasoning"]))
         #expect(settings.labels(for: ModelConfig(model: "/no/such/file.gguf")) == ModelLabels())
