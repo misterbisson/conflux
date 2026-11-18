@@ -418,11 +418,11 @@ warning or critical, over the chart's span, and what conflux is doing about
 it: *halved*, *paused* or *unloaded*. With `llama-server`, the host only
 pauses.
 
-**Cool down**, the box in the Heat tile, rests the host at serious heat too,
+**Keep cool**, the box in the Heat tile, rests the host at serious heat too,
 until it's back to fair, rather than letting it stay hot. It's off until you
 check it, and it takes effect at once. A device that serves for hours while
 charging stays hot, and heat ages a battery. The tile says what's happening
-after the heat: "resting" while Cool down holds the host back, "halved" while
+after the heat: "resting" while Keep cool holds the host back, "halved" while
 conflux has taken slots itself, and "paused" while conflux has paused it,
 when the box is checked and can't be changed, since unchecking it couldn't
 resume anything. iPadOS and macOS don't tell apps when they slow the chip
@@ -592,7 +592,7 @@ for the model file: only in the foreground, and only while charging unless
   plugged in again or **Serve on battery** is on, under **This iPad** in
   **Models**. A **Drain** or **Pause** of its owner's holds as well: it takes
   work only when none of them holds it back.
-- **Resting when hot**, with **Cool down** checked in the Heat tile: at
+- **Resting when hot**, with **Keep cool** checked in the Heat tile: at
   serious heat it pauses until it's back to fair ([What the states
   mean](#what-the-states-mean)). An iPad serves one request at a time, and
   halving one slot leaves one, so without it an iPad serves on at serious

@@ -676,7 +676,7 @@ extension ResourceTile where Accessory == EmptyView {
 }
 
 /// The Heat tile: the thermal state, what resource policy is doing about it,
-/// and the Cool down box (`ResourcePolicy.heat`).
+/// and the Keep cool box (`ResourcePolicy.heat`).
 public struct HeatTile: View {
     let status: HeatStatus
     let bins: [TimeSeries.Bin]
@@ -691,7 +691,7 @@ public struct HeatTile: View {
 
     public var body: some View {
         ResourceTile("Heat", value: Thermal.label.capitalized + (status.action.map { " · \($0)" } ?? "")) {
-            CoolDownBox(status, set: setCoolDown)
+            KeepCoolBox(status, set: setCoolDown)
         } chart: {
             LevelBand(bins, colors: thermalColors)
         }
@@ -700,7 +700,7 @@ public struct HeatTile: View {
 
 /// Checked to rest this device's hosts at serious heat until it's back to
 /// fair. Checked and dimmed while resource policy has paused them itself.
-struct CoolDownBox: View {
+struct KeepCoolBox: View {
     let status: HeatStatus
     let set: @MainActor @Sendable (Bool) -> Void
 
@@ -717,7 +717,7 @@ struct CoolDownBox: View {
 
     var body: some View {
         let isOn = Binding(get: { status.box != .off }, set: set)
-        Toggle("Cool down", isOn: isOn)
+        Toggle("Keep cool", isOn: isOn)
             #if os(macOS)
             .toggleStyle(.checkbox)
             .controlSize(.small)
