@@ -61,7 +61,7 @@ the internet. Fetch them yourself, then choose them in the app or pass them to
 your own Mac. Until you do, the app serves its small
 [starter model](docs/running.md#the-starter-model).
 
-These four are good places to start. Sizes are the model and its projector
+These six are good places to start. Sizes are the model and its projector
 together.
 
 | Model | Size | License | Notes |
@@ -69,7 +69,9 @@ together.
 | [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF), Q4_K_M | 5.8 GB | Apache 2.0 | The best of these at reading text in images. For Macs with 16 GB or more. |
 | [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF), Q4_K_M | 3.0 GB | Apache 2.0 | Faster, and fits smaller devices. The model in [measurements.md](docs/measurements.md). |
 | [Gemma 3 4B-it](https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF), Q4_K_M | 3.3 GB | [Gemma Terms of Use](https://ai.google.dev/gemma/terms), with use restrictions | Shrinks every image to 896 px square, 256 tokens, so it reads images faster than Qwen but can miss small text. |
-| [Gemma 4 E4B-it](https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF), Q4_0 | 5.2 GB | Apache 2.0 | The newest. Its per-layer embeddings make the file as big as an 8B model's. Not yet measured with conflux. |
+| [Gemma 4 E4B-it](https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF), Q4_0 | 5.2 GB | Apache 2.0 | Gemma 4's smallest here. Its per-layer embeddings make the file as big as an 8B model's. Not yet measured with conflux. [Needs `llama-server`](#gemma-4). |
+| [Gemma 4 26B-A4B-it](https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF), Q4_0 | 15.4 GB | Apache 2.0 | A mixture of experts that uses about 4B of its 26B parameters for each token, so it runs nearly as fast as a 4B model. For Macs with 32 GB or more. [Needs `llama-server`](#gemma-4). |
+| [Gemma 4 31B-it](https://huggingface.co/ggml-org/gemma-4-31B-it-GGUF), Q4_0 | 18.8 GB | Apache 2.0 | The largest Gemma 4, and about a quarter as fast as 26B-A4B: some 20 s a request on an M4 Pro. For Macs with 36 GB or more. [Needs `llama-server`](#gemma-4). |
 
 **Qwen-VL models need at least 1,024 tokens per image** to read images
 correctly. Set **Fewest tokens per image** to 1024 in the app, or pass
@@ -105,6 +107,22 @@ curl -L -O https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma
 ```bash
 curl -L -O https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_0.gguf \
         -O https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/mmproj-gemma-4-E4B-it-Q8_0.gguf
+```
+
+```bash
+curl -L -O https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q4_0.gguf \
+        -O https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-gemma-4-26B-A4B-it-Q8_0.gguf
+```
+
+```bash
+curl -L -O https://huggingface.co/ggml-org/gemma-4-31B-it-GGUF/resolve/main/gemma-4-31B-it-Q4_0.gguf \
+        -O https://huggingface.co/ggml-org/gemma-4-31B-it-GGUF/resolve/main/mmproj-gemma-4-31B-it-Q8_0.gguf
+```
+
+Check each file against the SHA-256 its Hugging Face page lists:
+
+```bash
+shasum -a 256 gemma-4-31B-it-Q4_0.gguf
 ```
 
 Gemma 3's projector is published as `mmproj-model-f16.gguf`, so that command
@@ -144,6 +162,46 @@ Before serving, the host checks that the model can read an image. If it
 can't, [running.md](docs/running.md#if-the-self-check-fails) says why that
 usually happens. [phase-0.md](docs/phase-0.md) covers measuring a model on
 your devices and choosing its slots.
+
+### Gemma 4
+
+Gemma 4 models run only with `conflux serve --runtime llama-server`, on a
+Mac, for now. The app and the iPad run llama.cpp in-process, and that way
+of running it doesn't know Gemma 4's chat template, so the host fails its
+self-check with "llama.cpp doesn't support this model's chat template".
+`llama-server` reads the template from the model.
+
+1. Install llama.cpp:
+
+   ```bash
+   brew install llama.cpp
+   ```
+
+2. Download the model and its projector, above.
+
+3. Serve it, with thinking off:
+
+   ```bash
+   swift run -c release conflux serve --runtime llama-server --model ~/models/gemma-4-26B-A4B-it-Q4_0.gguf --mmproj ~/models/mmproj-gemma-4-26B-A4B-it-Q8_0.gguf -- --reasoning off
+   ```
+
+   ```bash
+   swift run -c release conflux serve --runtime llama-server --model ~/models/gemma-4-31B-it-Q4_0.gguf --mmproj ~/models/mmproj-gemma-4-31B-it-Q8_0.gguf -- --reasoning off
+   ```
+
+   Everything after `--` goes to `llama-server`. Gemma 4 can think before
+   it answers. `--reasoning off` has it answer straight away, which keeps
+   each request fast and its tokens for the answer.
+
+4. Keep one slot, the default. On an M4 Pro with 48 GB, a second slot added
+   9% to 26B-A4B's throughput and nothing to 31B's, and doubled the latency
+   of both.
+
+On that Mac, 26B-A4B did 738 requests an hour, taking 17.7 GB of memory,
+and 31B did 178, taking 21.6 GB. [measurements.md](docs/measurements.md#m4-pro-48-gb-gemma-4)
+has the details. A 31B request takes about 20 s of the host's time, so
+clients with short deadlines may see it time out under load. Unless the
+larger model's answers matter, 26B-A4B is the better host for a mesh.
 
 ## License
 
