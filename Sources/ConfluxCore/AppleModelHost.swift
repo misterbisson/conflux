@@ -11,6 +11,11 @@ import ImageIO
 /// can't choose or pin it, and it changes with OS updates, so its
 /// fingerprint is the OS build. It reads text and images.
 ///
+/// Devices don't all run the same one: Apple's most capable chips run AFM 3
+/// Core Advanced, and others AFM 3 Core. So it's served under the name of
+/// the one this device runs (`modelID`), and `apple-on-device` reaches
+/// whichever a device has (`alias`).
+///
 /// Its guardrails decline some content, and its context is small: 4,096
 /// tokens on macOS 27.0, images included. A request it declines or can't
 /// fit goes to another host when there is one (`HostReply.retryElsewhere`).
@@ -20,11 +25,17 @@ import ImageIO
 /// or eight. Hence two slots. They change while it serves
 /// (`resize(to:cancelling:because:)`).
 public final class AppleModelHost: ResizableHost, @unchecked Sendable {
-    /// What clients name it, and what responses report.
-    public static let modelID = "apple-on-device"
+    /// Names Apple's model on any device, whichever one it runs: a request
+    /// for it reaches every host serving one (`isApple`). The owner's
+    /// labels for it are kept under it too, so they last when an update
+    /// brings another model.
+    public static let alias = "apple-on-device"
     public static let defaultSlots = 2
 
     public let id: String
+    /// What clients name the model this device runs, such as
+    /// `afm-3-core-advanced`, and what responses report.
+    public let modelID: String
     public let maxImageDimension: Int
     public let selfCheck: Bool
 
@@ -62,21 +73,23 @@ public final class AppleModelHost: ResizableHost, @unchecked Sendable {
     public convenience init(id: String = "apple", slots: Int = AppleModelHost.defaultSlots,
                             maxImageDimension: Int = 1024, selfCheck: Bool = true,
                             labels: ModelLabels = AppleModelHost.defaultLabels, recheck: Duration = .seconds(10)) {
-        self.init(id: id, slots: slots, maxImageDimension: maxImageDimension, selfCheck: selfCheck, labels: labels,
-                  recheck: recheck, generator: { try await AppleModelHost.generate($0) })
+        self.init(id: id, modelID: AppleModelHost.deviceModelID, slots: slots, maxImageDimension: maxImageDimension,
+                  selfCheck: selfCheck, labels: labels, recheck: recheck,
+                  generator: { try await AppleModelHost.generate($0) })
     }
 
-    init(id: String, slots: Int, maxImageDimension: Int, selfCheck: Bool,
+    init(id: String, modelID: String = "afm-3-core", slots: Int, maxImageDimension: Int, selfCheck: Bool,
          labels: ModelLabels = AppleModelHost.defaultLabels, recheck: Duration,
          generator: @escaping @Sendable (AppleModelRequest) async throws -> ChatCompletionResult) {
         self.id = id
+        self.modelID = modelID
         self.labels = labels
         wanted = max(0, slots)
         self.generator = generator
         self.maxImageDimension = maxImageDimension
         self.selfCheck = selfCheck
         self.recheck = recheck
-        identity = ModelInfo(id: Self.modelID, capabilities: [.text, .vision], fingerprint: Self.fingerprint,
+        identity = ModelInfo(id: modelID, capabilities: [.text, .vision], fingerprint: Self.fingerprint,
                              maxImageDimension: maxImageDimension, contentFilter: true,
                              contextTokens: Self.contextTokens)
     }
@@ -86,9 +99,44 @@ public final class AppleModelHost: ResizableHost, @unchecked Sendable {
     public static let contextTokens = 4096
 
     /// What conflux says about it until its owner says otherwise: it's the
-    /// same model on every device at an OS version, and describes images
-    /// well (docs/design.md, Capabilities and tags).
+    /// same model on every device of a class at an OS version, and
+    /// describes images well (docs/design.md, Capabilities and tags).
     public static let defaultLabels = ModelLabels(tags: ["image-description"])
+
+    /// The name of the model this device runs: `afm-3-core-advanced` or
+    /// `afm-3-core`, or, for a model conflux doesn't know yet, its name
+    /// as Apple gives it, lowercased with hyphens. The chip decides which,
+    /// so it's read once.
+    public static let deviceModelID: String = {
+        let variant = SystemLanguageModel.default.variant
+        switch variant {
+        case .coreAdvanced3: return "afm-3-core-advanced"
+        case .core3: return "afm-3-core"
+        default: return modelID(named: variant.displayName)
+        }
+    }()
+
+    /// A model's name as an ID: "AFM 4 Core" is `afm-4-core`. `alias` when
+    /// nothing's left.
+    static func modelID(named name: String) -> String {
+        let words = name.lowercased().split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
+        return words.isEmpty ? alias : words.joined(separator: "-")
+    }
+
+    /// Whether a host serves Apple's model, which `alias` reaches: its
+    /// fingerprint says so, or, from a peer from before the variants were
+    /// named, its ID is the alias.
+    public static func isApple(_ model: ModelInfo) -> Bool {
+        model.id == alias || model.fingerprint.hasPrefix(fingerprintPrefix)
+    }
+
+    static let fingerprintPrefix = "apple-foundation-models-"
+
+    /// Whether a model ID names Apple's model, for a window that has only
+    /// the ID: the alias, or an `afm-` name.
+    public static func isApple(id: String) -> Bool {
+        id == alias || id.hasPrefix("afm-")
+    }
 
     /// The runtime and the OS build, such as
     /// `apple-foundation-models-macOS-27.0.1-26A434`: the model changes only
@@ -100,7 +148,7 @@ public final class AppleModelHost: ResizableHost, @unchecked Sendable {
         #else
         let platform = "iPadOS"
         #endif
-        return "apple-foundation-models-\(platform)-\(version.majorVersion).\(version.minorVersion)."
+        return "\(fingerprintPrefix)\(platform)-\(version.majorVersion).\(version.minorVersion)."
             + "\(version.patchVersion)-\(build)"
     }
 
@@ -302,7 +350,7 @@ public final class AppleModelHost: ResizableHost, @unchecked Sendable {
         }
         do {
             let result = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
-            return HostReply(status: 200, body: result.body(model: Self.modelID))
+            return HostReply(status: 200, body: result.body(model: modelID))
         } catch where lock.withLock({ running[id]?.evicted == true }) {
             throw HostError.busy("its slot was taken away while it ran")
         } catch let error as Unreadable {

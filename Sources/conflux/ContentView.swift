@@ -264,7 +264,7 @@ struct ContentView: View {
                 Group { modelOptions }.disabled(model.running)
                 slotsHelp
                 if let id = model.modelFileID {
-                    ModelLabelsRows(modelID: id, readsImages: model.modelFileReadsImages,
+                    ModelLabelsRows(names: [id], readsImages: model.modelFileReadsImages,
                                     contextTokens: host.contextPerSlot, labels: labelsBinding(id))
                 }
                 if model.running {
@@ -456,11 +456,12 @@ struct ContentView: View {
                     HostRow(apple, title: "Requests", hardware: false)
                 }
                 appleSlotsRow
-                ModelLabelsRows(modelID: AppleModelHost.modelID, readsImages: true, contextTokens: nil,
-                                labels: labelsBinding(AppleModelHost.modelID))
+                ModelLabelsRows(names: [AppleModelHost.deviceModelID, AppleModelHost.alias], readsImages: true,
+                                contextTokens: nil, labels: labelsBinding(AppleModelHost.alias))
             }
             Text("""
-                The model Apple Intelligence uses, served as \(AppleModelHost.modelID): text and images, in a system \
+                The model Apple Intelligence uses on this Mac, served as \(AppleModelHost.deviceModelID) and as \
+                \(AppleModelHost.alias), which reaches Apple's model on any device: text and images, in a system \
                 process, so it takes none of conflux's memory. It needs Apple Intelligence turned on. It declines \
                 some content and takes only short requests; those go to another host when there is one.
                 """)

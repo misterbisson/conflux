@@ -707,7 +707,8 @@ struct ProbeView: View {
         } header: {
             Text("Apple's model")
         } footer: {
-            Text("The model Apple Intelligence uses, served to your Macs as \(AppleModelHost.modelID): text and "
+            Text("The model Apple Intelligence uses on this iPad, served to your Macs as "
+                + "\(AppleModelHost.deviceModelID) and as \(AppleModelHost.alias): text and "
                 + "images. It runs in a system process, so it takes none of the memory iPadOS lets conflux use, "
                 + "and it serves beside the custom model or alone. It needs Apple Intelligence turned on in "
                 + "Settings. It declines some content and takes only short requests; those go to another host.")

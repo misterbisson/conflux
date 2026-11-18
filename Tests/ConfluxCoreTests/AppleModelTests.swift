@@ -272,7 +272,7 @@ import Testing
     @Test func identity() async {
         let host = AppleModelHost()
         let model = await host.model
-        #expect(model?.id == "apple-on-device")
+        #expect(model?.id == AppleModelHost.deviceModelID)
         #expect(model?.capabilities == [.text, .vision])
         #expect(model?.fingerprint.hasPrefix("apple-foundation-models-") == true)
         #expect(host.slots == 2)
@@ -280,6 +280,39 @@ import Testing
         await #expect(throws: HostError.unavailable("Apple's model isn't ready")) {
             try await host.complete(Data("{}".utf8), timeout: 5)
         }
+    }
+
+    @Test func namesAModelItDoesntKnowFromAppleName() {
+        #expect(AppleModelHost.modelID(named: "AFM 4 Core") == "afm-4-core")
+        #expect(AppleModelHost.modelID(named: "AFM 3 Core Advanced") == "afm-3-core-advanced")
+        #expect(AppleModelHost.modelID(named: "  AFM  5 (Pro) ") == "afm-5-pro")
+        #expect(AppleModelHost.modelID(named: "") == AppleModelHost.alias)
+        #expect(AppleModelHost.modelID(named: " – ") == AppleModelHost.alias)
+    }
+
+    static func model(_ id: String, fingerprint: String) -> ModelInfo {
+        ModelInfo(id: id, capabilities: [.text, .vision], fingerprint: fingerprint)
+    }
+
+    @Test func theAliasReachesApplesModelOnEveryDevice() {
+        let advanced = Self.model("afm-3-core-advanced", fingerprint: "apple-foundation-models-macOS-27.2.0-27C55")
+        let core = Self.model("afm-3-core", fingerprint: "apple-foundation-models-iPadOS-27.2.0-27C55")
+        let before = Self.model("apple-on-device", fingerprint: "apple-foundation-models-macOS-27.0.0-27A100")
+        let gguf = Self.model("gemma-4-e4b-it-Q4_K_M", fingerprint: "llama.cpp-b7000-abc")
+        let alias = ModelChoice(model: AppleModelHost.alias, preference: nil)
+        #expect([advanced, core, before].allSatisfy { alias.rank($0) == 0 })
+        #expect(alias.rank(gguf) == nil)
+        let named = ModelChoice(model: "afm-3-core-advanced", preference: nil)
+        #expect(named.rank(advanced) == 0)
+        #expect(named.rank(core) == nil)
+        #expect(named.rank(before) == nil)
+    }
+
+    @Test func itsLabelsAreKeptUnderTheAlias() {
+        #expect(ModelLabels.defaults(for: AppleModelHost.alias) == AppleModelHost.defaultLabels)
+        #expect(ModelLabels.defaults(for: "afm-3-core") == ModelLabels())
+        let settings = NodeSettings(labels: [AppleModelHost.alias: ModelLabels(tags: ["writing"])])
+        #expect(settings.labels(for: AppleModelHost.alias).tags == ["writing"])
     }
 
     @Test func settingsSavedBeforeItExistedStillLoad() throws {
@@ -486,6 +519,21 @@ import Testing
         #expect(other.callCount == 0)
     }
 
+    @Test func aRequestForTheAliasGoesOnlyToApplesModel() async {
+        let apple = FakeHost(id: "apple", model: "afm-3-core-advanced",
+                             fingerprint: "apple-foundation-models-macOS-27.2.0-27C55")
+        let other = FakeHost(id: "other", model: "model-b")
+        let scheduler = await Scheduler.with([apple, other])
+        let outcome = await scheduler.submit(Data(), choice: ModelChoice(model: "apple-on-device", preference: nil),
+                                             deadline: Date().addingTimeInterval(10), key: nil)
+        guard case .completed(_, let model) = outcome else {
+            Issue.record("\(outcome)")
+            return
+        }
+        #expect(model.id == "afm-3-core-advanced")
+        #expect(other.callCount == 0)
+    }
+
     @Test func anOrdinary400IsNotRetried() async {
         let bad = HostReply(status: 400, body: ChatCompletionResult.error("malformed"))
         let first = FakeHost(id: "first") { _ in bad }
@@ -557,7 +605,7 @@ import Testing
     @Test func reportsItsContentFilter() async {
         let model = await host(slots: 1, gate: Gate()).model
         #expect(model?.contentFilter == true)
-        #expect(model?.id == AppleModelHost.modelID)
+        #expect(model?.id == "afm-3-core")
     }
 
     @Test func moreSlotsTakeMoreAtOnce() async throws {

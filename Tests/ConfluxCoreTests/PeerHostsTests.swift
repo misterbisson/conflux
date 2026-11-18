@@ -7,8 +7,8 @@ import Testing
 /// the device's owner turning Apple's model on or off would.
 final class TwoHostPeer: @unchecked Sendable {
     let file = FakeHost(id: ConfluxNode.localHostID, model: "model-a")
-    let apple = FakeHost(id: ConfluxNode.appleHostID, model: AppleModelHost.modelID, capabilities: [.text, .vision],
-                         slots: 2)
+    let apple = FakeHost(id: ConfluxNode.appleHostID, model: "afm-3-core", capabilities: [.text, .vision],
+                         fingerprint: "apple-foundation-models-macOS-27.2.0-27C55", slots: 2)
     let scheduler: Scheduler
     let server: HTTPServer
     let base: URL
@@ -69,7 +69,7 @@ let peerEndpoint = String(repeating: "ab", count: 32)
         let apple = RemoteHost(endpointID: peerEndpoint, link: peer.link, hostOnPeer: ConfluxNode.appleHostID)
         await apple.refresh()
         #expect(apple.id == "peer-ababababab-apple")
-        #expect(await apple.model?.id == AppleModelHost.modelID)
+        #expect(await apple.model?.id == "afm-3-core")
         #expect(await apple.availability == .available)
         #expect(apple.slots == 2)
         // Only the first hears of the others.
@@ -77,7 +77,7 @@ let peerEndpoint = String(repeating: "ab", count: 32)
 
         let reply = try await apple.complete(Data("{}".utf8), timeout: 10)
         #expect(reply.status == 200)
-        #expect(reply.model?.id == AppleModelHost.modelID)
+        #expect(reply.model?.id == "afm-3-core")
         #expect(peer.apple.calls == 1)
         #expect(peer.file.calls == 0)
 
@@ -107,9 +107,9 @@ let peerEndpoint = String(repeating: "ab", count: 32)
         })
         #expect(hosts.hosts.map(\.id) == ids)
         let models = await gateway.snapshot().hosts.map { $0.model?.id }
-        #expect(models == ["model-a", AppleModelHost.modelID])
+        #expect(models == ["model-a", "afm-3-core"])
 
-        for model in [AppleModelHost.modelID, "model-a"] {
+        for model in ["afm-3-core", "model-a"] {
             let outcome = await gateway.submit(Data("{}".utf8), choice: ModelChoice(model: model, preference: nil),
                                                deadline: Date().addingTimeInterval(10), key: nil)
             guard case .completed(let reply, let ran) = outcome else {
@@ -156,7 +156,7 @@ let peerEndpoint = String(repeating: "ab", count: 32)
         let gateway = Scheduler()
         let hosts = PeerHosts(endpointID: peerEndpoint, link: peer.link, scheduler: gateway)
         await hosts.start(every: .milliseconds(100))
-        #expect(await eventually { await gateway.snapshot().hosts.first?.model?.id == AppleModelHost.modelID })
+        #expect(await eventually { await gateway.snapshot().hosts.first?.model?.id == "afm-3-core" })
         #expect(await gateway.snapshot().hosts.map(\.id) == [RemoteHost.id(peerEndpoint)])
         #expect(hosts.primary.otherHosts.isEmpty)
         await hosts.stop()

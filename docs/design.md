@@ -877,8 +877,19 @@ distribution.
 **Apple's on-device model** is the third runtime, through the Foundation
 Models framework: the model Apple Intelligence uses, which reads text and
 images from macOS 27 and iPadOS 27, conflux's floors. A device serves it
-alongside its model file, as a second host, `apple-on-device`, which peers'
-gateways see as well ([the host protocol](#the-host-protocol)). It runs in a
+alongside its model file, as a second host, which peers' gateways see as
+well ([the host protocol](#the-host-protocol)). Devices don't all run the
+same model: `SystemLanguageModel.variant` says which, AFM 3 Core Advanced on
+Apple's most capable chips and AFM 3 Core on others, and an app can read it
+but not choose it. So the host serves it under that model's name,
+`afm-3-core-advanced` or `afm-3-core`, or, for one conflux doesn't know yet,
+Apple's name for it lowercased with hyphens. The two differ in size, speed
+and what they answer well, so a client sees which answered, and can ask for
+one. The alias
+`apple-on-device` reaches every host serving Apple's model, by its
+fingerprint, and by its name from a peer from before the models were told
+apart, which served it as `apple-on-device`. Its owner's labels are kept
+under the alias, so they last when an OS update brings another model. It runs in a
 system process, so it takes none of conflux's memory. conflux can't choose
 or pin it, and it changes with OS updates, so its fingerprint is the OS
 build. Its guardrails decline some content, and its context is small,
@@ -889,7 +900,7 @@ refusal, a `400` with code `content_filter` or `context_length_exceeded`,
 only when there's none. Its `ModelInfo` says it filters content, so
 `/v1/models` marks it `content_filter`, and the `any-unfiltered` and
 `any-vision-unfiltered` aliases leave it out. A peer from before that was reported is taken to filter
-content when it serves `apple-on-device`. `response_format` becomes a `DynamicGenerationSchema`
+content when it serves `apple-on-device`, the name it had then. `response_format` becomes a `DynamicGenerationSchema`
 for its guided generation, read by the same parser as the grammar, so a
 schema malformed for one runtime is malformed for both. What guided
 generation can't enforce, such as `pattern`, `format` or a string's length,

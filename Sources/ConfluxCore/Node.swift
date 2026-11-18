@@ -266,7 +266,7 @@ public final class ConfluxNode: @unchecked Sendable {
         if settings.appleModel.enabled {
             let apple = AppleModelHost(id: Self.appleHostID, slots: settings.appleModel.slots,
                                        selfCheck: settings.appleModel.selfCheck,
-                                       labels: settings.labels(for: AppleModelHost.modelID))
+                                       labels: settings.labels(for: AppleModelHost.alias))
             lock.withLock { self.apple = apple }
             await serve(apple)
         }
@@ -447,7 +447,7 @@ public final class ConfluxNode: @unchecked Sendable {
         }
         guard let settings, settings.enabled else { return }
         let apple = AppleModelHost(id: Self.appleHostID, slots: settings.slots, selfCheck: settings.selfCheck,
-                                   labels: labels(for: AppleModelHost.modelID))
+                                   labels: labels(for: AppleModelHost.alias))
         lock.withLock { self.apple = apple }
         await serve(apple)
         announce()
@@ -461,7 +461,7 @@ public final class ConfluxNode: @unchecked Sendable {
             self.labels[modelID] = labels
             var hosts: [any LocalHost] = []
             if let host, host.config.modelID == modelID { hosts.append(host) }
-            if let apple, modelID == AppleModelHost.modelID { hosts.append(apple) }
+            if let apple, modelID == AppleModelHost.alias { hosts.append(apple) }
             return hosts
         }
         for host in hosts { host.label(labels) }

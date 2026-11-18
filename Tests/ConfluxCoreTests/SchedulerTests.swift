@@ -585,7 +585,7 @@ import Testing
             let json = #"{"id":"\#(id)","capabilities":["text","vision"],"fingerprint":"x"}"#
             return try HostService.decoder.decode(ModelInfo.self, from: Data(json.utf8))
         }
-        #expect(try decode(AppleModelHost.modelID).contentFilter)
+        #expect(try decode(AppleModelHost.alias).contentFilter)
         #expect(try !decode("gemma").contentFilter)
     }
 }

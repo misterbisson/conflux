@@ -53,9 +53,9 @@ public struct ModelInfo: Sendable, Equatable, Codable {
         fingerprint = try container.decode(String.self, forKey: .fingerprint)
         maxImageDimension = try container.decodeIfPresent(Int.self, forKey: .maxImageDimension)
         // A peer from before this was reported filters content only if it
-        // serves Apple's model.
+        // serves Apple's model, which it named by the alias.
         contentFilter = try container.decodeIfPresent(Bool.self, forKey: .contentFilter)
-            ?? (id == AppleModelHost.modelID)
+            ?? (id == AppleModelHost.alias)
         contextTokens = try container.decodeIfPresent(Int.self, forKey: .contextTokens)
         // A peer from before tags has none, and holds nothing back.
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
@@ -176,10 +176,10 @@ public struct ModelLabels: Sendable, Equatable, Codable {
         ModelLabels(tags: tags, onlyWhenAsked: onlyWhenAsked)
     }
 
-    /// What a model is labelled before its owner says: Apple's model by
-    /// conflux, any other with nothing.
+    /// What a model is labelled before its owner says: Apple's model, kept
+    /// under its alias, by conflux, any other with nothing.
     public static func defaults(for modelID: String) -> ModelLabels {
-        modelID == AppleModelHost.modelID ? AppleModelHost.defaultLabels : ModelLabels()
+        modelID == AppleModelHost.alias ? AppleModelHost.defaultLabels : ModelLabels()
     }
 }
 
@@ -202,9 +202,11 @@ public struct ModelChoice: Sendable, Equatable {
             .needs(Needs(vision: capability == .vision, unfiltered: true))
         }
 
+        /// `apple-on-device` names Apple's model on any device, whichever
+        /// one it runs (`AppleModelHost.alias`).
         public func accepts(_ model: ModelInfo) -> Bool {
             switch self {
-            case .exact(let id): id == model.id
+            case .exact(let id): id == model.id || (id == AppleModelHost.alias && AppleModelHost.isApple(model))
             case .needs(let needs): needs.accepts(model)
             }
         }

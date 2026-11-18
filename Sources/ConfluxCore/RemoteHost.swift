@@ -319,6 +319,7 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
             return known
         }
         return ModelInfo(id: id, capabilities: [], fingerprint: fingerprint,
-                         contentFilter: id == AppleModelHost.modelID)
+                         contentFilter: AppleModelHost.isApple(ModelInfo(id: id, capabilities: [],
+                                                                         fingerprint: fingerprint)))
     }
 }

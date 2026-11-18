@@ -108,7 +108,7 @@ public struct ActivityPanel: View {
     /// than one to choose between.
     private var models: [String] {
         let models = Set(series.compactMap(\.model)).sorted {
-            ($0 == AppleModelHost.modelID ? 1 : 0, $0) < ($1 == AppleModelHost.modelID ? 1 : 0, $1)
+            (AppleModelHost.isApple(id: $0) ? 1 : 0, $0) < (AppleModelHost.isApple(id: $1) ? 1 : 0, $1)
         }
         return models.count > 1 ? models : []
     }
@@ -187,7 +187,7 @@ public struct ActivityPanel: View {
                     Text("Every model").tag(String?.none)
                     Divider()
                     ForEach(models, id: \.self) { model in
-                        Text(model == AppleModelHost.modelID ? "Apple's model" : model).tag(Optional(model))
+                        Text(model == AppleModelHost.alias ? "Apple's model" : model).tag(Optional(model))
                     }
                 }
                 .pickerStyle(.menu)
