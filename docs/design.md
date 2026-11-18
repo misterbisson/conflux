@@ -247,7 +247,7 @@ actually ran.
 
 ### Capabilities and tags
 
-> **Status: built**, except a request's expected time from its size
+> **Status: built**, with a request's expected time from its size
 > ([Deadlines](#deadlines), [plan.md](plan.md#phase-4-more-runtimes-and-capabilities)).
 
 A mesh can serve small, quick models beside a large, slow one that does work
@@ -395,16 +395,27 @@ a request to a host whose expected finish would pass the deadline. With this
 guarantee, a client timeout means one thing: the gateway is stuck. A busy mesh
 never looks like a dead one. See [clients.md](clients.md).
 
-**A request's expected time, from its size** (planned). A host's expected
-finish is its typical request time today, the same for a short request as
-for a long one. Every answer already carries its token counts and timings, so
-a host could be timed per thousand prompt tokens and per thousand written,
-and each request estimated from its prompt, its images and its
-`max_tokens`. A slow model could then take a short request inside a tight
-deadline and be passed over for a long one, and between hosts a request would
-go to the one that would finish it soonest. Before a host has been timed,
-its model file's size and its chip give a first guess. Apple's model reports
-no timings, so it keeps its typical time.
+**A request's expected time, from its size.** Every answer llama.cpp gives
+carries its token counts and timings, so each gateway learns a pace for each
+host from the answers it completed there: seconds for each prompt token read
+and each token written, how many tokens the host's model makes of an image
+and of the chat template, how much it usually writes, and the seconds left
+over, the network's among them. Each is weighted towards recent answers, as
+the typical time is. A request is sized from its body before it runs: the
+characters of its text, about four to a token, its images, and its
+`max_tokens`. It's expected to write what the host usually writes, or its
+`max_tokens` if that's fewer, since most answers stop well before their
+limit. So a slow model takes a short request inside a tight deadline and is
+passed over for a long one, and between hosts with free slots a request goes
+to the one expected to finish it soonest. The same expected time decides
+whether a host takes a request ahead, and when a copy counts as straggling.
+`/health` shows each host's `pace`.
+
+Until a host has been timed, or with images until it has read one, it has
+no pace, and its typical time stands, the same for any request. So does
+Apple's model's, whose answers carry no timings. A first guess from the
+model file's size and the chip, before the first answer, isn't built: a host
+not yet timed is tried first, as before, so it soon has a pace.
 
 ### Failures and stragglers
 

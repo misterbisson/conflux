@@ -18,7 +18,7 @@ The gateway serves a subset of the OpenAI API on loopback, at
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time; `utilization`, busy slot-seconds over offered ones in the last ten minutes, 0 to 1; the mesh's `wait_seconds`, how long requests waited for a slot, and each host's `request_seconds`, how long they took, each as `p50`, `p95` and `count` over the last ten minutes; `declined`, for the mesh and each host, the requests a model refused that another might take, as `content`, `length` and `unsupported` counts and the `seconds` they took, and the mesh's `rerouted`, how many of those another host then answered; each host's `rejoined`, the times it left and came back, keeping its counts; each host's `last_failure`, once a request has failed on it: the `reason`, `at` (ISO 8601, UTC) and `seconds_ago`; and each host's `hardware`: `chip`, `performance_cores`, `efficiency_cores`, `gpu_cores`, `memory_bytes` and `model_identifier`, whichever it reported ([design.md](design.md#monitoring)). Nothing that identifies a device |
+| `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time; `utilization`, busy slot-seconds over offered ones in the last ten minutes, 0 to 1; the mesh's `wait_seconds`, how long requests waited for a slot, and each host's `request_seconds`, how long they took, each as `p50`, `p95` and `count` over the last ten minutes; `declined`, for the mesh and each host, the requests a model refused that another might take, as `content`, `length` and `unsupported` counts and the `seconds` they took, and the mesh's `rerouted`, how many of those another host then answered; each host's `rejoined`, the times it left and came back, keeping its counts; each host's `last_failure`, once a request has failed on it: the `reason`, `at` (ISO 8601, UTC) and `seconds_ago`; each host's `hardware`: `chip`, `performance_cores`, `efficiency_cores`, `gpu_cores`, `memory_bytes` and `model_identifier`, whichever it reported ([design.md](design.md#monitoring)); and each host's `pace`, once it has completed a request with timings: `seconds_per_1k_prompt_tokens`, `seconds_per_1k_written_tokens`, `tokens_per_image`, `template_tokens`, `written_tokens` and `overhead_seconds`, whichever are known ([design.md](design.md#deadlines)). Nothing that identifies a device |
 | `GET /v1/models` | Every model currently served in the mesh, plus aliases. Each model's `conflux` object has its `capabilities`, `max_image_dimension`, `context_tokens` per slot, `content_filter`, true when the model declines some content, its `tags`, and `only_when_asked` ([Ask for what the work needs](#ask-for-what-the-work-needs)) |
 | `POST /v1/chat/completions` | One request, including image input |
 
@@ -145,7 +145,12 @@ Conflux-Timeout: 115
 Seconds the client is still willing to wait, usually a little less than its own
 HTTP timeout. The gateway **always answers within that time**: with a result,
 with `429`, or with `503`. It never sends a request to a host whose expected
-finish would pass the deadline.
+finish would pass the deadline. Expected for that request: by its size, the
+text, images and `max_tokens` it sends, once the gateway has timed the host
+([design.md](design.md#deadlines)). So a slow, capable model can take a short
+request with a tight deadline and be passed over for a long one. Set
+`max_tokens` near what you expect back: the gateway counts the fewer of it
+and what the host usually writes.
 
 It follows that a client timeout means the gateway itself is stuck, not that
 the mesh is busy. Many clients treat repeated timeouts as a dead server and

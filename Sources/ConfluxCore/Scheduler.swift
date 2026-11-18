@@ -225,6 +225,10 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
     public var declined: DeclineCounts
     /// Smoothed seconds per request it completed, once there's history.
     public var typicalSeconds: Double?
+    /// How quickly it reads and writes, from the answers it completed, for
+    /// a request's expected time. Empty for a host whose answers carry no
+    /// timings, such as Apple's model's.
+    public var pace: HostPace
     /// Completions in the last ten minutes, scaled to an hour.
     public var perHour: Double
     /// Seconds this host had a free slot while work it could run waited at
@@ -268,7 +272,8 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
                 idleWithWorkSeconds: Double = 0,
                 freeSeconds: Double = 0, held: Int = 0, prefetched: Int = 0, hardware: HardwareInfo? = nil,
                 utilization: Double? = nil, requestSeconds: Percentiles? = nil, busySlotSeconds: Double = 0,
-                slotSeconds: Double = 0, rejoined: Int = 0, lastFailure: HostFailure? = nil) {
+                slotSeconds: Double = 0, rejoined: Int = 0, lastFailure: HostFailure? = nil,
+                pace: HostPace = HostPace()) {
         self.id = id
         self.model = model
         self.state = state
@@ -279,6 +284,7 @@ public struct HostSnapshot: Sendable, Equatable, Identifiable {
         self.failures = failures
         self.declined = declined
         self.typicalSeconds = typicalSeconds
+        self.pace = pace
         self.perHour = perHour
         self.idleWithWorkSeconds = idleWithWorkSeconds
         self.freeSeconds = freeSeconds
@@ -350,8 +356,9 @@ public struct SchedulerSnapshot: Sendable, Equatable {
 ///
 /// Requests wait here only briefly, and always get an answer before their
 /// deadline (docs/design.md, *Deadlines*). Hosts never get more requests than
-/// they have slots, and a request is never sent to a host whose typical time
-/// wouldn't fit what's left of its deadline.
+/// they have slots, and a request is never sent to a host where it's expected
+/// to take longer than what's left of its deadline: by its size, once the
+/// host's pace is known, or by the host's typical time.
 public actor Scheduler {
     struct Entry {
         let host: any InferenceHost
@@ -365,6 +372,8 @@ public actor Scheduler {
         var failures = FailureCounts()
         var declined = DeclineCounts()
         var typical: Double?
+        /// How quickly it reads and writes, for a request's expected time.
+        var pace = HostPace()
         /// When requests completed, for throughput. Ten minutes are kept.
         var recent: [Date] = []
 
@@ -489,6 +498,11 @@ public actor Scheduler {
             return free > 0 ? .ready : .busy
         }
 
+        /// How long a request of this size is likely to take here: from its
+        /// pace once that's known, otherwise its typical time, the same for
+        /// any request. Nil for a host not yet timed.
+        func expected(_ size: RequestSize) -> Double? { pace.seconds(for: size) ?? typical }
+
         /// Exponentially weighted, so a host that warms up or throttles is
         /// tracked within a few requests.
         mutating func record(seconds: Double) {
@@ -510,6 +524,7 @@ public actor Scheduler {
     struct Waiter {
         let id: UUID
         let choice: ModelChoice
+        let size: RequestSize
         let excluded: Set<String>
         /// Waiting for a slot on this host only: a request a peer's gateway
         /// sent ahead.
@@ -563,6 +578,7 @@ public actor Scheduler {
     /// One request's copies in flight: the first, and a hedge.
     struct Attempt {
         let body: Data
+        let size: RequestSize
         let choice: ModelChoice
         let tried: Set<String>
         let remaining: () -> TimeInterval?
@@ -846,11 +862,12 @@ public actor Scheduler {
 
     func execute(_ body: Data, choice: ModelChoice, deadline: Date?) async -> Outcome {
         func remaining() -> TimeInterval? { deadline.map { $0.timeIntervalSinceNow - config.margin } }
+        let size = RequestSize(body)
 
         let eligible = entries.values.filter { $0.model.map { choice.rank($0) != nil } ?? false }
         // Stop waiting once there'd be no time left to run on even the
         // fastest eligible host.
-        let quickest = eligible.compactMap(\.typical).min() ?? 0
+        let quickest = eligible.compactMap { $0.expected(size) }.min() ?? 0
         let queueUntil = deadline.map { $0.addingTimeInterval(-config.margin - quickest) }
             ?? Date().addingTimeInterval(config.defaultQueueWait)
         if eligible.isEmpty {
@@ -878,7 +895,8 @@ public actor Scheduler {
             // Its client has gone: no one would read the answer.
             if Task.isCancelled { return .cancelled }
             let asked = Date()
-            let acquired = await acquire(choice: choice, excluding: tried, until: queueUntil, remaining: remaining)
+            let acquired = await acquire(choice: choice, size: size, excluding: tried, until: queueUntil,
+                                         remaining: remaining)
             waited += Date().timeIntervalSince(asked)
             guard let lease = acquired else {
                 if Task.isCancelled { return .cancelled }
@@ -890,7 +908,7 @@ public actor Scheduler {
                 tried.insert(lease.host)
                 continue
             }
-            let answer = await attempt(body, lease: lease, model: model, choice: choice, tried: tried,
+            let answer = await attempt(body, size: size, lease: lease, model: model, choice: choice, tried: tried,
                                        remaining: remaining)
             tried.formUnion(answer.failed)
             for declining in answer.declinedBy where !declinedBy.contains(declining) { declinedBy.append(declining) }
@@ -969,7 +987,7 @@ public actor Scheduler {
 
     /// Runs a request on the host holding `lease`, and keeps that host's
     /// record: its slot, its typical time, what it completed and failed.
-    private func perform(_ body: Data, lease: Lease, host: any InferenceHost,
+    private func perform(_ body: Data, size: RequestSize, lease: Lease, host: any InferenceHost,
                          remaining: () -> TimeInterval?) async -> Result<HostReply, HostError> {
         let started = Date()
         let timeout = remaining() ?? config.maxExecution
@@ -1000,6 +1018,7 @@ public actor Scheduler {
                 // the host look faster than it is, and draw more requests
                 // for it to decline.
                 entries[lease.host]?.record(seconds: seconds)
+                entries[lease.host]?.pace.record(size, reply: reply.body, seconds: seconds)
                 entries[lease.host]?.completed += 1
                 entries[lease.host]?.recent.append(now)
                 entries[lease.host]?.durations.append((now, seconds))
@@ -1039,12 +1058,13 @@ public actor Scheduler {
     /// and it would still finish in time.
     public func run(_ body: Data, onHost hostID: String, deadline: Date?, prefetch: Bool = false) async -> Outcome {
         func remaining() -> TimeInterval? { deadline.map { $0.timeIntervalSinceNow - config.margin } }
+        let size = RequestSize(body)
         guard let entry = entries[hostID], let model = entry.model else {
             return .unavailable(retryAfter: 30, message: "this device isn't serving a model")
         }
         let lease: Lease
         if entry.free > 0 {
-            if let remaining = remaining(), remaining <= (entry.typical ?? 0) {
+            if let remaining = remaining(), remaining <= (entry.expected(size) ?? 0) {
                 return .busy(retryAfter: 1)
             }
             lease = reserve(hostID)
@@ -1066,7 +1086,7 @@ public actor Scheduler {
                     return .unavailable(retryAfter: 30, message: entry.state.detail ?? "this device isn't taking work")
                 }
             }
-            guard prefetch, let held = await hold(hostID, deadline: deadline, remaining: remaining) else {
+            guard prefetch, let held = await hold(hostID, size: size, deadline: deadline, remaining: remaining) else {
                 if Task.isCancelled { return .cancelled }
                 return .busy(retryAfter: estimateWait(ModelChoice(options: [.exact(model.id)])))
             }
@@ -1076,7 +1096,7 @@ public actor Scheduler {
             entries[hostID]?.active[lease.id] = nil
             return .unavailable(retryAfter: 30, message: "this device isn't serving a model")
         }
-        switch await perform(body, lease: lease, host: host, remaining: remaining) {
+        switch await perform(body, size: size, lease: lease, host: host, remaining: remaining) {
         case .success(let reply):
             return (200..<300).contains(reply.status) ? .completed(reply, model: model)
                 : .rejected(reply, model: model)
@@ -1098,35 +1118,40 @@ public actor Scheduler {
 
     /// A host with a free slot for this request, now or once one frees up,
     /// or nil if none does before `until`.
-    private func acquire(choice: ModelChoice, excluding: Set<String>, until: Date,
+    private func acquire(choice: ModelChoice, size: RequestSize, excluding: Set<String>, until: Date,
                          remaining: @escaping () -> TimeInterval?) async -> Lease? {
-        if let choice = pick(choice: choice, excluding: excluding, remaining: remaining()) {
+        if let choice = pick(choice: choice, size: size, excluding: excluding, remaining: remaining()) {
             defer { account() }
             return reserve(choice)
         }
-        return await enqueue(choice: choice, excluding: excluding, pinned: nil, until: until, remaining: remaining)
+        return await enqueue(choice: choice, size: size, excluding: excluding, pinned: nil, until: until,
+                             remaining: remaining)
     }
 
     /// Holds a request a peer's gateway sent ahead until this host's next
     /// slot frees up, if it would still finish in time and no other request
     /// is held here. One at most, whichever gateway sent it: a host takes
     /// one request more than its slots, no more.
-    private func hold(_ hostID: String, deadline: Date?, remaining: @escaping () -> TimeInterval?) async -> Lease? {
+    private func hold(_ hostID: String, size: RequestSize, deadline: Date?,
+                      remaining: @escaping () -> TimeInterval?) async -> Lease? {
         guard let entry = entries[hostID], let typical = entry.typical,
               !waiting.contains(where: { $0.pinned == hostID }) else { return nil }
         let now = Date()
+        // When the soonest running request ends, by the typical time, since
+        // their sizes aren't kept; then this one, by its own.
         let soonest = entry.active.values.map { max(0, typical - now.timeIntervalSince($0)) }.min() ?? 0
+        let expected = entry.expected(size) ?? typical
         let left = remaining() ?? config.defaultQueueWait
-        guard soonest + typical < left else { return nil }
+        guard soonest + expected < left else { return nil }
         entries[hostID]?.prefetched += 1
         // Pinned to this host, so the choice decides nothing. Its own model,
         // which a model held back answers too.
         let choice = ModelChoice(options: [entry.model.map { .exact($0.id) } ?? .any])
-        return await enqueue(choice: choice, excluding: [], pinned: hostID,
-                             until: now.addingTimeInterval(left - typical), remaining: remaining)
+        return await enqueue(choice: choice, size: size, excluding: [], pinned: hostID,
+                             until: now.addingTimeInterval(left - expected), remaining: remaining)
     }
 
-    private func enqueue(choice: ModelChoice, excluding: Set<String>, pinned: String?, until: Date,
+    private func enqueue(choice: ModelChoice, size: RequestSize, excluding: Set<String>, pinned: String?, until: Date,
                          remaining: @escaping () -> TimeInterval?) async -> Lease? {
         let wait = until.timeIntervalSinceNow
         guard wait > 0 else { return nil }
@@ -1140,20 +1165,22 @@ public actor Scheduler {
         // state, and the next continuation's isolation check aborts the app.
         // SchedulerTests catch it only when built optimized.
         return await withTaskCancellationHandler(operation: {
-            await park(id, choice: choice, excluding: excluding, pinned: pinned, for: wait, remaining: remaining)
+            await park(id, choice: choice, size: size, excluding: excluding, pinned: pinned, for: wait,
+                       remaining: remaining)
         }, onCancel: {
             Task { await self.expire(id) }
         }, isolation: self)
     }
 
-    private func park(_ id: UUID, choice: ModelChoice, excluding: Set<String>, pinned: String?,
+    private func park(_ id: UUID, choice: ModelChoice, size: RequestSize, excluding: Set<String>, pinned: String?,
                       for wait: TimeInterval, remaining: @escaping () -> TimeInterval?) async -> Lease? {
         await withCheckedContinuation { continuation in
             guard !Task.isCancelled else {
                 continuation.resume(returning: nil)
                 return
             }
-            waiting.append(Waiter(id: id, choice: choice, excluded: excluding, pinned: pinned, remaining: remaining,
+            waiting.append(Waiter(id: id, choice: choice, size: size, excluded: excluding, pinned: pinned,
+                                  remaining: remaining,
                                   continuation: continuation))
             account()
             Task { [weak self] in
@@ -1200,51 +1227,57 @@ public actor Scheduler {
     /// a request may wait on a fast host only if it would still have time to
     /// wait behind a whole request, then run. A slow host is never sent
     /// work to wait.
-    private func pick(choice: ModelChoice, excluding: Set<String>, remaining: TimeInterval?) -> Pick? {
+    private func pick(choice: ModelChoice, size: RequestSize, excluding: Set<String>,
+                      remaining: TimeInterval?) -> Pick? {
         let quickest = config.prefetch ? entries.values.filter {
-            $0.capacity > 0 && rank($0, for: choice, excluding: excluding, remaining: remaining) != nil
-        }.compactMap(\.typical).min() : nil
+            $0.capacity > 0 && rank($0, for: choice, size: size, excluding: excluding, remaining: remaining) != nil
+        }.compactMap { $0.expected(size) }.min() : nil
         func fast(_ entry: Entry) -> Bool {
-            guard let quickest, entry.report?.pulls == true, let typical = entry.typical,
-                  typical <= config.prefetchUpTo, typical <= quickest * config.prefetchFactor else { return false }
-            return remaining.map { $0 > 2 * typical } ?? true
+            guard let quickest, entry.report?.pulls == true, let expected = entry.expected(size),
+                  expected <= config.prefetchUpTo, expected <= quickest * config.prefetchFactor else { return false }
+            // Waits behind a whole request, of the usual size, then runs.
+            return remaining.map { $0 > (entry.typical ?? expected) + expected } ?? true
         }
 
         let candidates = order.compactMap { id -> (entry: Entry, rank: Int)? in
             guard let entry = entries[id], entry.free > 0,
-                  let rank = rank(entry, for: choice, excluding: excluding, remaining: remaining) else { return nil }
+                  let rank = rank(entry, for: choice, size: size, excluding: excluding, remaining: remaining)
+            else { return nil }
             return (entry, rank)
         }
         // Otherwise every tie goes to the host that joined first, slow or
         // not, while a quicker one sits idle.
         if let best = candidates.min(by: {
-            ($0.rank, $0.entry.typical ?? 0, -$0.entry.free) < ($1.rank, $1.entry.typical ?? 0, -$1.entry.free)
+            ($0.rank, $0.entry.expected(size) ?? 0, -$0.entry.free) < ($1.rank, $1.entry.expected(size) ?? 0, -$1.entry.free)
         }) {
             return Pick(id: best.entry.host.id, mayWait: fast(best.entry))
         }
 
-        let ahead = order.compactMap { id -> (id: String, rank: Int, typical: Double)? in
-            guard let entry = entries[id], entry.canHold, fast(entry), let typical = entry.typical,
-                  let rank = rank(entry, for: choice, excluding: excluding, remaining: remaining) else { return nil }
-            return (id, rank, typical)
+        let ahead = order.compactMap { id -> (id: String, rank: Int, expected: Double)? in
+            guard let entry = entries[id], entry.canHold, fast(entry), let expected = entry.expected(size),
+                  let rank = rank(entry, for: choice, size: size, excluding: excluding, remaining: remaining)
+            else { return nil }
+            return (id, rank, expected)
         }
-        return ahead.min { ($0.rank, $0.typical) < ($1.rank, $1.typical) }.map { Pick(id: $0.id, prefetch: true) }
+        return ahead.min { ($0.rank, $0.expected) < ($1.rank, $1.expected) }.map { Pick(id: $0.id, prefetch: true) }
     }
 
     /// Whether a waiting request could run on this host, free slot or not.
     private func fits(_ waiter: Waiter, _ entry: Entry) -> Bool {
         if let pinned = waiter.pinned { return pinned == entry.host.id }
-        return rank(entry, for: waiter.choice, excluding: waiter.excluded, remaining: waiter.remaining()) != nil
+        return rank(entry, for: waiter.choice, size: waiter.size, excluding: waiter.excluded,
+                    remaining: waiter.remaining()) != nil
     }
 
     /// How far down a request's preferences this host is, if the request
     /// could run on it at all, free slot or not: its model is accepted, the
-    /// request hasn't failed there, and its typical time fits.
-    private func rank(_ entry: Entry, for choice: ModelChoice, excluding: Set<String>,
+    /// request hasn't failed there, and the time a request its size is
+    /// expected to take there fits.
+    private func rank(_ entry: Entry, for choice: ModelChoice, size: RequestSize, excluding: Set<String>,
                       remaining: TimeInterval?) -> Int? {
         guard !excluding.contains(entry.host.id), let model = entry.model, let rank = choice.rank(model)
         else { return nil }
-        if let remaining, remaining <= (entry.typical ?? 0) { return nil }
+        if let remaining, remaining <= (entry.expected(size) ?? 0) { return nil }
         return rank
     }
 
@@ -1262,7 +1295,8 @@ public actor Scheduler {
                 let choice: Pick? = if let pinned = waiter.pinned {
                     (entries[pinned]?.free ?? 0) > 0 ? Pick(id: pinned) : nil
                 } else {
-                    pick(choice: waiter.choice, excluding: waiter.excluded, remaining: waiter.remaining())
+                    pick(choice: waiter.choice, size: waiter.size, excluding: waiter.excluded,
+                         remaining: waiter.remaining())
                 }
                 if let choice {
                     waiting.remove(at: index)
@@ -1287,27 +1321,31 @@ public actor Scheduler {
     /// that host's typical time while another host sits idle and nothing
     /// waits, a copy on that host too. Returns the first answer and cancels
     /// the other copy. Failures wait for the other copy, if one is running.
-    private func attempt(_ body: Data, lease: Lease, model: ModelInfo, choice: ModelChoice, tried: Set<String>,
+    private func attempt(_ body: Data, size: RequestSize, lease: Lease, model: ModelInfo, choice: ModelChoice,
+                         tried: Set<String>,
                          remaining: @escaping () -> TimeInterval?) async -> Answer {
         let id = UUID()
         // Copies run in tasks of their own, so cancelling the request's task
         // stops them here. Isolated to this actor by name, as in `enqueue`.
         return await withTaskCancellationHandler(operation: {
-            await begin(body, lease: lease, model: model, choice: choice, tried: tried, remaining: remaining, as: id)
+            await begin(body, size: size, lease: lease, model: model, choice: choice, tried: tried,
+                        remaining: remaining, as: id)
         }, onCancel: {
             Task { await self.abandon(id) }
         }, isolation: self)
     }
 
-    private func begin(_ body: Data, lease: Lease, model: ModelInfo, choice: ModelChoice, tried: Set<String>,
+    private func begin(_ body: Data, size: RequestSize, lease: Lease, model: ModelInfo, choice: ModelChoice,
+                       tried: Set<String>,
                        remaining: @escaping () -> TimeInterval?, as id: UUID) async -> Answer {
         await withCheckedContinuation { continuation in
-            attempts[id] = Attempt(body: body, choice: choice, tried: tried, remaining: remaining, first: lease.id,
+            attempts[id] = Attempt(body: body, size: size, choice: choice, tried: tried, remaining: remaining,
+                                   first: lease.id,
                                    continuation: continuation)
             launch(lease, model: model, for: id)
             if Task.isCancelled {
                 abandon(id)
-            } else if config.hedge, let due = hedgeDue(lease) {
+            } else if config.hedge, let due = hedgeDue(lease, size: size) {
                 Task { [weak self] in
                     try? await Task.sleep(for: .seconds(due))
                     await self?.hedge(id)
@@ -1327,9 +1365,9 @@ public actor Scheduler {
     private func launch(_ lease: Lease, model: ModelInfo, for id: UUID) {
         guard let attempt = attempts[id], let host = entries[lease.host]?.host else { return }
         attempts[id]?.copies[lease.id] = (lease, model, Date())
-        let body = attempt.body, remaining = attempt.remaining
+        let body = attempt.body, size = attempt.size, remaining = attempt.remaining
         copies[lease.id] = Task {
-            let result = await self.perform(body, lease: lease, host: host, remaining: remaining)
+            let result = await self.perform(body, size: size, lease: lease, host: host, remaining: remaining)
             self.settle(id, lease: lease, result: result)
         }
     }
@@ -1387,13 +1425,15 @@ public actor Scheduler {
               attempt.copies.count == 1, let running = attempt.copies.values.first,
               // Still in its slot: not one that has just answered.
               entries[running.lease.host]?.active[running.lease.id] != nil,
-              let due = hedgeDue(running.lease), Date().timeIntervalSince(running.started) >= due else { return }
+              let due = hedgeDue(running.lease, size: attempt.size), Date().timeIntervalSince(running.started) >= due
+        else { return }
         let excluding = attempt.tried.union(attempt.failed).union([running.lease.host])
         let remaining = attempt.remaining()
         let idle = order.compactMap { host -> (id: String, model: ModelInfo, typical: Double)? in
             guard let entry = entries[host], entry.free > 0, let model = entry.model,
-                  rank(entry, for: attempt.choice, excluding: excluding, remaining: remaining) != nil else { return nil }
-            return (host, model, entry.typical ?? .infinity)
+                  rank(entry, for: attempt.choice, size: attempt.size, excluding: excluding,
+                       remaining: remaining) != nil else { return nil }
+            return (host, model, entry.expected(attempt.size) ?? .infinity)
         }
         guard let target = idle.min(by: { $0.typical < $1.typical }) else { return }
         attempts[id]?.hedged = true
@@ -1402,12 +1442,13 @@ public actor Scheduler {
         account()
     }
 
-    /// How long a copy runs before it counts as straggling: well past its
-    /// host's typical time, plus one more for a copy sent ahead, which may
-    /// first wait behind a whole request.
-    private func hedgeDue(_ lease: Lease) -> TimeInterval? {
-        guard let typical = entries[lease.host]?.typical else { return nil }
-        return typical * config.hedgeAfter + (lease.prefetch ? typical : 0)
+    /// How long a copy runs before it counts as straggling: well past what
+    /// a request its size is expected to take on its host, plus the host's
+    /// typical time for a copy sent ahead, which may first wait behind a
+    /// whole request.
+    private func hedgeDue(_ lease: Lease, size: RequestSize) -> TimeInterval? {
+        guard let entry = entries[lease.host], let expected = entry.expected(size) else { return nil }
+        return expected * config.hedgeAfter + (lease.prefetch ? entry.typical ?? expected : 0)
     }
 
     /// Cancels hedged copies still running alongside their first, so their
@@ -1613,7 +1654,7 @@ public actor Scheduler {
                             utilization: activity[id].flatMap { ActivityTotals($0.since(cutoff)).utilization },
                             requestSeconds: Percentiles(e.durations.filter { $0.at > cutoff }.map(\.seconds)),
                             busySlotSeconds: e.busySlotTime, slotSeconds: e.slotTime, rejoined: e.rejoined,
-                            lastFailure: e.lastFailure)
+                            lastFailure: e.lastFailure, pace: e.pace)
     }
 
     public func snapshot() -> SchedulerSnapshot {
