@@ -501,7 +501,8 @@ final class AppModel: ObservableObject {
     /// once a second (`GatewayNotice`). Called each second, as the window's
     /// numbers are read.
     private func noticeGateway() {
-        let state = GatewayNotice.State(port: running ? port : nil, intent: intent, snapshot: snapshot)
+        let state = GatewayNotice.State(port: running ? port : nil, intent: intent, snapshot: snapshot,
+                                        requiresToken: settings.requireToken, apps: paired.map(\.id))
         if notice.update(state, at: .now) { Self.postNotice() }
     }
 

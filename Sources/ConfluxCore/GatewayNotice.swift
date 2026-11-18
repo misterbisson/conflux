@@ -13,7 +13,8 @@ public enum GatewayNotice {
     public static let interval: Duration = .seconds(1)
 
     /// What a notice says changed: whether the gateway listens, and where;
-    /// whether its owner lets it take work; and which hosts serve which
+    /// whether its owner lets it take work; whether it asks for a token, and
+    /// which apps are paired; and which hosts serve which
     /// models, labelled how, with how many slots each can fill now. Not how
     /// busy they are:
     /// a request starting or finishing posts nothing.
@@ -34,24 +35,36 @@ public enum GatewayNotice {
         public var port: UInt16?
         public var intent: OwnerIntent?
         public var hosts: [Host]
+        /// Whether the gateway asks for a token. It changes only while the
+        /// gateway is stopped, so the start after it posts anyway, but a stop
+        /// and start quicker than a notice would otherwise say nothing.
+        public var requiresToken: Bool
+        /// The paired apps, by `PairedApp.id`: a revoked app learns it's been
+        /// revoked from the notice, when it reads `/v1/models` again and gets
+        /// `401`, rather than at its next request.
+        public var apps: [String]
 
         /// Stopped: nothing listens.
         public static let stopped = State(port: nil, intent: nil, hosts: [])
 
-        public init(port: UInt16?, intent: OwnerIntent?, hosts: [Host]) {
+        public init(port: UInt16?, intent: OwnerIntent?, hosts: [Host], requiresToken: Bool = true,
+                    apps: [String] = []) {
             self.port = port
             self.intent = intent
             self.hosts = hosts
+            self.requiresToken = requiresToken
+            self.apps = apps.sorted()
         }
 
         /// The gateway's state, listening on `port`, or stopped, with no port.
-        public init(port: UInt16?, intent: OwnerIntent, snapshot: SchedulerSnapshot?) {
+        public init(port: UInt16?, intent: OwnerIntent, snapshot: SchedulerSnapshot?, requiresToken: Bool,
+                    apps: [String]) {
             guard let port else { self = .stopped; return }
             let hosts = (snapshot?.hosts ?? [])
                 .map { Host(id: $0.id, model: $0.model?.id, tags: $0.model?.tags ?? [],
                             onlyWhenAsked: $0.model?.onlyWhenAsked ?? false, capacity: $0.capacity) }
                 .sorted { $0.id < $1.id }
-            self.init(port: port, intent: intent, hosts: hosts)
+            self.init(port: port, intent: intent, hosts: hosts, requiresToken: requiresToken, apps: apps)
         }
     }
 

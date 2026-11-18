@@ -192,7 +192,9 @@ The conflux app posts a distributed notification,
 - a Mac joins the mesh or leaves it, a host serves another model, or its
   owner changes the model's tags or holds it back;
 - the slots a host can fill now change, which they do under memory pressure
-  and heat, and as a model loads.
+  and heat, and as a model loads;
+- an app is paired or revoked, or the owner turns "Require the token" on or
+  off, which they can do only while the gateway is stopped.
 
 Not when a request starts or finishes. At most one notice a second: a change
 within a second of the last notice waits until the second is up, so a burst
@@ -201,7 +203,10 @@ change. The command line's `conflux serve` posts none.
 
 The notice carries nothing, and anyone can post one. Take it as a reason to
 look, not as news: read `/health` and `/v1/models` again, with your token.
-A sandboxed app can watch for it:
+That's also how your app learns it's been revoked without sending a request:
+`/v1/models` answers `401`. `/health` doesn't: it answers anyone whether the
+gateway is up, so to a token it doesn't take it answers `200` with only
+`status`, and no `mesh` or `hosts`. A sandboxed app can watch for it:
 
 ```swift
 DistributedNotificationCenter.default().addObserver(

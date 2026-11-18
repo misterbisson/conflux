@@ -55,12 +55,26 @@ import Testing
               hosts: [Host(id: "local", model: "gemma", capacity: 2)]),
         State(port: 8090, intent: .serving,                           // slots moved
               hosts: [Host(id: "local", model: "qwen", capacity: 1)]),
+        State(port: 8090, intent: .serving, hosts: [local],           // no token asked for
+              requiresToken: false),
+        State(port: 8090, intent: .serving, hosts: [local],           // an app paired
+              apps: ["TEAM000001.com.example.client"]),
         State.stopped,                                                // stopped
     ])
     func eachChangePosts(_ changed: State) {
         let notice = said(Self.serving)
         #expect(notice.update(changed, at: at(2)))
         #expect(!notice.update(changed, at: at(4)))
+    }
+
+    @Test func revokingAnAppPosts() {
+        let both = ["TEAM000001.com.example.client", "-.com.example.other"]
+        let notice = said(State(port: 8090, intent: .serving, hosts: [Self.local], apps: both))
+        // The same apps, listed in another order, are no change.
+        #expect(!notice.update(State(port: 8090, intent: .serving, hosts: [Self.local], apps: both.reversed()),
+                               at: at(2)))
+        #expect(notice.update(State(port: 8090, intent: .serving, hosts: [Self.local], apps: [both[1]]),
+                              at: at(3)))
     }
 
     @Test func resumingAfterAPausePosts() {
@@ -120,8 +134,10 @@ import Testing
                 queued: active, completed: completed, failures: FailureCounts(), rejected: 0, busy: 0,
                 unavailable: 0, hedged: 0, hedgeWins: 0, perHour: 0, idleWithWorkSeconds: 0)
         }
-        let quiet = State(port: 8090, intent: .serving, snapshot: snapshot(active: 0, completed: 0))
-        let busy = State(port: 8090, intent: .serving, snapshot: snapshot(active: 4, completed: 90))
+        let quiet = State(port: 8090, intent: .serving, snapshot: snapshot(active: 0, completed: 0),
+                          requiresToken: true, apps: [])
+        let busy = State(port: 8090, intent: .serving, snapshot: snapshot(active: 4, completed: 90),
+                         requiresToken: true, apps: [])
         #expect(quiet == busy)
         #expect(quiet.hosts == [Self.local, Self.peer])
     }
@@ -131,7 +147,8 @@ import Testing
             hosts: [HostSnapshot(id: "local", model: Self.model, state: .ready, slots: 2, capacity: 2)],
             queued: 0, completed: 0, failures: FailureCounts(), rejected: 0, busy: 0, unavailable: 0, hedged: 0,
             hedgeWins: 0, perHour: 0, idleWithWorkSeconds: 0)
-        #expect(State(port: nil, intent: .serving, snapshot: snapshot) == .stopped)
-        #expect(State(port: 8090, intent: .serving, snapshot: nil).hosts.isEmpty)
+        #expect(State(port: nil, intent: .serving, snapshot: snapshot, requiresToken: false, apps: ["-.com.example.client"])
+                == .stopped)
+        #expect(State(port: 8090, intent: .serving, snapshot: nil, requiresToken: true, apps: []).hosts.isEmpty)
     }
 }

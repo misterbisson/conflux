@@ -379,7 +379,10 @@ In order. Steps 1 and 4 stand alone. Step 3 needs step 2.
    a second, as it reads the window's numbers, and conflux launching and
    serving again posts one, which an app that launched it can wait for. It
    posts one last notice as it quits, once the gateway has stopped, even
-   within a second of the one before. `conflux serve` posts none.
+   within a second of the one before. `conflux serve` posts none. Pairing
+   or revoking an app posts one too, so a revoked app finds out from
+   `/v1/models` without waiting for its next request, and so does turning
+   "Require the token" on or off.
 
 5. **The contract written down.** In [clients.md](clients.md): pairing, the
    reply, keeping the token in the app's keychain, pairing again when the
