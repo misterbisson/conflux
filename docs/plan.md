@@ -256,7 +256,10 @@ contribution is measured against the effort of keeping it there.
      the tags, not yet the settings.
   2. **A request's expected time from its size**, timed per thousand prompt
      and written tokens on each host, for deadlines and for the choice
-     between hosts ([design.md](design.md#deadlines)).
+     between hosts ([design.md](design.md#deadlines)). *Built*, from each
+     answer's timings, with each host's pace in `/health`. *Left*: a first
+     guess from the model file's size and the chip, before a host's first
+     answer, and measuring how close the estimates come on real work.
 
   **Done when:** a mesh serving Apple's model and a small model file beside
   a large one held back sends image descriptions only to the small ones,
