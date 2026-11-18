@@ -80,9 +80,10 @@ it, without clients naming it ([clients.md](clients.md#ask-for-what-the-work-nee
 
 These change at once, while conflux serves, and peers' gateways see the
 change at their next look. They're kept for each model, by its ID, so a
-model chosen again gets its tags back. A model file starts with none, and
-answers any request. [Apple's model](#apples-on-device-model) starts tagged
-`image-description`, which you can untick.
+model chosen again gets its tags back. A model conflux knows starts with
+the tags it suggests ([below](#defaults-for-known-models)), and any other
+with none, answering any request. [Apple's model](#apples-on-device-model)
+starts tagged `image-description`, which you can untick.
 
 With `conflux serve`, `--tags` sets the model file's tags, comma separated,
 `--only-when-asked` holds it back, and `--apple-tags` sets Apple's model's,
@@ -91,6 +92,30 @@ With `conflux serve`, `--tags` sets the model file's tags, comma separated,
 ```bash
 swift run -c release conflux serve --model ~/models/large.gguf --tags editorial,writing,reasoning --only-when-asked
 ```
+
+### Defaults for known models
+
+conflux knows the models the [README](../README.md#what-conflux-suggests-for-them)
+suggests, by their files' headers: the architecture and size they give, not
+the file's name, so any quantization from any publisher counts. For each it
+suggests a context per slot, slots and tokens per image where measurements
+say, and tags. [`ModelCatalog.swift`](../Sources/ConfluxCore/ModelCatalog.swift)
+holds them, with what each rests on.
+
+- **Choosing a model it knows**, in the app, sets its context, slots and
+  tokens per image to the suggestions, in place of the last model's. Change
+  them after as you like; conflux suggests again only when a model is
+  chosen again.
+- **Its tags and holding back** come from the suggestions the first time
+  conflux reads the model's file, and only while you haven't set that
+  model's yourself. A model you chose before conflux knew it gets them the
+  next time conflux opens. Once you change them, they're yours, kept by the
+  model's ID.
+- **`conflux serve`** uses the suggestions for whatever you don't pass:
+  `--ctx-per-slot`, `--slots`, `--image-min-tokens`, `--tags` and
+  `--only-when-asked`. It prints what it suggests and what it serves with.
+  `--only-when-asked` alone keeps the suggested tags.
+- **An iPad** takes the suggested tags, but not yet the settings.
 
 **No slots** makes the Mac gateway only: it runs no requests itself, frees the
 model's memory once its last request ends, and sends every request to its
