@@ -119,9 +119,10 @@ down. It needs llama.cpp installed (`brew install llama.cpp`), and
 everything after `--` is passed to `llama-server`. With the same llama.cpp
 build, both runtimes give the same answers ([design.md](design.md#runtimes)).
 
-Gemma 4 models need `llama-server` for now: the in-process runtime formats
-prompts with llama.cpp's built-in chat templates, which don't include Gemma
-4's ([README](../README.md#gemma-4)).
+The in-process runtime formats prompts with the chat templates built into
+llama.cpp, except Gemma 4's, which llama.cpp only runs in `llama-server`:
+conflux formats those itself, with thinking off. With `llama-server`, add
+`-- --reasoning off` for the same prompt ([README](../README.md#gemma-4)).
 
 ### Apple's on-device model
 
