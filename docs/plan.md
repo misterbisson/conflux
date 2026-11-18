@@ -229,7 +229,28 @@ contribution is measured against the effort of keeping it there.
   committed, and it ships inside the app: the app fetches nothing from the
   internet, which would risk App Store review. An iPad copying the model a
   Mac in its mesh serves fetches nothing from the internet either.
-- Capability requests and aliases beyond vision.
+- **Capability requests beyond vision**, so a client asks for the work a
+  request needs rather than a model, and a large, slow model's slots go to
+  the requests that need it ([design.md](design.md#capabilities-and-tags),
+  [clients.md](clients.md#ask-for-what-the-work-needs)). Small models
+  describe images well and quickly, but fall short at choosing and ordering
+  among hundreds of items, work that a 31B model does well at many times the
+  cost. In two steps:
+  1. **Tags and holding back.** The documented vocabulary and the owner's
+     own tags, set on each model in the app beside its other settings, with
+     `conflux serve --tag`, and sent in the host protocol. A model that
+     answers only when asked for. `context-<N>k` as a fact. Requests joined
+     with `+`, the four aliases kept as other spellings, and `/v1/models`
+     listing each model's tags. Apple's model tagged `image-description`
+     by conflux, which the owner can change.
+  2. **A request's expected time from its size**, timed per thousand prompt
+     and written tokens on each host, for deadlines and for the choice
+     between hosts ([design.md](design.md#deadlines)).
+
+  **Done when:** a mesh serving Apple's model and a small model file beside
+  a large one held back sends image descriptions only to the small ones,
+  and requests for `editorial` only to the large one, without the client
+  naming a model.
 - MLX for artifacts that benefit from it.
 
 ## Apps on the same Mac

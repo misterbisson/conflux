@@ -245,6 +245,88 @@ conflux never decides that one model is "better" than another. Substitution
 happens only as far as the client allows, and the response always names what
 actually ran.
 
+### Capabilities and tags
+
+> **Status: planned** ([plan.md](plan.md#phase-4-more-runtimes-and-capabilities)).
+> Today a request can ask only for `vision` and `unfiltered`, through the four
+> `any` aliases.
+
+A mesh can serve small, quick models beside a large, slow one that does work
+they can't. A client should be able to ask for what a request needs without
+naming the model, so it keeps working when the models change. And the large
+model's few slots should go to requests that need them, not to whatever
+asked for `any`.
+
+What a request can need comes in three kinds, kept apart:
+
+- **Facts conflux reads for itself**, never set by hand: `vision`, when the
+  model reads images; `unfiltered`, when its runtime declines no content; and
+  `context-<N>k`, at least N × 1,024 tokens of context per slot, such as
+  `context-32k`. These are correct without upkeep, because they come from the
+  model's files and settings.
+- **The owner's judgement**, as tags: what work the owner trusts a model
+  with. Whether a model writes well, or chooses well among hundreds of items,
+  is something conflux can't measure from its files. The owner can. conflux
+  still ranks nothing: it follows the owner's tags and the client's request.
+- **Cost and speed**, measured, never named in a request. They depend on the
+  host and the request as much as the model. Deadlines and the choice between
+  hosts use them ([Deadlines](#deadlines)). A tag such as `large` or `fast`
+  would describe the model instead of the work, and go stale as models
+  change.
+
+**Tags name the work, not the model.** A short vocabulary is documented, so
+a client can rely on a tag meaning the same in any mesh, each tag with what
+it promises:
+
+| Tag | The model can be trusted to |
+|---|---|
+| `image-description` | Say accurately what an image shows, in plain words: subjects, actions, arrangement, faces, text |
+| `image-critique` | Judge how an image works, not only what's in it: composition, light, mood, and which of several is strongest |
+| `editorial` | Choose, order and cut among many items toward a goal, and say why |
+| `writing` | Write prose with a voice, for people to read |
+| `reasoning` | Work through multi-step problems, plans and analysis |
+| `code` | Write and review code |
+| `tools` | Choose and call tools reliably |
+
+The two image tags apply only to a model that reads images, so asking for
+one implies `vision`. The owner may add tags of their own, lowercase letters,
+digits and hyphens, starting with a letter. They mean what the owner says,
+in that mesh only. The vocabulary's tags, the facts' names, and `any` and
+`text` are reserved.
+
+The split matters most where it's least obvious. Describing photographs one
+at a time, in a few literal words each, suits small models. Choosing a
+sequence from hundreds of those descriptions, with no photograph sent,
+doesn't: it needs `editorial` and a long context, not better vision.
+
+**Only when asked for.** The owner can hold a model back, so it answers only
+requests that name it, or name one of its tags. It answers none of the
+`any` aliases, nor a request for facts alone, such as `any+vision` or
+`any+context-32k`. A slow model's slots then stay free for the requests
+that need it, much as `content_filter` keeps Apple's model out of the
+`-unfiltered` aliases.
+
+**Where tags are set.** On the device that serves the model, beside its
+other settings: the model file's, and Apple's model's. Tags change while
+conflux serves, since they change only what a host matches. A host sends its
+tags and whether it's held back with its model, in `/conflux/0/host`
+([The host protocol](#the-host-protocol)), so every gateway in the mesh
+matches the same way. Each host is matched by its own tags: two devices that
+tag the same model differently are each taken at their word.
+
+**Defaults.** A model file starts with no tags, answering any request: the
+owner knows the model, and conflux doesn't. Apple's model is the exception.
+It's the same model on every device at an OS version, so one judgement holds
+across a mesh, so conflux tags it `image-description` itself, which the
+self-check's images bear out. The owner sees the tag ticked, and can untick
+it or tick others, like any model's. Left untagged, requests for
+`image-description` would pass over a quick describer on every device whose
+owner didn't think to tag it. Nothing else fits it: its 4,096 tokens rule out
+work over many items, and its host refuses tools. The starter model starts
+with no tags, since it proves the plumbing rather than the answers. Apple's
+model changes with OS updates, its fingerprint with them, so its tags are
+worth looking at again after one.
+
 ### Hosts pull, the gateway holds a short queue
 
 A host with a free slot **asks** a gateway for work. Gateways don't push and
@@ -303,6 +385,17 @@ free up in time, or with 503 when hosts failed and time ran out. It doesn't send
 a request to a host whose expected finish would pass the deadline. With this
 guarantee, a client timeout means one thing: the gateway is stuck. A busy mesh
 never looks like a dead one. See [clients.md](clients.md).
+
+**A request's expected time, from its size** (planned). A host's expected
+finish is its typical request time today, the same for a short request as
+for a long one. Every answer already carries its token counts and timings, so
+a host could be timed per thousand prompt tokens and per thousand written,
+and each request estimated from its prompt, its images and its
+`max_tokens`. A slow model could then take a short request inside a tight
+deadline and be passed over for a long one, and between hosts a request would
+go to the one that would finish it soonest. Before a host has been timed,
+its model file's size and its chip give a first guess. Apple's model reports
+no timings, so it keeps its typical time.
 
 ### Failures and stragglers
 
@@ -504,7 +597,11 @@ device, `apple` for Apple's model.
   running requests and offered since it started (`busy_slot_seconds`,
   `slot_seconds`, [Monitoring](#monitoring)), the hardware it runs on
   (`hardware`, below), and `generation`, which counts its status changes.
-  `host` names the host it describes, and `hosts` lists every host the
+  The model is to carry its `tags` and `onlyWhenAsked` as well
+  ([Capabilities and tags](#capabilities-and-tags), planned), each left out
+  when empty or false. A gateway from before them ignores both, and sends a
+  held-back model requests for `any` until it's updated. A host from before
+  them has no tags and holds nothing back. `host` names the host it describes, and `hosts` lists every host the
   device serves, the first first. A gateway follows that list: each host
   after the first becomes a host of its own in the gateway's scheduler,
   `peer-<short ID>-<host>` beside the first's `peer-<short ID>`, and leaves
