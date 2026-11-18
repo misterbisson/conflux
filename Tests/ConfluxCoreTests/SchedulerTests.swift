@@ -76,12 +76,17 @@ import Testing
     /// A host that answers busy as the deadline nears, as a peer on a slow
     /// link can, had no slot: nothing ran, so it's busy, not out of time.
     @Test func busyNearTheDeadlineIsStillBusy() async {
+        let deadline = Date().addingTimeInterval(2)
+        // Answers in the last half second before the deadline, timed from
+        // the deadline rather than from when the request reached it: on a
+        // loaded runner it can reach it late, and a fixed sleep then
+        // answers after the deadline.
         let host = FakeHost(id: "h") { _ in
-            try await Task.sleep(for: .seconds(1.6))
+            try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow - 0.45)))
             throw HostError.busy("no free slot")
         }
         let scheduler = await Scheduler.with([host])
-        let outcome = await scheduler.submit(Data(), choice: any, deadline: Date().addingTimeInterval(2), key: nil)
+        let outcome = await scheduler.submit(Data(), choice: any, deadline: deadline, key: nil)
         if case .busy = outcome {} else { Issue.record("\(outcome)") }
         let snapshot = await scheduler.snapshot()
         #expect(snapshot.failures == FailureCounts(busy: 1))
