@@ -246,6 +246,14 @@ contribution is measured against the effort of keeping it there.
      `image-description` by conflux, which the owner can change
      (`--apple-tags`). An iPad's models keep their defaults for now: its
      app has no place to set tags yet.
+
+     *Built since:* suggestions for the models the README lists, in
+     `ModelCatalog`, matched by header: a context per slot, slots and
+     tokens per image where measurements say, and tags, with Gemma 4 31B
+     held back for `editorial`, `image-critique`, `reasoning` and
+     `writing`. Applied when a model is
+     chosen, and by `conflux serve` for options not given. An iPad takes
+     the tags, not yet the settings.
   2. **A request's expected time from its size**, timed per thousand prompt
      and written tokens on each host, for deadlines and for the choice
      between hosts ([design.md](design.md#deadlines)). *Built*, from each

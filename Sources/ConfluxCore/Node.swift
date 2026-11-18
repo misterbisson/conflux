@@ -60,6 +60,13 @@ public struct NodeSettings: Sendable, Equatable, Codable {
         labels[modelID] ?? .defaults(for: modelID)
     }
 
+    /// What the owner says about a model file's model, or, before they've
+    /// said, what conflux suggests for it (`ModelCatalog`), from its header.
+    public func labels(for config: ModelConfig) -> ModelLabels {
+        labels[config.modelID] ?? ModelCatalog.defaults(forModelAt: config.model)?.labels
+            ?? .defaults(for: config.modelID)
+    }
+
     // Settings saved before a field existed still load.
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -247,7 +254,7 @@ public final class ConfluxNode: @unchecked Sendable {
         // With no slots, a host that can't change its slots isn't started:
         // there'd be nothing it could do.
         if settings.servesModelFile, let config = settings.host,
-           case let host = Self.host(for: config, labels: settings.labels(for: config.modelID)),
+           case let host = Self.host(for: config, labels: settings.labels(for: config)),
            config.slots > 0 || host is any ResizableHost {
             lock.withLock {
                 self.host = host
@@ -413,7 +420,7 @@ public final class ConfluxNode: @unchecked Sendable {
             await scheduler.retire(hostID: old.id, cancelling: cancelling)
             old.stop()
         }
-        guard let config, case let host = Self.host(for: config, labels: labels(for: config.modelID)),
+        guard let config, case let host = Self.host(for: config, labels: labels(for: config)),
               config.slots > 0 || host is any ResizableHost
         else { return }
         lock.withLock {
@@ -462,6 +469,11 @@ public final class ConfluxNode: @unchecked Sendable {
 
     private func labels(for modelID: String) -> ModelLabels {
         lock.withLock { labels[modelID] } ?? .defaults(for: modelID)
+    }
+
+    private func labels(for config: ModelConfig) -> ModelLabels {
+        lock.withLock { labels[config.modelID] } ?? ModelCatalog.defaults(forModelAt: config.model)?.labels
+            ?? .defaults(for: config.modelID)
     }
 
     /// The model file's files, for peers to copy: the starter model's

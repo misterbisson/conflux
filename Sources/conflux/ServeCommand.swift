@@ -20,6 +20,10 @@ enum ServeCommand {
       --mmproj PATH           multimodal projector, for vision models
       --slots N               requests run at once (default 1)
       --ctx-per-slot N        context per slot (default 4096)
+
+      For a model conflux knows, these and --image-min-tokens, --tags and
+      --only-when-asked default to what it suggests, which it prints.
+
       --max-image-dimension N longest image side clients should send (default 1024)
       --image-min-tokens N    fewest tokens per image (Qwen-VL models want 1024)
       --tags LIST             the work the model is trusted with, comma
@@ -50,6 +54,8 @@ enum ServeCommand {
     struct Options {
         var settings: NodeSettings
         var identity: String
+        /// What conflux suggests for the model, when it knows it.
+        var known: ModelDefaults?
     }
 
     static func parse(_ args: [String]) throws -> Options {
@@ -121,7 +127,7 @@ enum ServeCommand {
         if runtime == .inProcess && (!extra.isEmpty || values["--llama-server"] != nil) {
             throw UsageError("llama-server options need --runtime llama-server")
         }
-        let host = try model.map { model in ModelConfig(
+        var host = try model.map { model in ModelConfig(
             runtime: runtime, model: model, projector: values["--mmproj"],
             slots: try int("--slots", 1), contextPerSlot: try int("--ctx-per-slot", 4096, minimum: 256),
             maxImageDimension: try int("--max-image-dimension", 1024, minimum: 64),
@@ -130,14 +136,23 @@ enum ServeCommand {
             executable: values["--llama-server"], extraArguments: extra) }
         let appleModel = AppleModelSettings(enabled: apple, slots: try int("--apple-slots", AppleModelHost.defaultSlots),
                                             selfCheck: !flags.contains("--skip-self-check"))
+        // A model conflux knows takes its suggestions for what isn't given.
+        let known = model.flatMap(ModelCatalog.defaults(forModelAt:))
+        if let known, var config = host {
+            if values["--ctx-per-slot"] == nil { config.contextPerSlot = known.contextPerSlot }
+            if values["--slots"] == nil, let slots = known.slots { config.slots = slots }
+            if values["--image-min-tokens"] == nil { config.imageMinTokens = known.imageMinTokens }
+            host = config
+        }
         var labels: [String: ModelLabels] = [:]
-        if let host, let tags = try tags("--tags") ?? (flags.contains("--only-when-asked") ? [] : nil) {
-            labels[host.modelID] = ModelLabels(tags: tags, onlyWhenAsked: flags.contains("--only-when-asked"))
+        if let host, values["--tags"] != nil || flags.contains("--only-when-asked") {
+            labels[host.modelID] = ModelLabels(tags: try tags("--tags") ?? known?.labels.tags ?? [],
+                                               onlyWhenAsked: flags.contains("--only-when-asked"))
         }
         if let tags = try tags("--apple-tags") { labels[AppleModelHost.modelID] = ModelLabels(tags: tags) }
         let settings = NodeSettings(host: host, port: UInt16(port), requireToken: !flags.contains("--no-token"),
                                     peers: peers, appleModel: appleModel, labels: labels)
-        return Options(settings: settings, identity: values["--identity"] ?? "default")
+        return Options(settings: settings, identity: values["--identity"] ?? "default", known: known)
     }
 
     struct UsageError: Error, CustomStringConvertible {
@@ -146,9 +161,12 @@ enum ServeCommand {
     }
 
     static func run(_ args: [String]) async -> Int32 {
-        let settings: NodeSettings, identity: String
+        let settings: NodeSettings, identity: String, known: ModelDefaults?
         do {
-            (settings, identity) = try { let options = try parse(args); return (options.settings, options.identity) }()
+            (settings, identity, known) = try {
+                let options = try parse(args)
+                return (options.settings, options.identity, options.known)
+            }()
         } catch {
             say("conflux: \(error)\n\n\(usage)")
             return 64
@@ -166,6 +184,13 @@ enum ServeCommand {
         // in the middle of running it.
         awake.set(true)
         say("gateway on http://127.0.0.1:\(port)/v1")
+        if let known, let config = settings.host {
+            let labels = settings.labels(for: config)
+            say("\(known.name): conflux suggests \(known.summary); serving with "
+                + "\(config.contextPerSlot.formatted()) tokens per slot, \(config.slots) slot\(config.slots == 1 ? "" : "s"), "
+                + (labels.tags.isEmpty ? "no tags" : "tagged \(labels.tags.joined(separator: ", "))")
+                + (labels.onlyWhenAsked ? ", only when asked for" : ""))
+        }
         say(settings.requireToken ? "token: conflux token (stored at \(TokenStore.defaultURL.path))"
             : "no token required: any process on this Mac can use the gateway")
         if let log = node.logURL { say("llama.cpp log: \(log.path)") }

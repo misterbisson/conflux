@@ -227,7 +227,8 @@ final class AppModel: ObservableObject {
     }
 
     /// Reads the chosen files' headers, off the main thread, and says what's
-    /// wrong with them in `fileProblems`.
+    /// wrong with them in `fileProblems`. A model conflux knows takes its
+    /// suggestions (`suggest`).
     func checkFiles() {
         guard let host = settings.host, !host.model.isEmpty else {
             fileProblems = []
@@ -235,15 +236,33 @@ final class AppModel: ObservableObject {
         }
         let borrowed = ([host.model] + (host.projector.map { [$0] } ?? [])).map(access.borrow)
         Task {
-            let problems = await Task.detached {
-                Projectors.problems(model: GGUFFile(borrowed[0].url),
-                                    projector: borrowed.count > 1 ? GGUFFile(borrowed[1].url) : nil)
+            let (problems, known) = await Task.detached { () -> ([String], ModelDefaults?) in
+                let model = GGUFFile(borrowed[0].url)
+                return (Projectors.problems(model: model,
+                                            projector: borrowed.count > 1 ? GGUFFile(borrowed[1].url) : nil),
+                        (try? model.metadata.get()).flatMap(ModelCatalog.defaults(for:)))
             }.value
             access.giveBack(borrowed)
             // Chosen again meanwhile: that check says what's wrong.
             guard settings.host?.model == host.model, settings.host?.projector == host.projector else { return }
             fileProblems = problems
+            let chosen = suggestingFor == host.model
+            if chosen { suggestingFor = nil }
+            if let known { suggest(known, forModel: host.modelID, settings: chosen) }
         }
+    }
+
+    /// The model file just chosen, whose settings take conflux's suggestions
+    /// once its header is read.
+    private var suggestingFor: String?
+
+    /// Takes conflux's suggestions for a model it knows (`ModelCatalog`):
+    /// its tags and whether it's held back, unless its owner has said
+    /// already, and, when it's just been chosen, its context, slots and
+    /// image tokens. The owner can change any of it after.
+    private func suggest(_ known: ModelDefaults, forModel modelID: String, settings chosen: Bool) {
+        if settings.labels[modelID] == nil { setLabels(known.labels, forModel: modelID) }
+        if chosen, let host = settings.host { settings.host = known.apply(to: host) }
     }
 
     private func save() {
@@ -649,6 +668,7 @@ final class AppModel: ObservableObject {
         guard var host = settings.host else { return }
         host.model = ""
         host.projector = nil
+        if let known = starter.flatMap({ ModelCatalog.defaults(forModelAt: $0.model) }) { host = known.apply(to: host) }
         settings.host = host
         access.keep(only: [])
     }
@@ -668,7 +688,10 @@ final class AppModel: ObservableObject {
             problem = "conflux can open \(url.lastPathComponent) until it quits, but not after: \(error.localizedDescription)"
         } catch {}
         var host = settings.host ?? ModelConfig(model: "")
-        if projector { host.projector = url.path } else { host.model = url.path }
+        if projector { host.projector = url.path } else {
+            host.model = url.path
+            suggestingFor = url.path
+        }
         settings.host = host
         access.keep(only: [host.model] + (host.projector.map { [$0] } ?? []))
     }

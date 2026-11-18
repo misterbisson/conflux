@@ -314,10 +314,19 @@ tags and whether it's held back with its model, in `/conflux/0/host`
 matches the same way. Each host is matched by its own tags: two devices that
 tag the same model differently are each taken at their word.
 
-**Defaults.** A model file starts with no tags, answering any request: the
-owner knows the model, and conflux doesn't. Apple's model is the exception.
-It's the same model on every device at an OS version, so one judgement holds
-across a mesh, so conflux tags it `image-description` itself, which the
+**Defaults.** conflux suggests tags, and a context per slot, for the models
+it has measured or seen used, kept in a catalog in the repository, with what
+each suggestion rests on ([running.md](running.md#defaults-for-known-models)).
+It knows a model by its file's header, its architecture and size, not its
+name. The suggestions apply the first time a model is chosen, until the
+owner changes them, and they're conservative: a tag goes in only where use
+or measurements show the model does that work. Any other model file starts
+with no tags, answering any request. The catalog is built into conflux, and
+changes with its releases: conflux fetches nothing from the internet.
+
+Apple's model needs no file to be known. It's the same model on every device
+at an OS version, so one judgement holds across a mesh, and conflux tags it
+`image-description` itself, which the
 self-check's images bear out. The owner sees the tag ticked, and can untick
 it or tick others, like any model's. Left untagged, requests for
 `image-description` would pass over a quick describer on every device whose
