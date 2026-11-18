@@ -408,6 +408,9 @@ final class LlamaEngine: @unchecked Sendable {
     /// The multimodal context, for a model with a projector.
     let vision: OpaquePointer?
     let template: UnsafePointer<CChar>?
+    /// Whether the template is Gemma 4's, which conflux formats itself
+    /// (`Gemma4Template`).
+    let isGemma4: Bool
     let marker: String
     let contextSize: Int
     private let config: ModelConfig
@@ -436,6 +439,7 @@ final class LlamaEngine: @unchecked Sendable {
         self.model = model
         vocab = llama_model_get_vocab(model)
         template = llama_model_chat_template(model, nil)
+        isGemma4 = template.map { Gemma4Template.matches(String(cString: $0)) } ?? false
         contextSize = config.contextPerSlot
         self.config = config
         let threads = LlamaRuntime.threads
@@ -679,6 +683,7 @@ final class LlamaEngine: @unchecked Sendable {
     /// The messages in the model's chat template, ready for the assistant's
     /// turn.
     func format(_ messages: [ChatCompletionRequest.Message]) throws(Failure) -> String {
+        if isGemma4 { return Gemma4Template.format(messages) }
         let strings = messages.map { (strdup($0.role), strdup($0.text)) }
         defer { strings.forEach { free($0.0); free($0.1) } }
         let chat = strings.map { llama_chat_message(role: $0.0, content: $0.1) }
