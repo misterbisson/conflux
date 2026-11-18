@@ -287,6 +287,76 @@ marks the models that decline content with `content_filter: true`, and
 `any-unfiltered` and `any-vision-unfiltered` leave them out. Each is listed
 only while a model it accepts is served.
 
+### Ask for what the work needs
+
+> **Status: planned.** None of this is served yet. Until it is, use the
+> aliases above, and exact IDs.
+
+Rather than naming models, a request can name what its work needs, joined
+with `+`:
+
+```
+model: any+image-description
+model: any+editorial+context-32k
+Conflux-Models: any+image-description, any-vision
+```
+
+Each term narrows what's eligible, in any order:
+
+| Term | Eligible hosts |
+|---|---|
+| `vision` | The model reads images |
+| `unfiltered` | The model declines no content |
+| `context-<N>k` | At least N × 1,024 tokens of context per slot, such as `context-32k` |
+| A tag | The mesh's owner trusts the model with that work |
+
+The four aliases stay, as other spellings: `any-vision` is `any+vision`, and
+`any-vision-unfiltered` is `any+vision+unfiltered`. In `Conflux-Models`,
+commas still separate choices in order of preference, and `+` joins what
+one choice needs.
+
+**Tags are the owner's judgement**, set on each model in the app. conflux
+can't tell from a model's files whether it writes well, or chooses well
+among hundreds of items, so the person who runs the mesh says so. These tags
+mean the same in every mesh:
+
+| Tag | The model can be trusted to |
+|---|---|
+| `image-description` | Say accurately what an image shows, in plain words: subjects, actions, arrangement, faces, text |
+| `image-critique` | Judge how an image works, not only what's in it: composition, light, mood, and which of several is strongest |
+| `editorial` | Choose, order and cut among many items toward a goal, and say why |
+| `writing` | Write prose with a voice, for people to read |
+| `reasoning` | Work through multi-step problems, plans and analysis |
+| `code` | Write and review code |
+| `tools` | Choose and call tools reliably |
+
+Asking for an image tag implies `vision`. An owner can add tags of their
+own, which mean what they say in that mesh only, so a client written for
+many meshes sticks to the ones above. Ask for the work, not for a size: a
+request that sends a few hundred descriptions and asks for a sequence needs
+`editorial` and the context to hold them, even with no image in it.
+
+**Some models answer only when asked for.** An owner can hold back a slow,
+capable model, so `any`, `any-vision` and requests for facts alone, such as
+`any+context-32k`, never reach it. It answers its exact ID, and requests
+naming one of its tags. So send ordinary work to `any` or `any-vision`, and
+name a tag only for the requests that need it. To prefer a quick model and
+fall back on a capable one:
+
+```
+Conflux-Models: any-vision, any+image-critique
+```
+
+**`/v1/models` shows each model's `tags`**, and `only_when_asked`, in its
+`conflux` object, and lists `any+<tag>` for each tag a served model carries.
+A request whose terms no served model meets is treated as one naming a
+model no host serves. To [size concurrency](#size-concurrency-from-the-slots)
+for one, count the hosts whose model `/v1/models` lists with every term.
+
+Speed isn't a term. It depends on the host and on the request's size, so the
+gateway measures it, and your deadline already says how long the work can
+take ([Send a deadline](#send-a-deadline)).
+
 ### Ask for a schema
 
 A client that parses the answer should send its JSON Schema as
