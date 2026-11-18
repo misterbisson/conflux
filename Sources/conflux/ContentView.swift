@@ -263,6 +263,10 @@ struct ContentView: View {
                 }
                 Group { modelOptions }.disabled(model.running)
                 slotsHelp
+                if let id = model.modelFileID {
+                    ModelLabelsRows(modelID: id, readsImages: model.modelFileReadsImages,
+                                    contextTokens: host.contextPerSlot, labels: labelsBinding(id))
+                }
                 if model.running {
                     Text("Stop conflux to change the rest.").font(.caption).foregroundStyle(.secondary)
                 }
@@ -452,6 +456,8 @@ struct ContentView: View {
                     HostRow(apple, title: "Requests", hardware: false)
                 }
                 appleSlotsRow
+                ModelLabelsRows(modelID: AppleModelHost.modelID, readsImages: true, contextTokens: nil,
+                                labels: labelsBinding(AppleModelHost.modelID))
             }
             Text("""
                 The model Apple Intelligence uses, served as \(AppleModelHost.modelID): text and images, in a system \
@@ -497,6 +503,10 @@ struct ContentView: View {
     }
 
     var host: ModelConfig { model.settings.host ?? ModelConfig(model: "") }
+
+    func labelsBinding(_ modelID: String) -> Binding<ModelLabels> {
+        Binding(get: { model.labels(for: modelID) }, set: { model.setLabels($0, forModel: modelID) })
+    }
 
     func binding<T>(_ path: WritableKeyPath<ModelConfig, T>) -> Binding<T> {
         Binding(get: { host[keyPath: path] },

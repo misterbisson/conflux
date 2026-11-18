@@ -30,19 +30,24 @@ public final class LlamaHost: ManagedHost, ResizableHost, @unchecked Sendable {
     /// Why the engine has fewer slots than asked for, when it does.
     private var shortfall: String?
     private var observers: [@Sendable () -> Void] = []
+    /// What its owner says about the model.
+    private var labels: ModelLabels
 
     /// What a host asked for no slots says it's doing.
     public static let noSlots = "serving no slots: its requests go to other devices"
 
-    public init(id: String = "local", config: ModelConfig, logURL: URL = LlamaHost.defaultLogURL) {
+    public init(id: String = "local", config: ModelConfig, labels: ModelLabels = ModelLabels(),
+                logURL: URL = LlamaHost.defaultLogURL) {
         self.id = id
         self.config = config
+        self.labels = labels
         self.logURL = logURL
         wanted = max(0, config.slots)
         // Provisional until the files are hashed, so requests arriving that
         // early hear "starting" rather than "no such model".
         identity = ModelInfo(id: config.modelID, capabilities: config.capabilities, fingerprint: "identifying",
-                             maxImageDimension: config.projector == nil ? nil : config.maxImageDimension)
+                             maxImageDimension: config.projector == nil ? nil : config.maxImageDimension,
+                             contextTokens: config.contextPerSlot)
     }
 
     public static var defaultLogURL: URL {
@@ -65,11 +70,16 @@ public final class LlamaHost: ManagedHost, ResizableHost, @unchecked Sendable {
     var running: Int { lock.withLock { engine }?.busy ?? 0 }
 
     public var model: ModelInfo? {
-        get async { lock.withLock { identity } }
+        get async { lock.withLock { identity?.labelled(labels) } }
     }
 
     public var availability: HostAvailability {
         get async { lock.withLock { state } }
+    }
+
+    public func label(_ labels: ModelLabels) {
+        lock.withLock { self.labels = labels }
+        changed()
     }
 
     public func observe(_ changed: @escaping @Sendable () -> Void) {
@@ -122,7 +132,8 @@ public final class LlamaHost: ManagedHost, ResizableHost, @unchecked Sendable {
         let slots = lock.withLock { () -> Int? in
             identity = ModelInfo(id: config.modelID, capabilities: config.capabilities,
                                  fingerprint: "llama.cpp-b\(LlamaRuntime.build)-sha256:\(digest.prefix(12))",
-                                 maxImageDimension: config.projector == nil ? nil : config.maxImageDimension)
+                                 maxImageDimension: config.projector == nil ? nil : config.maxImageDimension,
+                                 contextTokens: config.contextPerSlot)
             guard self.generation == generation else { return nil }
             if wanted == 0 {
                 resting = true
@@ -321,6 +332,8 @@ public protocol LocalHost: InferenceHost {
     /// is cancelled for reasons of its own, such as memory relief's timer.
     func start() async
     func stop()
+    /// Labels the model as its owner says, at once, while it serves.
+    func label(_ labels: ModelLabels)
 }
 
 /// A local host whose slots can change while it serves.

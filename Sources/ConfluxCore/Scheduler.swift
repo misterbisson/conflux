@@ -1119,7 +1119,10 @@ public actor Scheduler {
         let left = remaining() ?? config.defaultQueueWait
         guard soonest + typical < left else { return nil }
         entries[hostID]?.prefetched += 1
-        return await enqueue(choice: ModelChoice(options: [.any]), excluding: [], pinned: hostID,
+        // Pinned to this host, so the choice decides nothing. Its own model,
+        // which a model held back answers too.
+        let choice = ModelChoice(options: [entry.model.map { .exact($0.id) } ?? .any])
+        return await enqueue(choice: choice, excluding: [], pinned: hostID,
                              until: now.addingTimeInterval(left - typical), remaining: remaining)
     }
 
@@ -1439,15 +1442,7 @@ public actor Scheduler {
     }
 
     private func describe(_ choice: ModelChoice) -> String {
-        let names = choice.options.map { option -> String in
-            switch option {
-            case .exact(let id): id
-            case .any: "any"
-            case .capability(let capability): "any-\(capability.rawValue)"
-            case .unfiltered(let capability): ["any", capability?.rawValue, "unfiltered"].compactMap(\.self)
-                .joined(separator: "-")
-            }
-        }
+        let names = choice.options.map(\.name)
         return "no host serves \(names.joined(separator: ", "))"
     }
 
@@ -1503,8 +1498,10 @@ public actor Scheduler {
             entries[id] = entry
 
             // What a peer's gateway sees of this host, to tell it when it changes.
+            // Its model's labels too: the owner can change them while it serves.
             let fingerprint = "\(entry.state)|\(entry.capacity)|\(entry.active.count)|\(held(id))|"
-                + (entry.model?.fingerprint ?? "")
+                + (entry.model?.fingerprint ?? "") + "|" + (entry.model?.tags.joined(separator: ",") ?? "")
+                + "|\(entry.model?.onlyWhenAsked ?? false)|\(entry.model?.contextTokens ?? 0)"
             if fingerprints[id] != fingerprint {
                 fingerprints[id] = fingerprint
                 generations[id, default: 0] += 1

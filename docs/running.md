@@ -59,6 +59,39 @@ starts at once; off, it takes nothing new, and when requests are running on
 it, conflux asks whether to let them finish first or stop them now, each
 going to another host. Peers' gateways see the change at their next look.
 
+### Which requests reach a model
+
+Under each model, **Answers** and **Trusted with** say which requests reach
+it, without clients naming it ([clients.md](clients.md#ask-for-what-the-work-needs)):
+
+- **Reads** shows what conflux reads from the model's files and settings:
+  text or images, and its context per slot. Clients can ask for those as
+  `vision` and `context-<N>k`.
+- **Answers**: *Requests for any model*, or *Only requests that ask for it*.
+  Held back, the model answers its ID and its tags, but never `any` or
+  `any-vision`, so a slow, capable model's slots stay free for the requests
+  that need it.
+- **Trusted with** is your judgement of the work the model does well: the
+  documented tags, each with what it promises, and **Other tags** of your
+  own. `image-description` and `image-critique` show only for a model that
+  reads images.
+- **Clients reach it with** lists what a client can send in `model` to reach
+  it.
+
+These change at once, while conflux serves, and peers' gateways see the
+change at their next look. They're kept for each model, by its ID, so a
+model chosen again gets its tags back. A model file starts with none, and
+answers any request. [Apple's model](#apples-on-device-model) starts tagged
+`image-description`, which you can untick.
+
+With `conflux serve`, `--tags` sets the model file's tags, comma separated,
+`--only-when-asked` holds it back, and `--apple-tags` sets Apple's model's,
+`""` for none:
+
+```bash
+swift run -c release conflux serve --model ~/models/large.gguf --tags editorial,writing,reasoning --only-when-asked
+```
+
 **No slots** makes the Mac gateway only: it runs no requests itself, frees the
 model's memory once its last request ends, and sends every request to its
 peers. The model stays chosen, and peers can still copy it. Raising the slots
@@ -147,7 +180,10 @@ host, or a peer's, when the client accepts that model: with
 only Apple's model may run gets the refusal, a `400` with code
 `content_filter` or `context_length_exceeded`. `/v1/models` marks it
 `content_filter: true`, and `any-unfiltered` and `any-vision-unfiltered` leave
-it out. It follows a
+it out. conflux tags it `image-description`, since it describes images well
+and quickly, and it's the same model on every Mac at an OS version: untick it
+under **Trusted with**, or pass `--apple-tags ""`. Its tags are worth a look
+after an OS update, which changes the model. It follows a
 `response_format` schema with its guided generation, but a schema that asks
 for what it can't enforce, such as a `pattern`, goes elsewhere the same way
 ([clients.md](clients.md#ask-for-a-schema)), and so do requests with tools.
@@ -177,8 +213,10 @@ when it has no model file.
   so they follow it without asking it again and again.
 - **Model:** `any`, `any-vision`, `any-unfiltered` or `any-vision-unfiltered`
   (any model, or any vision model, other than Apple's, whose guardrails
-  decline some content), or the ID `/v1/models` lists, which is the GGUF file
-  name without `.gguf`.
+  decline some content), what the work needs, such as
+  `any+editorial+context-32k`
+  ([clients.md](clients.md#ask-for-what-the-work-needs)), or the ID
+  `/v1/models` lists, which is the GGUF file name without `.gguf`.
 
 [clients.md](clients.md) has the full contract: deadlines, `Retry-After`,
 request IDs, and recording which model answered.

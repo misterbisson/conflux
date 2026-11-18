@@ -19,7 +19,7 @@ The gateway serves a subset of the OpenAI API on loopback, at
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | Whether the gateway is up. 200 even when no host is available. With the token, also the mesh's and each host's throughput, failures and idle time; `utilization`, busy slot-seconds over offered ones in the last ten minutes, 0 to 1; the mesh's `wait_seconds`, how long requests waited for a slot, and each host's `request_seconds`, how long they took, each as `p50`, `p95` and `count` over the last ten minutes; `declined`, for the mesh and each host, the requests a model refused that another might take, as `content`, `length` and `unsupported` counts and the `seconds` they took, and the mesh's `rerouted`, how many of those another host then answered; each host's `rejoined`, the times it left and came back, keeping its counts; each host's `last_failure`, once a request has failed on it: the `reason`, `at` (ISO 8601, UTC) and `seconds_ago`; and each host's `hardware`: `chip`, `performance_cores`, `efficiency_cores`, `gpu_cores`, `memory_bytes` and `model_identifier`, whichever it reported ([design.md](design.md#monitoring)). Nothing that identifies a device |
-| `GET /v1/models` | Every model currently served in the mesh, plus aliases. Each model's `conflux` object has its `capabilities`, `max_image_dimension`, and `content_filter`, true when the model declines some content |
+| `GET /v1/models` | Every model currently served in the mesh, plus aliases. Each model's `conflux` object has its `capabilities`, `max_image_dimension`, `context_tokens` per slot, `content_filter`, true when the model declines some content, its `tags`, and `only_when_asked` ([Ask for what the work needs](#ask-for-what-the-work-needs)) |
 | `POST /v1/chat/completions` | One request, including image input |
 
 Requests and responses follow the OpenAI schema, including `response_format`
@@ -184,7 +184,8 @@ The conflux app posts a distributed notification,
 - it starts listening, including when conflux launches and serves again;
   stops; moves to another port; or conflux quits;
 - the owner drains, pauses or resumes it;
-- a Mac joins the mesh or leaves it, or a host serves another model;
+- a Mac joins the mesh or leaves it, a host serves another model, or its
+  owner changes the model's tags or holds it back;
 - the slots a host can fill now change, which they do under memory pressure
   and heat, and as a model loads.
 
@@ -225,7 +226,9 @@ it serves. Add up `capacity` over the hosts serving what you ask for:
 - for a model by its ID, the hosts whose `model` is that ID;
 - for `any`, every host;
 - for another alias, the hosts whose model `/v1/models` lists with what the
-  alias needs: `vision` in its `capabilities`, or `content_filter` false.
+  alias needs: `vision` in its `capabilities`, `content_filter` false, enough
+  `context_tokens`, or the tags it names. Leave out models with
+  `only_when_asked` unless you name one of their tags.
 
 The one more for each host on another device is because a fast host there
 takes a request ahead of a free slot, so its next input has already crossed
@@ -289,9 +292,6 @@ only while a model it accepts is served.
 
 ### Ask for what the work needs
 
-> **Status: planned.** None of this is served yet. Until it is, use the
-> aliases above, and exact IDs.
-
 Rather than naming models, a request can name what its work needs, joined
 with `+`:
 
@@ -315,7 +315,8 @@ The four aliases stay, as other spellings: `any-vision` is `any+vision`, and
 commas still separate choices in order of preference, and `+` joins what
 one choice needs.
 
-**Tags are the owner's judgement**, set on each model in the app. conflux
+**Tags are the owner's judgement**, set on each model in the app
+([running.md](running.md#which-requests-reach-a-model)). conflux
 can't tell from a model's files whether it writes well, or chooses well
 among hundreds of items, so the person who runs the mesh says so. These tags
 mean the same in every mesh:
@@ -347,8 +348,11 @@ fall back on a capable one:
 Conflux-Models: any-vision, any+image-critique
 ```
 
-**`/v1/models` shows each model's `tags`**, and `only_when_asked`, in its
-`conflux` object, and lists `any+<tag>` for each tag a served model carries.
+**`/v1/models` shows each model's `tags`**, `only_when_asked` and
+`context_tokens`, in its `conflux` object, and lists `any+<tag>` for each tag
+a served model carries. A peer running a conflux from before tags shows
+none, holds nothing back, and gives no `context_tokens`, so no
+`context-<N>k` request reaches it.
 A request whose terms no served model meets is treated as one naming a
 model no host serves. To [size concurrency](#size-concurrency-from-the-slots)
 for one, count the hosts whose model `/v1/models` lists with every term.

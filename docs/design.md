@@ -247,9 +247,8 @@ actually ran.
 
 ### Capabilities and tags
 
-> **Status: planned** ([plan.md](plan.md#phase-4-more-runtimes-and-capabilities)).
-> Today a request can ask only for `vision` and `unfiltered`, through the four
-> `any` aliases.
+> **Status: built**, except a request's expected time from its size
+> ([Deadlines](#deadlines), [plan.md](plan.md#phase-4-more-runtimes-and-capabilities)).
 
 A mesh can serve small, quick models beside a large, slow one that does work
 they can't. A client should be able to ask for what a request needs without
@@ -307,7 +306,8 @@ that need it, much as `content_filter` keeps Apple's model out of the
 `-unfiltered` aliases.
 
 **Where tags are set.** On the device that serves the model, beside its
-other settings: the model file's, and Apple's model's. Tags change while
+other settings: the model file's, and Apple's model's, kept by the model's
+ID, so a model chosen again gets its tags back. Tags change while
 conflux serves, since they change only what a host matches. A host sends its
 tags and whether it's held back with its model, in `/conflux/0/host`
 ([The host protocol](#the-host-protocol)), so every gateway in the mesh
@@ -597,11 +597,13 @@ device, `apple` for Apple's model.
   running requests and offered since it started (`busy_slot_seconds`,
   `slot_seconds`, [Monitoring](#monitoring)), the hardware it runs on
   (`hardware`, below), and `generation`, which counts its status changes.
-  The model is to carry its `tags` and `onlyWhenAsked` as well
-  ([Capabilities and tags](#capabilities-and-tags), planned), each left out
-  when empty or false. A gateway from before them ignores both, and sends a
-  held-back model requests for `any` until it's updated. A host from before
-  them has no tags and holds nothing back. `host` names the host it describes, and `hosts` lists every host the
+  The model carries its `contextTokens` per slot, its `tags` and
+  `onlyWhenAsked` as well ([Capabilities and tags](#capabilities-and-tags)),
+  the last two left out when empty or false. A gateway from before them
+  ignores all three, and sends a held-back model requests for `any` until
+  it's updated. A host from before them has no tags, holds nothing back,
+  and gives no context, so no `context-<N>k` request reaches it. A change
+  to any of them is a change of status, so gateways hear of it at once. `host` names the host it describes, and `hosts` lists every host the
   device serves, the first first. A gateway follows that list: each host
   after the first becomes a host of its own in the gateway's scheduler,
   `peer-<short ID>-<host>` beside the first's `peer-<short ID>`, and leaves
