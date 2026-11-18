@@ -109,7 +109,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var pressure = TimeSeries(keeping: .highest)
     /// The thermal state as a level, the highest in each reading.
     @Published private(set) var heat = TimeSeries(keeping: .highest)
-    /// The Heat tile's Cool down box, and what resource policy is doing.
+    /// The Heat tile's Keep cool box, and what resource policy is doing.
     @Published private(set) var heatStatus = HeatStatus(box: .off)
     /// This Mac's endpoint ID, for other devices' peer lists.
     let endpointID: String?

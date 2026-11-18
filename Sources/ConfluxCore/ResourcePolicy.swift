@@ -59,7 +59,7 @@ public enum ResourcePolicy {
     }
 }
 
-/// The Heat tile's Cool down box and what resource policy is doing
+/// The Heat tile's Keep cool box and what resource policy is doing
 /// (`ResourcePolicy.heat`).
 public struct HeatStatus: Sendable, Equatable {
     public enum Box: Sendable, Equatable {

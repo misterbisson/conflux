@@ -55,7 +55,7 @@ final class Server {
     private(set) var pressure = TimeSeries(keeping: .highest)
     /// The thermal state as a level, the highest in each reading.
     private(set) var heat = TimeSeries(keeping: .highest)
-    /// The Heat tile's Cool down box, and what resource policy is doing.
+    /// The Heat tile's Keep cool box, and what resource policy is doing.
     private(set) var heatStatus = HeatStatus(box: .off)
     /// 0 charging, 1 on battery: the worse in each reading.
     private(set) var power = TimeSeries(keeping: .highest)
