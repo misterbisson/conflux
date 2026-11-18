@@ -14,12 +14,17 @@ public enum GatewayNotice {
 
     /// What a notice says changed: whether the gateway listens, and where;
     /// whether its owner lets it take work; and which hosts serve which
-    /// models, with how many slots each can fill now. Not how busy they are:
+    /// models, labelled how, with how many slots each can fill now. Not how
+    /// busy they are:
     /// a request starting or finishing posts nothing.
     public struct State: Equatable, Sendable {
         public struct Host: Equatable, Sendable {
             public var id: String
             public var model: String?
+            /// The model's tags, and whether it answers only when asked for:
+            /// which requests reach it.
+            public var tags: [String] = []
+            public var onlyWhenAsked = false
             /// The slots the gateway can fill on it now, as `/health` says:
             /// none while it starts, fails, is paused or drains, or has no
             /// model, and fewer under memory pressure or heat.
@@ -43,7 +48,8 @@ public enum GatewayNotice {
         public init(port: UInt16?, intent: OwnerIntent, snapshot: SchedulerSnapshot?) {
             guard let port else { self = .stopped; return }
             let hosts = (snapshot?.hosts ?? [])
-                .map { Host(id: $0.id, model: $0.model?.id, capacity: $0.capacity) }
+                .map { Host(id: $0.id, model: $0.model?.id, tags: $0.model?.tags ?? [],
+                            onlyWhenAsked: $0.model?.onlyWhenAsked ?? false, capacity: $0.capacity) }
                 .sorted { $0.id < $1.id }
             self.init(port: port, intent: intent, hosts: hosts)
         }

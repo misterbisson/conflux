@@ -236,13 +236,16 @@ contribution is measured against the effort of keeping it there.
   describe images well and quickly, but fall short at choosing and ordering
   among hundreds of items, work that a 31B model does well at many times the
   cost. In two steps:
-  1. **Tags and holding back.** The documented vocabulary and the owner's
-     own tags, set on each model in the app beside its other settings, with
-     `conflux serve --tag`, and sent in the host protocol. A model that
-     answers only when asked for. `context-<N>k` as a fact. Requests joined
-     with `+`, the four aliases kept as other spellings, and `/v1/models`
-     listing each model's tags. Apple's model tagged `image-description`
-     by conflux, which the owner can change.
+  1. **Tags and holding back.** *Built.* The documented vocabulary and the
+     owner's own tags, set on each model in the app beside its other
+     settings, kept by model ID, with `conflux serve --tags`, and sent in
+     the host protocol. A model that answers only when asked for
+     (`--only-when-asked`). `context-<N>k` as a fact. Requests joined with
+     `+`, the four aliases kept as other spellings, and `/v1/models`
+     listing each model's tags and context. Apple's model tagged
+     `image-description` by conflux, which the owner can change
+     (`--apple-tags`). An iPad's models keep their defaults for now: its
+     app has no place to set tags yet.
   2. **A request's expected time from its size**, timed per thousand prompt
      and written tokens on each host, for deadlines and for the choice
      between hosts ([design.md](design.md#deadlines)).

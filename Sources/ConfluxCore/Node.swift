@@ -33,11 +33,15 @@ public struct NodeSettings: Sendable, Equatable, Codable {
     /// Whether this device's hosts rest at serious heat, until it's back to
     /// fair (`ResourcePolicy`). Off until the owner turns it on.
     public var coolDown: Bool
+    /// What the owner says about each model, by its ID, so a model chosen
+    /// again gets its labels back. A model with none here has its defaults
+    /// (`ModelLabels.defaults(for:)`).
+    public var labels: [String: ModelLabels]
 
     public init(host: ModelConfig? = nil, port: UInt16 = 8090, requireToken: Bool = true, peers: [String] = [],
                 iCloudKeychain: Bool = true, listedID: String? = nil,
                 appleModel: AppleModelSettings = AppleModelSettings(), gateway: Bool = true,
-                coolDown: Bool = false, servesModelFile: Bool = true) {
+                coolDown: Bool = false, servesModelFile: Bool = true, labels: [String: ModelLabels] = [:]) {
         self.host = host
         self.servesModelFile = servesModelFile
         self.port = port
@@ -48,6 +52,12 @@ public struct NodeSettings: Sendable, Equatable, Codable {
         self.appleModel = appleModel
         self.gateway = gateway
         self.coolDown = coolDown
+        self.labels = labels
+    }
+
+    /// What the owner says about a model, or its defaults.
+    public func labels(for modelID: String) -> ModelLabels {
+        labels[modelID] ?? .defaults(for: modelID)
     }
 
     // Settings saved before a field existed still load.
@@ -63,6 +73,7 @@ public struct NodeSettings: Sendable, Equatable, Codable {
         appleModel = try values.decodeIfPresent(AppleModelSettings.self, forKey: .appleModel) ?? AppleModelSettings()
         gateway = try values.decodeIfPresent(Bool.self, forKey: .gateway) ?? true
         coolDown = try values.decodeIfPresent(Bool.self, forKey: .coolDown) ?? false
+        labels = try values.decodeIfPresent([String: ModelLabels].self, forKey: .labels) ?? [:]
     }
 }
 
@@ -177,6 +188,9 @@ public final class ConfluxNode: @unchecked Sendable {
     private var started = false
     /// The peers the event log last said it trusts.
     private var loggedTrust: [String]?
+    /// What the owner says about each model, by its ID
+    /// (`NodeSettings.labels`).
+    private var labels: [String: ModelLabels] = [:]
     /// How often a running node reads the directory. The keychain sends no
     /// notice of changes, so it asks.
     static let directoryInterval: Duration = .seconds(10)
@@ -221,6 +235,7 @@ public final class ConfluxNode: @unchecked Sendable {
         lock.withLock {
             usesPeers = settings.gateway
             coolDown = settings.coolDown
+            labels = settings.labels
             started = true
         }
         events?.record("node", "started: conflux \(AppVersion.current), "
@@ -231,7 +246,8 @@ public final class ConfluxNode: @unchecked Sendable {
 
         // With no slots, a host that can't change its slots isn't started:
         // there'd be nothing it could do.
-        if settings.servesModelFile, let config = settings.host, case let host = Self.host(for: config),
+        if settings.servesModelFile, let config = settings.host,
+           case let host = Self.host(for: config, labels: settings.labels(for: config.modelID)),
            config.slots > 0 || host is any ResizableHost {
             lock.withLock {
                 self.host = host
@@ -242,7 +258,8 @@ public final class ConfluxNode: @unchecked Sendable {
         }
         if settings.appleModel.enabled {
             let apple = AppleModelHost(id: Self.appleHostID, slots: settings.appleModel.slots,
-                                       selfCheck: settings.appleModel.selfCheck)
+                                       selfCheck: settings.appleModel.selfCheck,
+                                       labels: settings.labels(for: AppleModelHost.modelID))
             lock.withLock { self.apple = apple }
             await serve(apple)
         }
@@ -396,7 +413,8 @@ public final class ConfluxNode: @unchecked Sendable {
             await scheduler.retire(hostID: old.id, cancelling: cancelling)
             old.stop()
         }
-        guard let config, case let host = Self.host(for: config), config.slots > 0 || host is any ResizableHost
+        guard let config, case let host = Self.host(for: config, labels: labels(for: config.modelID)),
+              config.slots > 0 || host is any ResizableHost
         else { return }
         lock.withLock {
             self.host = host
@@ -421,10 +439,29 @@ public final class ConfluxNode: @unchecked Sendable {
             old.stop()
         }
         guard let settings, settings.enabled else { return }
-        let apple = AppleModelHost(id: Self.appleHostID, slots: settings.slots, selfCheck: settings.selfCheck)
+        let apple = AppleModelHost(id: Self.appleHostID, slots: settings.slots, selfCheck: settings.selfCheck,
+                                   labels: labels(for: AppleModelHost.modelID))
         lock.withLock { self.apple = apple }
         await serve(apple)
         announce()
+    }
+
+    /// Labels a model as its owner says, at once if this device serves it,
+    /// and for whenever it serves it again. Peers' gateways hear of it at
+    /// their next status.
+    public func setLabels(_ labels: ModelLabels, forModel modelID: String) {
+        let hosts = lock.withLock { () -> [any LocalHost] in
+            self.labels[modelID] = labels
+            var hosts: [any LocalHost] = []
+            if let host, host.config.modelID == modelID { hosts.append(host) }
+            if let apple, modelID == AppleModelHost.modelID { hosts.append(apple) }
+            return hosts
+        }
+        for host in hosts { host.label(labels) }
+    }
+
+    private func labels(for modelID: String) -> ModelLabels {
+        lock.withLock { labels[modelID] } ?? .defaults(for: modelID)
     }
 
     /// The model file's files, for peers to copy: the starter model's
@@ -651,15 +688,15 @@ public final class ConfluxNode: @unchecked Sendable {
 
     /// The host for a model, by its runtime. iPadOS can't start processes,
     /// so there a `llama-server` setting runs in-process instead.
-    static func host(for config: ModelConfig) -> any ManagedHost {
+    static func host(for config: ModelConfig, labels: ModelLabels = ModelLabels()) -> any ManagedHost {
         switch config.runtime {
         case .inProcess:
-            return LlamaHost(config: config)
+            return LlamaHost(config: config, labels: labels)
         case .llamaServer:
             #if os(macOS)
-            return LlamaServerHost(config: config)
+            return LlamaServerHost(config: config, labels: labels)
             #else
-            return LlamaHost(config: config)
+            return LlamaHost(config: config, labels: labels)
             #endif
         }
     }

@@ -32,6 +32,14 @@ final class FakeHost: InferenceHost, @unchecked Sendable {
     func resize(_ slots: Int) { lock.withLock { slotCount = slots } }
 
     var model: ModelInfo? { get async { lock.withLock { info } } }
+
+    /// Labels its model as an owner would, and gives it a context size.
+    func label(tags: [String] = [], onlyWhenAsked: Bool = false, contextTokens: Int? = nil) {
+        lock.withLock {
+            info = info?.labelled(ModelLabels(tags: tags, onlyWhenAsked: onlyWhenAsked))
+            info?.contextTokens = contextTokens
+        }
+    }
     var availability: HostAvailability { get async { lock.withLock { state } } }
 
     func set(_ availability: HostAvailability) { lock.withLock { state = availability } }

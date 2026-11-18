@@ -59,27 +59,37 @@ public final class Gateway: Sendable {
     func models() async -> HTTPResponse {
         let models = await scheduler.models()
         var data: [[String: Any]] = []
-        if models.contains(where: { $0.serving > 0 }) {
-            data.append(Gateway.alias("any", "any model that's being served"))
+        let served = models.filter { $0.serving > 0 }.map(\.model)
+        func list(_ option: ModelChoice.Option, _ description: String) {
+            if served.contains(where: option.accepts) { data.append(Gateway.alias(option.name, description)) }
         }
-        if models.contains(where: { $0.serving > 0 && ModelChoice.Option.unfiltered(nil).accepts($0.model) }) {
-            data.append(Gateway.alias("any-unfiltered", "any model that filters no content"))
+        list(.any, "any model that's being served")
+        list(.unfiltered(nil), "any model that filters no content")
+        list(.capability(.vision), "any model that accepts images")
+        list(.unfiltered(.vision), "any model that accepts images and filters no content")
+        // One for each tag a served model carries: the vocabulary's in its
+        // order, then the owner's own.
+        let tags = Set(served.flatMap(\.tags))
+        for tag in ModelTag.vocabulary.map(\.id) where tags.contains(tag) {
+            let promise = ModelTag.vocabulary.first { $0.id == tag }?.promise ?? ""
+            list(.needs(ModelChoice.Needs(tags: [tag])), "any model trusted to " + promise.prefix(1).lowercased()
+                 + promise.dropFirst())
         }
-        if models.contains(where: { $0.serving > 0 && ModelChoice.Option.capability(.vision).accepts($0.model) }) {
-            data.append(Gateway.alias("any-vision", "any model that accepts images"))
-        }
-        if models.contains(where: { $0.serving > 0 && ModelChoice.Option.unfiltered(.vision).accepts($0.model) }) {
-            data.append(Gateway.alias("any-vision-unfiltered", "any model that accepts images and filters no content"))
+        for tag in tags.filter({ !ModelTag.isDocumented($0) }).sorted() {
+            list(.needs(ModelChoice.Needs(tags: [tag])), "any model its owner tagged \(tag)")
         }
         for entry in models {
             var conflux: [String: Any] = [
                 "capabilities": entry.model.capabilities.map(\.rawValue).sorted(),
                 "content_filter": entry.model.contentFilter,
+                "tags": entry.model.tags,
+                "only_when_asked": entry.model.onlyWhenAsked,
                 "fingerprint": entry.model.fingerprint,
                 "hosts": entry.hosts,
                 "serving": entry.serving,
             ]
             if let dimension = entry.model.maxImageDimension { conflux["max_image_dimension"] = dimension }
+            if let tokens = entry.model.contextTokens { conflux["context_tokens"] = tokens }
             data.append(["id": entry.model.id, "object": "model", "created": 0, "owned_by": "conflux",
                          "conflux": conflux])
         }
