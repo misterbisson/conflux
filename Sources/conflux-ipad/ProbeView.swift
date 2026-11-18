@@ -374,7 +374,7 @@ struct ProbeView: View {
                 let own = server.ownHosts
                 StatusFigures([
                     ("\(own.reduce(0) { $0 + $1.active }) of \(own.reduce(0) { $0 + $1.capacity })", "busy"),
-                    ("\(connected)", connected == 1 ? "Mac connected" : "Macs connected"),
+                    ("\(connected)", connected == 1 ? "peer connected" : "peers connected"),
                     ("\(Int(own.reduce(0) { $0 + $1.perHour }.rounded()))", "per hour"),
                     (server.snapshot?.utilization.map(percent) ?? "–", "utilization"),
                 ])
