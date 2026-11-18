@@ -22,12 +22,19 @@ enum ServeCommand {
       --ctx-per-slot N        context per slot (default 4096)
       --max-image-dimension N longest image side clients should send (default 1024)
       --image-min-tokens N    fewest tokens per image (Qwen-VL models want 1024)
+      --tags LIST             the work the model is trusted with, comma
+                              separated: image-description, image-critique,
+                              editorial, writing, reasoning, code, tools, or
+                              tags of your own
+      --only-when-asked       answer only requests that name the model or one
+                              of its tags, not any, any-vision or the like
       --port N                gateway port (default 8090)
       --no-token              let clients connect without the bearer token
       --skip-self-check       report Ready without checking the model reads input
       --apple-model           also serve Apple's on-device model, as
                               apple-on-device (Apple Intelligence must be on)
       --apple-slots N         its requests run at once (default 2)
+      --apple-tags LIST       its tags (default image-description; "" for none)
       --runtime NAME          in-process (default), or llama-server to run
                               llama.cpp's server as a separate process
       --llama-server PATH     llama-server to run (default: Homebrew or PATH)
@@ -53,13 +60,13 @@ enum ServeCommand {
         var index = 0
         let valued: Set<String> = ["--model", "--mmproj", "--slots", "--ctx-per-slot", "--max-image-dimension",
                                    "--port", "--llama-server", "--image-min-tokens", "--runtime", "--identity",
-                                   "--apple-slots"]
+                                   "--apple-slots", "--tags", "--apple-tags"]
         while index < args.count {
             let arg = args[index]
             if arg == "--" {
                 extra = Array(args[(index + 1)...])
                 break
-            } else if ["--no-token", "--skip-self-check", "--apple-model"].contains(arg) {
+            } else if ["--no-token", "--skip-self-check", "--apple-model", "--only-when-asked"].contains(arg) {
                 flags.insert(arg)
                 index += 1
             } else if arg == "--peer" {
@@ -84,6 +91,20 @@ enum ServeCommand {
             throw UsageError("give a --model, --apple-model, a --peer, or more than one")
         }
         if values["--apple-slots"] != nil && !apple { throw UsageError("--apple-slots needs --apple-model") }
+        if values["--apple-tags"] != nil && !apple { throw UsageError("--apple-tags needs --apple-model") }
+        if (values["--tags"] != nil || flags.contains("--only-when-asked")) && model == nil {
+            throw UsageError("--tags and --only-when-asked need --model")
+        }
+        func tags(_ flag: String) throws -> [String]? {
+            guard let text = values[flag] else { return nil }
+            let tags = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                .filter { !$0.isEmpty }
+            if let bad = tags.first(where: { !ModelTag.isValid($0) }) {
+                throw UsageError("\(flag): \(bad) isn't a tag: "
+                                 + (ModelTag.problem(withCustom: bad) ?? "use lowercase letters, digits and hyphens"))
+            }
+            return tags
+        }
         func int(_ flag: String, _ fallback: Int, minimum: Int = 1) throws -> Int {
             guard let text = values[flag] else { return fallback }
             guard let value = Int(text), value >= minimum else { throw UsageError("\(flag) must be at least \(minimum)") }
@@ -109,8 +130,13 @@ enum ServeCommand {
             executable: values["--llama-server"], extraArguments: extra) }
         let appleModel = AppleModelSettings(enabled: apple, slots: try int("--apple-slots", AppleModelHost.defaultSlots),
                                             selfCheck: !flags.contains("--skip-self-check"))
+        var labels: [String: ModelLabels] = [:]
+        if let host, let tags = try tags("--tags") ?? (flags.contains("--only-when-asked") ? [] : nil) {
+            labels[host.modelID] = ModelLabels(tags: tags, onlyWhenAsked: flags.contains("--only-when-asked"))
+        }
+        if let tags = try tags("--apple-tags") { labels[AppleModelHost.modelID] = ModelLabels(tags: tags) }
         let settings = NodeSettings(host: host, port: UInt16(port), requireToken: !flags.contains("--no-token"),
-                                    peers: peers, appleModel: appleModel)
+                                    peers: peers, appleModel: appleModel, labels: labels)
         return Options(settings: settings, identity: values["--identity"] ?? "default")
     }
 

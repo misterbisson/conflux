@@ -312,8 +312,13 @@ public final class RemoteHost: InferenceHost, @unchecked Sendable {
         else { return nil }
         let known = lock.withLock { status?.model }
         if let known, known.id == id, known.fingerprint == fingerprint { return known }
-        let same = known?.id == id
-        return ModelInfo(id: id, capabilities: same ? known?.capabilities ?? [] : [], fingerprint: fingerprint,
-                         contentFilter: same ? known?.contentFilter ?? false : id == AppleModelHost.modelID)
+        // The same model with other files: what it was, with the new
+        // fingerprint, its owner's labels included.
+        if var known, known.id == id {
+            known.fingerprint = fingerprint
+            return known
+        }
+        return ModelInfo(id: id, capabilities: [], fingerprint: fingerprint,
+                         contentFilter: id == AppleModelHost.modelID)
     }
 }

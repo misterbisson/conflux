@@ -578,6 +578,29 @@ final class AppModel: ObservableObject {
         if running { start() }
     }
 
+    /// The ID the model file is served under: the starter model's when none
+    /// is chosen. Nil with neither.
+    var modelFileID: String? {
+        guard let model = settings.host?.model, !model.isEmpty else {
+            return starter == nil ? nil : ModelConfig(model: StarterModel.modelFile).modelID
+        }
+        return settings.host?.modelID
+    }
+
+    /// Whether the model file reads images: it has a projector, or it's the
+    /// starter model, which has its own.
+    var modelFileReadsImages: Bool { servesStarter || settings.host?.projector != nil }
+
+    /// What the owner says about a model, or its defaults.
+    func labels(for modelID: String) -> ModelLabels { settings.labels(for: modelID) }
+
+    /// Labels a model, at once while conflux runs, and whenever it serves
+    /// the model again.
+    func setLabels(_ labels: ModelLabels, forModel modelID: String) {
+        settings.labels[modelID] = labels
+        node.setLabels(labels, forModel: modelID)
+    }
+
     /// Whether this Mac's model is set to no slots: it runs no requests
     /// itself, and its gateway sends them all to peers.
     var servesNoSlots: Bool { settings.servesModelFile && settings.host?.slots == 0 }

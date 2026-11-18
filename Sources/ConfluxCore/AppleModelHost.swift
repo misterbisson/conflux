@@ -38,6 +38,8 @@ public final class AppleModelHost: ResizableHost, @unchecked Sendable {
     /// The requests running, by when each started.
     private var running: [UUID: Running] = [:]
     private var observers: [@Sendable () -> Void] = []
+    /// What its owner says about the model.
+    private var labels: ModelLabels
     /// Runs one request: Apple's model, or a stand-in in tests.
     private let generator: @Sendable (AppleModelRequest) async throws -> ChatCompletionResult
 
@@ -58,22 +60,35 @@ public final class AppleModelHost: ResizableHost, @unchecked Sendable {
     private let recheck: Duration
 
     public convenience init(id: String = "apple", slots: Int = AppleModelHost.defaultSlots,
-                            maxImageDimension: Int = 1024, selfCheck: Bool = true, recheck: Duration = .seconds(10)) {
-        self.init(id: id, slots: slots, maxImageDimension: maxImageDimension, selfCheck: selfCheck, recheck: recheck,
-                  generator: { try await AppleModelHost.generate($0) })
+                            maxImageDimension: Int = 1024, selfCheck: Bool = true,
+                            labels: ModelLabels = AppleModelHost.defaultLabels, recheck: Duration = .seconds(10)) {
+        self.init(id: id, slots: slots, maxImageDimension: maxImageDimension, selfCheck: selfCheck, labels: labels,
+                  recheck: recheck, generator: { try await AppleModelHost.generate($0) })
     }
 
-    init(id: String, slots: Int, maxImageDimension: Int, selfCheck: Bool, recheck: Duration,
+    init(id: String, slots: Int, maxImageDimension: Int, selfCheck: Bool,
+         labels: ModelLabels = AppleModelHost.defaultLabels, recheck: Duration,
          generator: @escaping @Sendable (AppleModelRequest) async throws -> ChatCompletionResult) {
         self.id = id
+        self.labels = labels
         wanted = max(0, slots)
         self.generator = generator
         self.maxImageDimension = maxImageDimension
         self.selfCheck = selfCheck
         self.recheck = recheck
         identity = ModelInfo(id: Self.modelID, capabilities: [.text, .vision], fingerprint: Self.fingerprint,
-                             maxImageDimension: maxImageDimension, contentFilter: true)
+                             maxImageDimension: maxImageDimension, contentFilter: true,
+                             contextTokens: Self.contextTokens)
     }
+
+    /// Its context, images included, on macOS 27.0 and iPadOS 27.0. The
+    /// framework doesn't say.
+    public static let contextTokens = 4096
+
+    /// What conflux says about it until its owner says otherwise: it's the
+    /// same model on every device at an OS version, and describes images
+    /// well (docs/design.md, Capabilities and tags).
+    public static let defaultLabels = ModelLabels(tags: ["image-description"])
 
     /// The runtime and the OS build, such as
     /// `apple-foundation-models-macOS-27.0.1-26A434`: the model changes only
@@ -98,7 +113,12 @@ public final class AppleModelHost: ResizableHost, @unchecked Sendable {
     }
 
     public var model: ModelInfo? {
-        get async { lock.withLock { identity } }
+        get async { lock.withLock { identity.labelled(labels) } }
+    }
+
+    public func label(_ labels: ModelLabels) {
+        lock.withLock { self.labels = labels }
+        for observer in lock.withLock({ observers }) { observer() }
     }
 
     /// The slots asked for, or, while fewer are asked for than requests

@@ -37,10 +37,14 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
     /// Where this launch's output starts in the log.
     private var logStart: UInt64 = 0
     private let session: URLSession
+    /// What its owner says about the model.
+    private var labels: ModelLabels
 
-    public init(id: String = "local", config: ModelConfig, logURL: URL = LlamaServerHost.defaultLogURL) {
+    public init(id: String = "local", config: ModelConfig, labels: ModelLabels = ModelLabels(),
+                logURL: URL = LlamaServerHost.defaultLogURL) {
         self.id = id
         self.config = config
+        self.labels = labels
         self.logURL = logURL
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpMaximumConnectionsPerHost = config.slots + 4
@@ -50,7 +54,8 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
         // early hear "starting" rather than "no such model".
         identity = ModelInfo(id: config.modelID, capabilities: config.projector == nil ? [.text] : [.text, .vision],
                              fingerprint: "identifying",
-                             maxImageDimension: config.projector == nil ? nil : config.maxImageDimension)
+                             maxImageDimension: config.projector == nil ? nil : config.maxImageDimension,
+                             contextTokens: config.contextPerSlot)
     }
 
     public static var defaultLogURL: URL {
@@ -61,7 +66,13 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
     /// Known once the files are identified, before the model has loaded, so
     /// requests arriving during startup hear "starting" and not "no such model".
     public var model: ModelInfo? {
-        get async { lock.withLock { identity } }
+        get async { lock.withLock { identity?.labelled(labels) } }
+    }
+
+    /// The scheduler reads it again within a second: this host sends no
+    /// notice of changes.
+    public func label(_ labels: ModelLabels) {
+        lock.withLock { self.labels = labels }
     }
 
     public var availability: HostAvailability {
@@ -103,7 +114,8 @@ public final class LlamaServerHost: InferenceHost, @unchecked Sendable {
             id: config.modelID,
             capabilities: config.projector == nil ? [.text] : [.text, .vision],
             fingerprint: "llama.cpp-\(build ?? "unknown")-sha256:\(digest.prefix(12))",
-            maxImageDimension: config.projector == nil ? nil : config.maxImageDimension)
+            maxImageDimension: config.projector == nil ? nil : config.maxImageDimension,
+            contextTokens: config.contextPerSlot)
         lock.withLock { self.identity = identity }
         await launch(executable)
     }
