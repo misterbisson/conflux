@@ -6,7 +6,8 @@ import SwiftUI
 /// work its owner trusts it with (docs/design.md, Capabilities and tags).
 /// They change at once, while conflux runs.
 struct ModelLabelsRows: View {
-    let modelID: String
+    /// What a client can send in `model` to reach it by name.
+    let names: [String]
     let readsImages: Bool
     /// Tokens of context per slot, for what it reads. Nil leaves that row
     /// out.
@@ -91,7 +92,7 @@ struct ModelLabelsRows: View {
 
     /// What a client can send in `model` to reach it.
     var reachedWith: [String] {
-        var names = [modelID]
+        var names = names
         if !labels.onlyWhenAsked { names += readsImages ? ["any", "any-vision"] : ["any"] }
         names += labels.tags.filter { readsImages || !ModelTag.needsVision($0) }.map { "any+\($0)" }
         return names

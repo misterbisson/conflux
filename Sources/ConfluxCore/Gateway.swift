@@ -67,6 +67,10 @@ public final class Gateway: Sendable {
         list(.unfiltered(nil), "any model that filters no content")
         list(.capability(.vision), "any model that accepts images")
         list(.unfiltered(.vision), "any model that accepts images and filters no content")
+        // A peer from before the variants were named serves it as a model.
+        if !served.contains(where: { $0.id == AppleModelHost.alias }) {
+            list(.exact(AppleModelHost.alias), "Apple's on-device model, whichever one a device runs")
+        }
         // One for each tag a served model carries: the vocabulary's in its
         // order, then the owner's own.
         let tags = Set(served.flatMap(\.tags))

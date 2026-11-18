@@ -35,7 +35,8 @@ enum ServeCommand {
       --port N                gateway port (default 8090)
       --no-token              let clients connect without the bearer token
       --skip-self-check       report Ready without checking the model reads input
-      --apple-model           also serve Apple's on-device model, as
+      --apple-model           also serve Apple's on-device model, as the one
+                              this device runs, such as afm-3-core, and as
                               apple-on-device (Apple Intelligence must be on)
       --apple-slots N         its requests run at once (default 2)
       --apple-tags LIST       its tags (default image-description; "" for none)
@@ -149,7 +150,7 @@ enum ServeCommand {
             labels[host.modelID] = ModelLabels(tags: try tags("--tags") ?? known?.labels.tags ?? [],
                                                onlyWhenAsked: flags.contains("--only-when-asked"))
         }
-        if let tags = try tags("--apple-tags") { labels[AppleModelHost.modelID] = ModelLabels(tags: tags) }
+        if let tags = try tags("--apple-tags") { labels[AppleModelHost.alias] = ModelLabels(tags: tags) }
         let settings = NodeSettings(host: host, port: UInt16(port), requireToken: !flags.contains("--no-token"),
                                     peers: peers, appleModel: appleModel, labels: labels)
         return Options(settings: settings, identity: values["--identity"] ?? "default", known: known)

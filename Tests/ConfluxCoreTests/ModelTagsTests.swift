@@ -117,19 +117,19 @@ import Testing
     }
 
     @Test func appleModelStartsTaggedForDescribingImages() {
-        #expect(ModelLabels.defaults(for: AppleModelHost.modelID).tags == ["image-description"])
+        #expect(ModelLabels.defaults(for: AppleModelHost.alias).tags == ["image-description"])
         #expect(ModelLabels.defaults(for: "some-model").tags.isEmpty)
-        #expect(NodeSettings().labels(for: AppleModelHost.modelID).tags == ["image-description"])
+        #expect(NodeSettings().labels(for: AppleModelHost.alias).tags == ["image-description"])
         var settings = NodeSettings()
-        settings.labels[AppleModelHost.modelID] = ModelLabels()
-        #expect(settings.labels(for: AppleModelHost.modelID).tags.isEmpty)
+        settings.labels[AppleModelHost.alias] = ModelLabels()
+        #expect(settings.labels(for: AppleModelHost.alias).tags.isEmpty)
     }
 
     @Test func settingsFromBeforeLabelsStillLoad() throws {
         let old = Data(#"{"port":8090,"requireToken":true,"peers":[],"iCloudKeychain":true}"#.utf8)
         let settings = try JSONDecoder().decode(NodeSettings.self, from: old)
         #expect(settings.labels.isEmpty)
-        #expect(settings.labels(for: AppleModelHost.modelID) == AppleModelHost.defaultLabels)
+        #expect(settings.labels(for: AppleModelHost.alias) == AppleModelHost.defaultLabels)
 
         var saved = settings
         saved.labels["large"] = ModelLabels(tags: ["editorial"], onlyWhenAsked: true)
@@ -249,6 +249,16 @@ import Testing
         #expect(entry?["context_tokens"] as? Int == 32768)
         let alias = data.first { $0["id"] as? String == "any+editorial" }?["conflux"] as? [String: Any]
         #expect(alias?["description"] as? String == "any model trusted to choose, order and cut among many items toward a goal, and say why")
+    }
+
+    @Test func modelsListsTheAppleAliasBesideTheModelItReaches() async {
+        let apple = FakeHost(id: "apple", model: "afm-3-core", contentFilter: true,
+                             fingerprint: "apple-foundation-models-iPadOS-27.2.0-27C55")
+        let ids = await models([apple]).map { $0["id"] as? String }
+        #expect(ids == ["any", "any-vision", "apple-on-device", "afm-3-core"])
+        // A peer from before the variants were named serves it as a model.
+        let before = FakeHost(id: "before", model: "apple-on-device", contentFilter: true)
+        #expect(await models([before]).map { $0["id"] as? String } == ["any", "any-vision", "apple-on-device"])
     }
 
     @Test func noAnyAliasWhenEveryModelIsHeldBack() async {

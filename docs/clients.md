@@ -119,7 +119,7 @@ gateway sent it on, the response says which in `Conflux-Declined`, in the
 order they declined, each once:
 
 ```
-Conflux-Declined: apple-on-device
+Conflux-Declined: afm-3-core
 ```
 
 A response without it was answered, or refused, by the first model that
@@ -275,6 +275,15 @@ Set `model` to one of:
 | `any-unfiltered` | Any host whose model has no `content_filter` |
 | `any-vision` | Any host whose model reads images |
 | `any-vision-unfiltered` | Any host whose model reads images and has no `content_filter` |
+| `apple-on-device` | Any host serving Apple's on-device model, whichever one its device runs |
+
+Apple's on-device model isn't the same on every device. Apple's most capable
+chips run AFM 3 Core Advanced, and others AFM 3 Core, so a host serves it
+under the name of the one it runs, `afm-3-core-advanced` or `afm-3-core`,
+and responses name that. `apple-on-device` reaches either. Name one of them
+to reach only the devices that run it. A peer running a conflux from before
+the models were told apart serves it as `apple-on-device`, which the alias
+reaches too, and its responses name it that way.
 
 To accept a list of models in order of preference:
 

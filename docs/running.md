@@ -184,8 +184,12 @@ conflux formats those itself, with thinking off. With `llama-server`, add
 
 ### Apple's on-device model
 
-The model Apple Intelligence uses can be served alongside the model file, as
-`apple-on-device`. Turn on **Serve Apple's on-device model** in the
+The model Apple Intelligence uses can be served alongside the model file.
+Which one a device runs depends on its chip: Apple's most capable chips run
+AFM 3 Core Advanced, served as `afm-3-core-advanced`, and others AFM 3 Core,
+served as `afm-3-core`. Requests for `apple-on-device` reach either, on any
+device ([Choose models deliberately](clients.md#choose-models-deliberately)),
+and the window says which this device serves. Turn on **Serve Apple's on-device model** in the
 window, or add `--apple-model` to `conflux serve`. It needs Apple
 Intelligence turned on in System Settings; until it is, or while Apple's
 model downloads, the host says so and waits.
@@ -207,8 +211,10 @@ only Apple's model may run gets the refusal, a `400` with code
 `content_filter` or `context_length_exceeded`. `/v1/models` marks it
 `content_filter: true`, and `any-unfiltered` and `any-vision-unfiltered` leave
 it out. conflux tags it `image-description`, since it describes images well
-and quickly, and it's the same model on every Mac at an OS version: untick it
-under **Trusted with**, or pass `--apple-tags ""`. Its tags are worth a look
+and quickly, and it's the same model on every device of a class at an OS
+version: untick it under **Trusted with**, or pass `--apple-tags ""`. Its tags
+are kept for Apple's model, not for one of its models, so they stay when an
+update brings another. Its tags are worth a look
 after an OS update, which changes the model. It follows a
 `response_format` schema with its guided generation, but a schema that asks
 for what it can't enforce, such as a `pattern`, goes elsewhere the same way
@@ -560,8 +566,8 @@ whether it's charging, over the same span, while it serves. Each model's own
 numbers are under it, in **Models**.
 
 **Apple's model.** Turn on **Serve Apple's on-device model**, and the iPad
-serves Apple's on-device model to its Macs as `apple-on-device`, as a Mac
-does ([Apple's on-device model](#apples-on-device-model)): beside the model
+serves Apple's on-device model to its Macs, under the name of the one it
+runs, and as `apple-on-device`, as a Mac does ([Apple's on-device model](#apples-on-device-model)): beside the model
 file, or alone, with **Serve a custom model** off under **Custom Model**,
 which folds that section to its switch. Both switches work while it
 serves, as a Mac's do: off with requests running asks whether to let them

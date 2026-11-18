@@ -190,7 +190,9 @@ contribution is measured against the effort of keeping it there.
   Apple Intelligence turned on. It reads images from macOS 27 and iPadOS 27,
   so those are conflux's floors. Apple's Private Cloud Compute model is left
   out: it runs off the device. *Built*: a device serves it alongside its
-  model file, as a second host, `apple-on-device`, from the window or
+  model file, as a second host, under the name of the model the device runs,
+  `afm-3-core-advanced` or `afm-3-core`, which `apple-on-device` reaches on
+  any device, from the window or
   `conflux serve --apple-model` ([running.md](running.md#apples-on-device-model)).
   It answers `any-vision` as well as `any`, passes the self-check, and its
   fingerprint is the OS build ([design.md](design.md#runtimes)). Requests it
