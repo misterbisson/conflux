@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.15.0](https://github.com/misterbisson/conflux/compare/v0.14.0...v0.15.0) (2026-11-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* responses, refusals and `Conflux-Declined` now name Apple's model as `afm-3-core-advanced` or `afm-3-core` instead of `apple-on-device`, and `/v1/models` lists it under that ID, with `apple-on-device` as an alias. Requests for `apple-on-device` work as before. A client that compares a response's `model` to `apple-on-device` has to accept the new names.
+
+### Features
+
+* ask for the work a request needs, with model tags and models that answer only when asked for ([#131](https://github.com/misterbisson/conflux/issues/131)) ([69c007c](https://github.com/misterbisson/conflux/commit/69c007c2a86e45f6cc5376ffd91a3ffd71ac1f7b))
+* expect a request to take time by its size, so slow models take short ones on tight deadlines ([#134](https://github.com/misterbisson/conflux/issues/134)) ([7083126](https://github.com/misterbisson/conflux/commit/708312610058c910f23109ecf5b2be1b2d2a68c8))
+* serve Apple's on-device model as the one each device runs, afm-3-core-advanced or afm-3-core ([#138](https://github.com/misterbisson/conflux/issues/138)) ([60bcfa7](https://github.com/misterbisson/conflux/commit/60bcfa7981df501936b99226cc2f684f96f45091))
+* serve Gemma 4 models in the app ([#130](https://github.com/misterbisson/conflux/issues/130)) ([acb584d](https://github.com/misterbisson/conflux/commit/acb584dabdaca54a8604c33674e9174f2ee3565b))
+* suggest context, slots and tags for the models conflux knows ([#133](https://github.com/misterbisson/conflux/issues/133)) ([f084cd3](https://github.com/misterbisson/conflux/commit/f084cd3275d4ea8ccb869237ef0c853524af85a8))
+
+
+### Bug Fixes
+
+* call the Heat tile's box Keep cool instead of Cool down ([#136](https://github.com/misterbisson/conflux/issues/136)) ([271c8e3](https://github.com/misterbisson/conflux/commit/271c8e3aed8d94a81977f5f1f52a338035ec3b5d))
+* count peers on the iPad as the Mac does, not Macs ([#137](https://github.com/misterbisson/conflux/issues/137)) ([6755da1](https://github.com/misterbisson/conflux/commit/6755da13c204d1d42389cfe54afd38828a402fed))
+* tell apps on the Mac when an app is paired or revoked, or the token setting changes ([#135](https://github.com/misterbisson/conflux/issues/135)) ([d52d8d9](https://github.com/misterbisson/conflux/commit/d52d8d97f058ec445cd6efa92b82a553f6c6c34b))
+
 ## [0.14.0](https://github.com/misterbisson/conflux/compare/v0.13.0...v0.14.0) (2026-11-17)
 
 
